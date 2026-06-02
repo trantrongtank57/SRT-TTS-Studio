@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  product.wxs - WiX Installer definition for SRT TTS Studio
+  Dung kem voi build_msi.bat
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <Product Id="*"
+           Name="SRT TTS Studio"
+           Language="1033"
+           Version="1.0.0.0"
+           Manufacturer="SRT TTS Studio"
+           UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+
+    <Package InstallerVersion="301"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="SRT TTS Studio Installer"
+             Comments="Chuyen van ban SRT thanh giong noi" />
+
+    <!-- Cho phep upgrade, khong cho downgrade -->
+    <MajorUpgrade DowngradeErrorMessage="Phien ban moi hon da duoc cai dat. Vui long go cai dat truoc." />
+
+    <!-- Nen file vao 1 cabinet -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- ======================== -->
+    <!--   CAU TRUC THU MUC       -->
+    <!-- ======================== -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+
+      <!-- Program Files\SRT TTS Studio (64-bit) -->
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="SRT TTS Studio" />
+      </Directory>
+
+      <!-- Start Menu -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="AppMenuFolder" Name="SRT TTS Studio" />
+      </Directory>
+
+      <!-- Desktop -->
+      <Directory Id="DesktopFolder" Name="Desktop" />
+
+    </Directory>
+
+    <!-- ======================== -->
+    <!--   SHORTCUTS              -->
+    <!-- ======================== -->
+    <DirectoryRef Id="AppMenuFolder">
+      <Component Id="StartMenuShortcuts" Guid="*">
+
+        <!-- Shortcut Start Menu -->
+        <Shortcut Id="StartMenuShortcut"
+                  Name="SRT TTS Studio"
+                  Description="Chuyen SRT thanh giong noi voi Edge TTS"
+                  Target="[INSTALLDIR]SRT_TTS_Studio.exe"
+                  WorkingDirectory="INSTALLDIR"
+                  Icon="AppIcon" />
+
+        <!-- Shortcut Desktop -->
+        <Shortcut Id="DesktopShortcut"
+                  Directory="DesktopFolder"
+                  Name="SRT TTS Studio"
+                  Description="Chuyen SRT thanh giong noi voi Edge TTS"
+                  Target="[INSTALLDIR]SRT_TTS_Studio.exe"
+                  WorkingDirectory="INSTALLDIR"
+                  Icon="AppIcon" />
+
+        <!-- Shortcut Go cai dat -->
+        <Shortcut Id="UninstallShortcut"
+                  Name="Go cai dat SRT TTS Studio"
+                  Target="[SystemFolder]msiexec.exe"
+                  Arguments="/x [ProductCode]" />
+
+        <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
+
+        <RegistryValue Root="HKCU"
+                       Key="Software\SRT_TTS_Studio"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- ======================== -->
+    <!--   FEATURES               -->
+    <!-- ======================== -->
+    <Feature Id="MainApp"
+             Title="SRT TTS Studio"
+             Description="Cai dat ung dung chinh"
+             Level="1"
+             Display="expand"
+             ConfigurableDirectory="INSTALLDIR">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcuts" />
+    </Feature>
+
+    <!-- ======================== -->
+    <!--   ICON                   -->
+    <!-- ======================== -->
+    <Icon Id="AppIcon" SourceFile="logo.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com" />
+
+    <!-- ======================== -->
+    <!--   UI - WIZARD CAI DAT    -->
+    <!-- ======================== -->
+    <UIRef Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+
+    <!-- Bo qua man hinh license (xoa dong nay neu muon hien) -->
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+
+    <!-- Anh banner tren cung (493x58) - tuy chon -->
+    <!-- <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" /> -->
+
+    <!-- Anh background man hinh chao (493x312) - tuy chon -->
+    <!-- <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" /> -->
+
+  </Product>
+</Wix>

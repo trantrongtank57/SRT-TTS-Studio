@@ -1,0 +1,40 @@
+# Build artifacts
+dist/
+build/
+output/
+cython_out/
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# Large model files
+rvc_env/
+voxcpm_env/
+*.pt
+*.pth
+*.ckpt
+
+# Installer / executables
+*.msi
+*.exe
+
+# Audio samples (large WAV)
+*.WAV
+*.wav
+
+# Logs & temp
+build_log*.txt
+*.log
+
+# PyInstaller
+*.spec.bak
+
+# Auth / DRM (never commit)
+*.dat
+*.lockout
+*.integrity
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,105 @@
+==========================================================================
+ SRT TTS STUDIO — CHECKLIST CHUYỂN SANG MÁY MỚI
+==========================================================================
+ Cập nhật: 2026-05-30
+ Mục đích: Đảm bảo đầy đủ mô hình & phụ thuộc khi cài app sang máy khác.
+==========================================================================
+
+
+==========================================================================
+ ⭐ MÁY WINDOWS SẠCH 100% — RUNTIME HỆ THỐNG (cài TRƯỚC khi chạy MSI)
+==========================================================================
+ App là .exe đóng gói PyInstaller → Python của app đã nhúng sẵn,
+ KHÔNG cần cài Python cho phần lõi. Nhưng vẫn cần runtime sau:
+
+ [ ] (BẮT BUỘC) Microsoft Visual C++ Redistributable 2015-2022 (x64)
+         → file: vc_redist.x64.exe  (tải từ Microsoft)
+         → cung cấp vcruntime140.dll cho Python/torch/numpy
+         → ⚠ ĐÂY LÀ THỨ HAY THIẾU NHẤT trên Win mới. Không có →
+           app báo thiếu DLL / không mở được.
+
+ [ ] (NẾU CÓ CARD NVIDIA) NVIDIA GPU Driver (Game Ready / Studio mới)
+         → bật h264_nvenc cho video + cuda:0 cho RVC/VoxCPM/Whisper
+         → KHÔNG cần cài CUDA Toolkit riêng (torch đã gói CUDA cu126)
+         → Không có GPU → app tự fallback libx264 + cpu (chậm hơn,
+           vẫn chạy)
+
+ [ ] .NET Framework 4.8 (Win10/11 thường CÓ SẴN)
+         → chỉ cần cho Subtitle Edit. App lõi không cần.
+
+ [ ] Kết nối Internet
+         → Edge TTS + tất cả provider TTS gọi API online
+         → lần đầu tự tải model Whisper / Silero VAD / Demucs
+
+ THỨ TỰ CÀI TRÊN MÁY SẠCH:
+   1. Windows update cơ bản (đảm bảo .NET 4.8)
+   2. vc_redist.x64.exe          ← QUAN TRỌNG, hay quên
+   3. (nếu có NVIDIA) driver GPU
+   4. SRT_TTS_Studio_Setup.msi
+   5. Mở app, test Edge TTS  → xong phần lõi
+   6. (nâng cao) copy voxcpm_env + VoxCPM model + VideOCR
+   7. ⚙ Cài đặt → trỏ 4 đường dẫn → lưu
+   8. Cài Subtitle Edit nếu cần
+==========================================================================
+
+
+[1] CÀI BẰNG MSI  (đã đóng gói sẵn — KHÔNG cần làm gì thêm)
+--------------------------------------------------------------------------
+ Chạy: SRT_TTS_Studio_Setup.msi
+ → Đã có sẵn sau khi cài:
+     - App chính + ffmpeg.exe / ffprobe.exe
+     - 8 companion script (rvc_helper, voxcpm_helper, whisper_stt,
+       audio_enhancer, pdf_helper, srt_align_helper, videocr_helper,
+       video_stt_helper)
+     - hubert_base.pt, rmvpe.pt, và toàn bộ rvc_env\
+ → Chạy được NGAY:
+     Edge TTS, các provider TTS (FPT/Vbee/Zalo/EverAI/MiniMax),
+     video repair/scan/clean, Load SRT, Merge FFmpeg, PDF, RVC.
+
+
+[2] PHẢI COPY THỦ CÔNG  (quá lớn, MSI không gói)
+--------------------------------------------------------------------------
+ [ ] voxcpm_env\          ~6-8 GB   nguồn: E:\VoxCPM-1.5-VN\voxcpm_env\
+                                    cần cho: VoxCPM, STT, audio enhance,
+                                             SRT align
+ [ ] VoxCPM model         ~3.5 GB   nguồn: E:\VoxCPM-1.5-VN\VoxCPM\
+                                           pretrained\VoxCPM-1.5-VN\
+                                    cần cho: VoxCPM TTS
+ [ ] VideOCR CLI          nhỏ       nguồn: C:\Users\os\Downloads\
+                                           Compressed\VideOCR-1.5.1\
+                                    cần cho: Tách sub cứng (OCR)
+ [ ] Subtitle Edit        nhỏ       cài bình thường
+                                    cần cho: nút Open Subtitle Edit
+
+
+[3] SAU KHI COPY → MỞ ⚙ CÀI ĐẶT TRONG APP, TRỎ LẠI 4 ĐƯỜNG DẪN
+--------------------------------------------------------------------------
+ (Lưu vào settings.json cạnh file .exe — ghi đè hardcode ổ E:\ / C:\Users\os)
+
+ [ ] VideOCR CLI folder    →  ...\VideOCR-1.5.1\...\CLI  (ở máy mới)
+ [ ] VoxCPM model folder   →  thư mục VoxCPM-1.5-VN model (ở máy mới)
+ [ ] voxcpm_env python.exe →  ...\voxcpm_env\Scripts\python.exe (máy mới)
+ [ ] Subtitle Edit path    →  SubtitleEdit.exe (nếu không ở Program Files)
+
+
+[4] MÔ HÌNH TỰ TẢI VỀ  (cần internet lần đầu — KHÔNG cần copy)
+--------------------------------------------------------------------------
+     - faster-whisper (tiny→large-v3)  → cache HuggingFace
+     - Silero VAD                      → torch.hub
+     - Demucs / noisereduce            → đã có trong voxcpm_env
+
+
+==========================================================================
+ ⚠ CẢNH BÁO QUAN TRỌNG
+==========================================================================
+ - Ổ đĩa máy mới có thể KHÔNG phải E:\. Đường dẫn mặc định hardcode là
+   E:\VoxCPM-1.5-VN\... — nếu copy sang ổ khác (D:\, C:\...) thì BẮT BUỘC
+   vào ⚙ Cài đặt trỏ lại, nếu không VoxCPM/STT báo "không tìm thấy
+   voxcpm_env python".
+
+ - Nếu BUILD LẠI từ đầu: hubert_base.pt và rmvpe.pt PHẢI có ở thư mục gốc
+   dự án (đã copy về root ngày 2026-05-30). Thiếu → build_all.bat abort
+   ở bước 0.
+
+ - rvc_env\ đã nằm trong thư mục dự án (vendored) — không cần tải lại.
+==========================================================================
