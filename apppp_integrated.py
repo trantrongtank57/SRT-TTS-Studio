@@ -4183,6 +4183,7 @@ def _run_compress_thread():
             ))
             app.after(0, show_fireworks)
             app.after(0, lambda: set_mode("compress_done"))
+            app.after(200, open_compress_folder)
         else:
             app.after(0, lambda: log(f"[Nén Video] ❌ ffmpeg lỗi (exit {proc.returncode})"))
             app.after(0, lambda: set_mode("compress_ready"))
