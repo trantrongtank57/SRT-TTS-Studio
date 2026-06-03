@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, Video OCR, Speech-to-Text, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
+**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, Video OCR, Speech-to-Text, video compression, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
 
 ## Build Commands
 
@@ -45,6 +45,18 @@ Note: background shell processes do not inherit cwd — always use absolute path
 | 7–8 | WiX Heat → candle → light → MSI |
 | 9 | `output\SRT_TTS_Studio_Setup.msi` + `output\Portable\` (exes + companion files + models + rvc_env) |
 
+### Spec files
+
+| File | Purpose |
+|---|---|
+| `SRT_TTS_Studio_onedir.spec` | Onedir build → MSI via WiX |
+| `SRT_TTS_Studio_onefile.spec` | Portable standalone exe |
+| `SRT_TTS_Studio_onefile_secured.spec` | Secured exe + `.integrity` companion |
+| `SRT_TTS_Studio_onefile_trial.spec` | Trial exe (24h, VM-blocked) |
+| `SRT_TTS_Studio.spec` | Legacy / reference |
+
+All specs use `srt_tts_launch.py` as entry and **must** contain the `a.pure` filter that strips `apppp_integrated` bytecode from the PYZ — removing it exposes the full source as recoverable marshal blob.
+
 ### Output layout
 ```
 output\
@@ -68,7 +80,7 @@ output\
 import apppp_integrated  # executes the whole app (mainloop is at module level)
 ```
 
-All 4 specs (`SRT_TTS_Studio_onedir.spec`, `*_onefile.spec`, `*_secured.spec`, `*_trial.spec`) use `srt_tts_launch.py` as entry and include this critical filter:
+All 4 specs use `srt_tts_launch.py` as entry and include this critical filter:
 
 ```python
 # Strip the plaintext bytecode of the main module from the PYZ —
@@ -77,9 +89,9 @@ a.pure = [x for x in a.pure
           if not (x[0] == 'apppp_integrated' or x[0].startswith('apppp_integrated.'))]
 ```
 
-**Without this filter**: PyInstaller embeds `apppp_integrated.py` as recoverable bytecode (1 MB marshal blob). An attacker extracts all 474 function names + `_HMAC_SECRET`/`_PBKDF2_SALT` byte literals in ~2 minutes via `pyinstxtractor` + `marshal.loads`. With the filter: only the PE DLL (`.pyd`) is in the archive; `marshal.loads` rejects it and no Python decompiler exists for Cython output.
+**Without this filter**: PyInstaller embeds `apppp_integrated.py` as recoverable bytecode (1 MB marshal blob). An attacker extracts all function names + `_HMAC_SECRET`/`_PBKDF2_SALT` byte literals in ~2 minutes via `pyinstxtractor` + `marshal.loads`. With the filter: only the PE DLL (`.pyd`) is in the archive; `marshal.loads` rejects it and no Python decompiler exists for Cython output.
 
-**Cython string storage note**: Python string literals compiled by Cython are stored as `PyObject*` intern references in the `.pyd`, NOT as flat raw bytes. Searching the `.pyd` binary for string content will return no matches — this is correct and expected. The strings are present logically and function correctly at runtime.
+**Cython string storage note**: Python string literals compiled by Cython are stored as `PyObject*` intern references in the `.pyd`, NOT as flat raw bytes. Searching the `.pyd` binary for string content will return no matches — this is correct and expected.
 
 **Verifying the protection is working** (run after any build):
 ```python
@@ -122,9 +134,76 @@ Detection uses 6 independent layers — passing one layer is enough:
 
 ## Codebase Structure
 
-`apppp_integrated.py` (~8200 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
+`apppp_integrated.py` (~8400 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
 
 `app.mainloop()` runs at **module level** (not inside `__main__`), so `import apppp_integrated` starts the full app. This is intentional for the launcher entry-point pattern.
+
+### High-level layout inside `apppp_integrated.py`
+
+| Lines (approx.) | Section |
+|---|---|
+| 1–100 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
+| 100–850 | Security checks (`_check_integrity`, DRM, trial, VM detection), global state vars |
+| 850–1100 | Settings load/save, CustomTkinter app/window creation, UI layout frames |
+| 1100–2600 | Voice/provider UI, progress bar canvas, button rows `_brow0`–`_brow6` definition |
+| 2600–3200 | Fireworks animation + sound, `log()`, `update_progress()`, helper utilities |
+| 3200–5600 | Feature functions: TTS (Edge, FPT, Vbee, Zalo, EverAI, MiniMax), RVC, VoxCPM, PDF |
+| 5600–7400 | Video tools (scan/repair/clean), Subtitle Edit, OCR, STT, video compress |
+| 7400–7700 | UI widget instantiation for all button rows |
+| 7700–8050 | `set_mode()` — the central UI state machine |
+| 8050–end | `app.mainloop()` at module level |
+
+## UI Architecture Patterns (apppp_integrated.py)
+
+### Button rows
+The button panel uses 7 fixed rows (`_brow0`–`_brow6`) created once at startup and populated later. All rows are `ctk.CTkFrame` packed into `button_frame`. When adding a new feature, add a new `_browN` at the row-definition block (~line 2610) **and** populate it in the widget-instantiation block (~line 7400).
+
+### set_mode() — UI state machine
+`set_mode(mode)` is the single function that enables/disables all buttons and controls. It must be called from the main thread (use `app.after(0, lambda: set_mode("..."))` from worker threads). Every new feature needs:
+1. Its buttons added to a `_feature_btns` list inside `set_mode`
+2. New `elif mode == "feature_ready":` / `"feature_running":` / `"feature_done":` branches
+3. The feature's buttons included in the disable sweep of all unrelated modes
+
+Current modes: `srt`, `pdf`, `pdf_tts_done`, `video`, `reset`, `tts_running`, `tts_stopped`, `tts_done`, `scanning`, `scan_done`, `scan_done_clean`, `repairing`, `repair_done`, `cleaning`, `clean_done`, `videocr`, `videocr_running`, `videocr_done`, `video_stt`, `video_stt_running`, `video_stt_done`, `compress_ready`, `compressing`, `compress_done`.
+
+### Thread safety
+All UI mutations **must** happen on the main thread. From any worker thread:
+```python
+app.after(0, lambda: log("message"))
+app.after(0, lambda: set_mode("done"))
+update_progress(current, total)  # safe — internally uses app.after
+```
+Never call `log()`, `set_mode()`, or any CTk widget method directly from a thread.
+
+### Progress bar
+Always use `update_progress(current, total)` — never manipulate `progress_var` or `progress_bar` directly. The function is thread-safe and drives the animated canvas bar. Parse ffmpeg progress from stderr via `re.search(r"time=(\d+):(\d+):([\d.]+)", line)` and convert to percentage of total duration.
+
+### Completion effect
+Call `app.after(0, show_fireworks)` when any major operation completes successfully. This is the convention used by all TTS, OCR, STT, and compress flows.
+
+### Subprocess rules
+
+**Always pre-check executable existence before `Popen`** — on Windows, `Popen` with `CREATE_NO_WINDOW` on a missing executable can hang waiting for Windows Error Reporting instead of raising `FileNotFoundError` immediately:
+```python
+# Correct pattern (see _check_ffmpeg_exists())
+ffmpeg_ok, ffmpeg_path, guide = _check_ffmpeg_exists()
+if not ffmpeg_ok:
+    for line in guide.splitlines():
+        app.after(0, lambda l=line: log(l))
+    app.after(0, lambda: set_mode("compress_ready"))
+    return
+# Only now is it safe to call Popen
+proc = subprocess.Popen([ffmpeg_path, ...], creationflags=CREATE_NO_WINDOW)
+```
+
+Check pattern: `os.path.isfile(path) or shutil.which(path)`.
+
+**Always use `CREATE_NO_WINDOW`** on all subprocess calls to prevent console windows flashing.
+
+**Never use `communicate()`** for long-running processes — it blocks until completion with no progress. Always use `Popen` + line-by-line `for line in proc.stdout:`.
+
+### Launching external applications
+Use `ctypes.windll.shell32.ShellExecuteW(None, "open", exe, args, None, 1)` instead of `subprocess.Popen` to launch GUI apps like Subtitle Edit. This launches them as independent processes (not child processes) so that the Windows IME (Unikey/EVKey Vietnamese input) works correctly. If launched as a child process via `Popen`, UIPI blocks IME keystrokes to the child window.
 
 ## Companion Script System
 

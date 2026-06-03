@@ -839,6 +839,9 @@ _pdf_mode_active = False
 
 VIDEOCR_VIDEO = ""
 VIDEOCR_OUTPUT_SRT = ""
+VIDEOCR_OUTPUT_DIR = ""   # rỗng = dùng OUTPUT_DIR chung
+COMPRESS_VIDEO_FILE = ""
+COMPRESS_OUTPUT_DIR = ""  # rỗng = dùng cùng thư mục file gốc
 VIDEOCR_CLI_DIR = r"C:\Users\os\Downloads\Compressed\VideOCR-1.5.1\VideOCR-1.5.1\CLI"
 
 STT_VIDEO_FILE = ""   # video/audio đang chờ STT
@@ -2617,6 +2620,8 @@ _brow4 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow4.pack(fill="x")
 _brow5 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow5.pack(fill="x")
+_brow6 = ctk.CTkFrame(button_frame, fg_color="transparent")
+_brow6.pack(fill="x")
 
 
 # =========================
@@ -3533,12 +3538,27 @@ def load_videocr_video():
     if not selected:
         return
     VIDEOCR_VIDEO = selected
-    # Đặt tên SRT theo tên video, lưu cùng thư mục output
+    # Đặt tên SRT theo tên video, lưu vào VIDEOCR_OUTPUT_DIR (nếu đã chọn) hoặc OUTPUT_DIR
     base = os.path.splitext(os.path.basename(selected))[0]
-    VIDEOCR_OUTPUT_SRT = os.path.join(OUTPUT_DIR, f"{base}_ocr.srt")
+    out_dir = VIDEOCR_OUTPUT_DIR if VIDEOCR_OUTPUT_DIR else OUTPUT_DIR
+    VIDEOCR_OUTPUT_SRT = os.path.join(out_dir, f"{base}_ocr.srt")
     log(f"[VideoOCR] Video: {os.path.basename(selected)}")
     log(f"[VideoOCR] SRT output: {VIDEOCR_OUTPUT_SRT}")
     set_mode("videocr")
+
+
+def choose_videocr_output_folder():
+    global VIDEOCR_OUTPUT_DIR, VIDEOCR_OUTPUT_SRT
+    selected = filedialog.askdirectory(title="Chọn Output Folder cho OCR")
+    if not selected:
+        return
+    VIDEOCR_OUTPUT_DIR = selected
+    log(f"[VideoOCR] Output folder: {VIDEOCR_OUTPUT_DIR}")
+    # Cập nhật đường dẫn SRT nếu video đã được chọn
+    if VIDEOCR_VIDEO:
+        base = os.path.splitext(os.path.basename(VIDEOCR_VIDEO))[0]
+        VIDEOCR_OUTPUT_SRT = os.path.join(VIDEOCR_OUTPUT_DIR, f"{base}_ocr.srt")
+        log(f"[VideoOCR] SRT output: {VIDEOCR_OUTPUT_SRT}")
 
 
 def _run_videocr_thread():
@@ -3885,6 +3905,305 @@ def open_stt_folder():
         os.startfile(STT_OUTPUT_DIR)
     else:
         log("[STT] Thư mục output chưa xác định.")
+
+
+# =========================
+# Giảm dung lượng MP4
+# =========================
+
+_COMPRESS_CRF_MAP = {
+    "Cao (CRF 20)":      20,
+    "Khuyến nghị (CRF 23)": 23,
+    "Cân bằng (CRF 26)": 26,
+    "Nén mạnh (CRF 30)": 30,
+}
+
+
+def _check_ffmpeg_exists():
+    """Kiểm tra ffmpeg/ffprobe có thực sự tồn tại không. Trả về (ok, đường_dẫn, thông_báo_lỗi)."""
+    ffmpeg_path = get_ffmpeg()
+    if not (os.path.isfile(ffmpeg_path) or shutil.which(ffmpeg_path)):
+        guide = (
+            "[Nén Video] ❌ Không tìm thấy ffmpeg!\n"
+            "[Nén Video] → Hướng xử lý:\n"
+            "  1. Tải ffmpeg tại: https://github.com/BtbN/FFmpeg-Builds/releases\n"
+            "     (chọn ffmpeg-master-latest-win64-gpl.zip)\n"
+            "  2. Giải nén → vào ⚙ Cài đặt → dán đường dẫn thư mục bin/ vào ô 'ffmpeg dir'\n"
+            "  3. Hoặc thêm thư mục chứa ffmpeg.exe vào biến môi trường PATH hệ thống"
+        )
+        return False, ffmpeg_path, guide
+    return True, ffmpeg_path, None
+
+
+def _check_ffprobe_exists():
+    """Kiểm tra ffprobe có tồn tại không."""
+    ffprobe_path = get_ffprobe()
+    return (os.path.isfile(ffprobe_path) or bool(shutil.which(ffprobe_path))), ffprobe_path
+
+
+def _get_mediainfo(filepath):
+    """Dùng ffprobe lấy codec, bitrate, độ phân giải, thời lượng."""
+    ok, ffprobe_path = _check_ffprobe_exists()
+    if not ok:
+        return None, "Không tìm thấy ffprobe — cài đặt ffmpeg theo hướng dẫn trong ⚙ Cài đặt"
+    try:
+        result = subprocess.run([
+            ffprobe_path, "-v", "quiet", "-print_format", "json",
+            "-show_format", "-show_streams", filepath
+        ], capture_output=True, text=True, timeout=30, creationflags=CREATE_NO_WINDOW)
+        data = json.loads(result.stdout)
+    except Exception as e:
+        return None, str(e)
+
+    info = {}
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "video" and "video_codec" not in info:
+            info["video_codec"] = stream.get("codec_name", "unknown")
+            info["width"]       = int(stream.get("width", 0))
+            info["height"]      = int(stream.get("height", 0))
+            info["video_bitrate_kbps"] = int(stream.get("bit_rate", 0)) // 1000
+            rn, rd = (stream.get("r_frame_rate", "0/1") + "/1").split("/")[:2]
+            try:
+                info["fps"] = round(int(rn) / max(int(rd), 1), 2)
+            except Exception:
+                info["fps"] = 0
+        elif stream.get("codec_type") == "audio" and "audio_codec" not in info:
+            info["audio_codec"] = stream.get("codec_name", "unknown")
+            info["audio_bitrate_kbps"] = int(stream.get("bit_rate", 0)) // 1000
+
+    fmt = data.get("format", {})
+    info["duration_s"]         = float(fmt.get("duration", 0))
+    info["total_bitrate_kbps"] = int(fmt.get("bit_rate", 0)) // 1000
+    info["file_size_mb"]       = int(fmt.get("size", 0)) / (1024 * 1024)
+
+    if not info.get("video_bitrate_kbps") and info.get("total_bitrate_kbps"):
+        audio_kbps = info.get("audio_bitrate_kbps", 128)
+        info["video_bitrate_kbps"] = max(0, info["total_bitrate_kbps"] - audio_kbps)
+
+    return info, None
+
+
+def _get_compress_recommendation(info):
+    """Tính CRF khuyến nghị và ước tính kích thước đầu ra."""
+    video_codec = info.get("video_codec", "h264")
+    width       = info.get("width", 1920)
+    height      = info.get("height", 1080)
+    vbr         = info.get("video_bitrate_kbps", 0)
+    duration_s  = info.get("duration_s", 0)
+    pixels      = width * height
+
+    if pixels >= 3840 * 2160:
+        target_kbps = 8000
+    elif pixels >= 2560 * 1440:
+        target_kbps = 5000
+    elif pixels >= 1920 * 1080:
+        target_kbps = 3000
+    elif pixels >= 1280 * 720:
+        target_kbps = 1500
+    else:
+        target_kbps = 700
+
+    already_small = vbr > 0 and vbr <= target_kbps * 1.1
+
+    if video_codec in ("hevc", "h265"):
+        out_codec       = "hevc"
+        crf_recommend   = 28
+    else:
+        out_codec       = "h264"
+        crf_recommend   = 23
+
+    est_video_kbps = min(vbr, target_kbps) if vbr else target_kbps
+    audio_kbps     = info.get("audio_bitrate_kbps", 128) or 128
+    est_total_kbps = est_video_kbps + audio_kbps
+    est_size_mb    = est_total_kbps * duration_s / 8 / 1024 if duration_s else 0
+
+    return {
+        "out_codec":     out_codec,
+        "crf":           crf_recommend,
+        "already_small": already_small,
+        "target_kbps":   target_kbps,
+        "est_size_mb":   est_size_mb,
+    }
+
+
+def load_compress_video():
+    global COMPRESS_VIDEO_FILE, COMPRESS_OUTPUT_DIR
+    selected = filedialog.askopenfilename(
+        title="Chọn video để giảm dung lượng",
+        filetypes=[
+            ("Video files", "*.mp4 *.mkv *.avi *.mov *.ts *.flv *.wmv"),
+            ("All files", "*.*"),
+        ]
+    )
+    if not selected:
+        return
+    COMPRESS_VIDEO_FILE = selected
+    if not COMPRESS_OUTPUT_DIR:
+        COMPRESS_OUTPUT_DIR = os.path.dirname(os.path.abspath(selected))
+
+    log(f"[Nén Video] Đang phân tích: {os.path.basename(selected)} ...")
+    app.after(0, lambda: set_mode("compress_ready"))
+
+    def _analyze():
+        info, err = _get_mediainfo(selected)
+        if err or not info:
+            app.after(0, lambda: log(f"[Nén Video] ❌ Không đọc được MediaInfo: {err}"))
+            return
+        rec = _get_compress_recommendation(info)
+
+        def _show():
+            dur = info["duration_s"]
+            h, m, s = int(dur // 3600), int(dur % 3600 // 60), dur % 60
+            log("─" * 52)
+            log(f"[Nén Video] ▶ MediaInfo: {os.path.basename(selected)}")
+            log(f"  Codec   : {info.get('video_codec','?').upper()}  |  Audio: {info.get('audio_codec','?').upper()}")
+            log(f"  Độ phân giải: {info['width']}×{info['height']}  |  FPS: {info.get('fps','?')}")
+            log(f"  Bitrate tổng: {info['total_bitrate_kbps']:,} kbps  (video {info['video_bitrate_kbps']:,} kbps)")
+            log(f"  Thời lượng  : {h:02d}:{m:02d}:{s:05.2f}  |  Kích thước: {info['file_size_mb']:.1f} MB")
+            log("─" * 52)
+            log(f"[Nén Video] ▶ Khuyến nghị:")
+            if rec["already_small"]:
+                log(f"  ⚠ File đã được nén tốt — nén thêm sẽ giảm chất lượng")
+            log(f"  Codec đầu ra : {rec['out_codec'].upper()} | CRF: {rec['crf']}")
+            log(f"  Mục tiêu bitrate : ~{rec['target_kbps']:,} kbps")
+            orig_mb = info["file_size_mb"]
+            est_mb  = rec["est_size_mb"]
+            reduction = (1 - est_mb / orig_mb) * 100 if orig_mb else 0
+            log(f"  Ước tính đầu ra  : ~{est_mb:.1f} MB (giảm ~{reduction:.0f}%  ·  {orig_mb:.1f} → {est_mb:.1f} MB)")
+            log("─" * 52)
+
+        app.after(0, _show)
+
+    threading.Thread(target=_analyze, daemon=True).start()
+
+
+def choose_compress_output_folder():
+    global COMPRESS_OUTPUT_DIR
+    selected = filedialog.askdirectory(title="Chọn thư mục lưu video đã nén")
+    if not selected:
+        return
+    COMPRESS_OUTPUT_DIR = selected
+    log(f"[Nén Video] Output folder: {COMPRESS_OUTPUT_DIR}")
+
+
+def _run_compress_thread():
+    global COMPRESS_VIDEO_FILE, COMPRESS_OUTPUT_DIR
+
+    inp = COMPRESS_VIDEO_FILE
+    if not inp or not os.path.isfile(inp):
+        app.after(0, lambda: log("[Nén Video] ❌ File không tồn tại"))
+        app.after(0, lambda: set_mode("compress_ready"))
+        return
+
+    info, err = _get_mediainfo(inp)
+    if not info:
+        app.after(0, lambda: log(f"[Nén Video] ❌ Không đọc MediaInfo: {err}"))
+        app.after(0, lambda: set_mode("compress_ready"))
+        return
+
+    duration_s  = info.get("duration_s", 0)
+    video_codec = info.get("video_codec", "h264")
+    use_hevc    = video_codec in ("hevc", "h265")
+
+    quality_label = compress_quality_var.get()
+    crf = _COMPRESS_CRF_MAP.get(quality_label, 23)
+
+    use_gpu = compress_gpu_var.get()
+    if use_gpu and VIDEO_ENCODER == "h264_nvenc":
+        encoder      = "hevc_nvenc" if use_hevc else "h264_nvenc"
+        encoder_type = f"GPU (NVIDIA · {DETECTED_GPU or 'NVENC'})"
+        enc_args     = ["-c:v", encoder, "-cq", str(crf), "-preset", "p4"]
+    else:
+        if use_gpu:
+            app.after(0, lambda: log("[Nén Video] ⚠ Không tìm thấy NVIDIA GPU — dùng CPU"))
+        encoder      = "libx265" if use_hevc else "libx264"
+        encoder_type = "CPU"
+        enc_args     = ["-c:v", encoder, "-crf", str(crf), "-preset", "medium"]
+
+    # Kiểm tra ffmpeg tồn tại TRƯỚC KHI set_mode("compressing") để tránh treo UI
+    ffmpeg_ok, ffmpeg_path, ffmpeg_guide = _check_ffmpeg_exists()
+    if not ffmpeg_ok:
+        for line in ffmpeg_guide.splitlines():
+            app.after(0, lambda l=line: log(l))
+        app.after(0, lambda: set_mode("compress_ready"))
+        return
+
+    base     = os.path.splitext(os.path.basename(inp))[0]
+    out_path = os.path.join(COMPRESS_OUTPUT_DIR, f"{base}_compressed.mp4")
+
+    app.after(0, lambda: log(f"[Nén Video] Encoder: {encoder_type} | CRF: {crf}"))
+    app.after(0, lambda: log(f"[Nén Video] Output : {out_path}"))
+    app.after(0, lambda: set_mode("compressing"))
+    update_progress(1, 100)
+
+    cmd = [
+        ffmpeg_path, "-y", "-i", inp,
+        *enc_args,
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        out_path
+    ]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW
+        )
+
+        _last_pct  = [-1]
+        _last_log_pct = [-1]
+
+        for line in proc.stdout:
+            line = line.rstrip()
+            m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
+            if m and duration_s > 0:
+                elapsed = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                pct = max(1, min(99, int(elapsed / duration_s * 100)))
+                if pct != _last_pct[0]:
+                    _last_pct[0] = pct
+                    update_progress(pct, 100)
+                if pct // 10 != _last_log_pct[0]:
+                    _last_log_pct[0] = pct // 10
+                    app.after(0, lambda p=pct: log(f"[Nén Video] ⏳ {p}%"))
+
+        proc.wait()
+
+        if proc.returncode == 0 and os.path.isfile(out_path):
+            orig_mb = info["file_size_mb"]
+            new_mb  = os.path.getsize(out_path) / (1024 * 1024)
+            reduction = (1 - new_mb / orig_mb) * 100 if orig_mb else 0
+            update_progress(100, 100)
+            app.after(0, lambda: log(
+                f"[Nén Video] ✅ Hoàn tất! {orig_mb:.1f} MB → {new_mb:.1f} MB (giảm {reduction:.0f}%)"
+            ))
+            app.after(0, show_fireworks)
+            app.after(0, lambda: set_mode("compress_done"))
+        else:
+            app.after(0, lambda: log(f"[Nén Video] ❌ ffmpeg lỗi (exit {proc.returncode})"))
+            app.after(0, lambda: set_mode("compress_ready"))
+
+    except Exception as exc:
+        app.after(0, lambda: log(f"[Nén Video] ❌ Exception: {exc}"))
+        app.after(0, lambda: set_mode("compress_ready"))
+
+
+def start_compress_video():
+    if not COMPRESS_VIDEO_FILE:
+        msg.showerror("Nén Video", "Chưa chọn video. Nhấn 'Chọn Video (Nén)' trước.")
+        return
+    threading.Thread(target=_run_compress_thread, daemon=True).start()
+
+
+def open_compress_folder():
+    if COMPRESS_OUTPUT_DIR and os.path.isdir(COMPRESS_OUTPUT_DIR):
+        os.startfile(COMPRESS_OUTPUT_DIR)
+    else:
+        log("[Nén Video] Thư mục output chưa xác định.")
 
 
 def _find_whisper_python():
@@ -5347,10 +5666,10 @@ def open_subtitle_edit():
 
             log(f"Opening Subtitle Edit: {exe}")
 
-            subprocess.Popen([
-                exe,
-                SRT_FILE
-            ])
+            import ctypes
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "open", exe, f'"{SRT_FILE}"', None, 1
+            )
 
             return
 
@@ -7353,6 +7672,9 @@ btn_pdf_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_videocr_load = ctk.CTkButton(_brow4, text="Chọn Video OCR", command=load_videocr_video, height=36, font=("Arial", 13))
 btn_videocr_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
+btn_videocr_outdir = ctk.CTkButton(_brow4, text="Chọn Output OCR", command=choose_videocr_output_folder, height=36, font=("Arial", 13))
+btn_videocr_outdir.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
 btn_videocr_run = ctk.CTkButton(_brow4, text="Tách Sub Cứng (OCR)", command=start_videocr, height=36, font=("Arial", 13), state="disabled")
 btn_videocr_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
@@ -7386,6 +7708,31 @@ btn_stt_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_stt_open = ctk.CTkButton(_brow5, text="Mở Thư Mục STT", command=lambda: open_stt_folder(), height=36, font=("Arial", 13), state="disabled")
 btn_stt_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
+# ── Row 6: Giảm dung lượng MP4 ───────────────────────────────────────────────
+btn_compress_load = ctk.CTkButton(_brow6, text="Chọn Video (Nén)", command=load_compress_video, height=36, font=("Arial", 13))
+btn_compress_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_compress_outdir = ctk.CTkButton(_brow6, text="Chọn Output (Nén)", command=choose_compress_output_folder, height=36, font=("Arial", 13))
+btn_compress_outdir.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+ctk.CTkLabel(_brow6, text="Chất lượng:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
+compress_quality_var = ctk.StringVar(value="Khuyến nghị (CRF 23)")
+compress_quality_menu = ctk.CTkOptionMenu(
+    _brow6, variable=compress_quality_var,
+    values=["Cao (CRF 20)", "Khuyến nghị (CRF 23)", "Cân bằng (CRF 26)", "Nén mạnh (CRF 30)"],
+    width=175, font=("Arial", 12))
+compress_quality_menu.pack(side="left", padx=(0, 8))
+
+compress_gpu_var = ctk.BooleanVar(value=False)
+compress_gpu_check = ctk.CTkCheckBox(_brow6, text="GPU", variable=compress_gpu_var, width=70, font=("Arial", 12))
+compress_gpu_check.pack(side="left", padx=(0, 6))
+
+btn_compress_run = ctk.CTkButton(_brow6, text="Giảm Dung Lượng", command=start_compress_video, height=36, font=("Arial", 13), state="disabled")
+btn_compress_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_compress_open = ctk.CTkButton(_brow6, text="Mở Thư Mục", command=open_compress_folder, height=36, font=("Arial", 13), state="disabled")
+btn_compress_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
 
 # =========================
 # Mode switching
@@ -7406,9 +7753,10 @@ def set_mode(mode):
     _video_btns = [
         btn_choose_video, btn_scan_video, btn_repair_video, btn_clean_video
     ]
-    _pdf_btns     = [btn_load_pdf, btn_pdf_tts, btn_pdf_merge]
-    _videocr_btns = [btn_videocr_load, btn_videocr_run, btn_videocr_open]
-    _stt_btns     = [btn_stt_load, btn_stt_run, btn_stt_open]
+    _pdf_btns      = [btn_load_pdf, btn_pdf_tts, btn_pdf_merge]
+    _videocr_btns  = [btn_videocr_load, btn_videocr_run, btn_videocr_open]
+    _stt_btns      = [btn_stt_load, btn_stt_run, btn_stt_open]
+    _compress_btns = [btn_compress_load, btn_compress_run, btn_compress_open]
 
     # VideoOCR + STT: run/open disabled by default; specific modes re-enable
     btn_videocr_run.configure(state="disabled")
@@ -7418,6 +7766,11 @@ def set_mode(mode):
     btn_stt_load.configure(state="disabled")
     stt_model_menu.configure(state="disabled")
     stt_lang_menu.configure(state="disabled")
+    # Compress: run/open disabled by default
+    btn_compress_run.configure(state="disabled")
+    btn_compress_open.configure(state="disabled")
+    compress_quality_menu.configure(state="disabled")
+    compress_gpu_check.configure(state="disabled")
 
     # Helpers
     _rvc_voxcpm_ctrls = [
@@ -7520,6 +7873,9 @@ def set_mode(mode):
             b.configure(state="normal")
         btn_videocr_load.configure(state="normal")
         btn_stt_load.configure(state="normal")
+        btn_compress_load.configure(state="normal")
+        compress_quality_menu.configure(state="normal")
+        compress_gpu_check.configure(state="normal")
         btn_open_folder.configure(state="normal")
         _enable_voice_settings()
         _enable_rvc_voxcpm()
@@ -7668,6 +8024,39 @@ def set_mode(mode):
         btn_stt_open.configure(state="normal")
         stt_model_menu.configure(state="normal")
         stt_lang_menu.configure(state="normal")
+        _disable_voice_settings()
+        btn_reset_mode.configure(state="normal")
+
+    elif mode == "compress_ready":
+        # Video đã chọn, sẵn sàng nén
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns:
+            b.configure(state="disabled")
+        btn_compress_load.configure(state="normal")
+        btn_compress_run.configure(state="normal")
+        btn_compress_open.configure(state="disabled")
+        compress_quality_menu.configure(state="normal")
+        compress_gpu_check.configure(state="normal")
+        _disable_voice_settings()
+        btn_reset_mode.configure(state="normal")
+
+    elif mode == "compressing":
+        # Đang nén — tắt hết
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns:
+            b.configure(state="disabled")
+        compress_quality_menu.configure(state="disabled")
+        compress_gpu_check.configure(state="disabled")
+        _disable_voice_settings()
+        btn_reset_mode.configure(state="disabled")
+
+    elif mode == "compress_done":
+        # Nén xong
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns:
+            b.configure(state="disabled")
+        btn_compress_load.configure(state="normal")
+        btn_compress_run.configure(state="normal")
+        btn_compress_open.configure(state="normal")
+        compress_quality_menu.configure(state="normal")
+        compress_gpu_check.configure(state="normal")
         _disable_voice_settings()
         btn_reset_mode.configure(state="normal")
 
