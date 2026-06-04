@@ -12,6 +12,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 :: Full build — all 4 outputs (recommended)
 build_all.bat
 
+:: MSI-only rebuild (skips onefile exes, faster for WiX iteration)
+build_msi_protected.bat
+
 :: Dev run (no build needed)
 python apppp_integrated.py
 
@@ -42,7 +45,7 @@ Note: background shell processes do not inherit cwd — always use absolute path
 | 6C | `gen_integrity.py` |
 | **6G** | **FAIL-CLOSED** copy of 8 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` into `dist\SRT_TTS_Studio\`; verifies each file landed; aborts if anything missing. Must run before step 7 so WiX Heat picks them up. |
 | 6D/E/F | 3 onefile PyInstaller builds (Portable / Secured / Trial) |
-| 7–8 | WiX Heat → candle → light → MSI |
+| 7–8 | WiX Heat → candle → light → MSI (source: `product.wxs`) |
 | 9 | `output\SRT_TTS_Studio_Setup.msi` + `output\Portable\` (exes + companion files + models + rvc_env) |
 
 ### Spec files
@@ -181,6 +184,18 @@ Always use `update_progress(current, total)` — never manipulate `progress_var`
 ### Completion effect
 Call `app.after(0, show_fireworks)` when any major operation completes successfully. This is the convention used by all TTS, OCR, STT, and compress flows.
 
+Sound files bundled in the project root are played by `show_fireworks` and error handlers:
+- `chungtakhongthuocvenhau.WAV`, `toyeucaunhieulamday.WAV`, `naycaugioi.WAV` — success/fireworks sounds (randomly selected)
+- `error.wav` — played on critical errors
+
+### Button hover colors
+CTkButton does not support a built-in hover-color parameter for arbitrary colors. Use Tkinter `<Enter>`/`<Leave>` bindings instead:
+```python
+btn.bind("<Enter>", lambda e: btn.configure(fg_color="#8B5CF6"))
+btn.bind("<Leave>", lambda e: btn.configure(fg_color=["#3B8ED0", "#1F6AA5"]))
+```
+`["#3B8ED0", "#1F6AA5"]` is the CTkButton default (light/dark mode). Always restore via the list form so dark mode is respected.
+
 ### Subprocess rules
 
 **Always pre-check executable existence before `Popen`** — on Windows, `Popen` with `CREATE_NO_WINDOW` on a missing executable can hang waiting for Windows Error Reporting instead of raising `FileNotFoundError` immediately:
@@ -237,29 +252,47 @@ app.after(0, lambda: set_mode("tts_running"))
 4. `voxcpm_env` python found via `_find_voxcpm_python()`
 5. `voxcpm_helper.py` found in the standard search list
 
-### No-voice detection — `_detect_novoice()` / `_rename_novoice()`
+### Audio quality check — `_audio_quality_check()` / `_rename_bad_audio()` / `_sanitize_tts_text()`
 
-After every successful MP3 is produced (provider TTS, RVC, or VoxCPM), the file is checked for missing voice using `ffmpeg -af volumedetect`:
+After every successful MP3 is produced, it's QC'd with **one** `ffmpeg -af volumedetect` call that yields both `mean_volume` and `Duration`. Three failure modes are detected — silence alone is not enough, because Edge TTS hallucination produces audio that is *loud* but far too long:
+
+**`_audio_quality_check(filepath, text="")` → `(is_bad, reason, detail)`**, `reason ∈ {"", "novoice", "toolong", "tooshort"}`:
+- **novoice** — `mean_volume < -40 dB` (silent/noise). Normal speech ≈ -12 to -35 dB.
+- **toolong** — `dur > 5s` AND `dur > expected*3 + 1.5s` → hallucination / repeat / runaway. (`expected = 0.3 + nchar*0.09`; VN speech ≈ 0.08 s/char measured.)
+- **tooshort** — `nchar >= 12` AND `dur < expected*0.30` → truncated / missing content vs subtitle.
+
+Triggers in source text — ellipsis `...` and dialog dashes `- ` — are the common cause of both toolong and tooshort.
+
+**Key runtime fact: Edge TTS is non-deterministic** — the *same* text that produced 35s of garbage in one run produces correct 3.6s audio on retry. So the handling is a **QC + retry loop** (`_QC_MAX_RETRIES = 2`, i.e. 3 attempts) in the provider-TTS flows:
 
 ```python
-_is_nv, _mean_db = _detect_novoice(filepath)   # or await run_in_executor(...) in async
-if _is_nv:
-    _rename_novoice(filepath, idx, _mean_db)
-    FAIL_COUNT += 1
+for _qc_attempt in range(_QC_MAX_RETRIES + 1):
+    # same text on early attempts (non-determinism fixes it);
+    # sanitized text only on the LAST attempt as last resort
+    _gen_text = _sanitize_tts_text(text) if _qc_attempt == _QC_MAX_RETRIES else text
+    ok = await save_tts(_gen_text, filename)
+    if not ok: break
+    _bad, _reason, _detail = await run_in_executor(None, _audio_quality_check, filename, text)
+    if not _bad: break
+    # delete + retry
+# if still bad after all attempts → _rename_bad_audio() + FAIL_COUNT += 1
 ```
 
-**`_detect_novoice(filepath, mean_threshold=-40.0)`** — runs ffmpeg volumedetect, parses `mean_volume`, returns `(True, mean_db)` when `mean_db < threshold`. Normal TTS speech: mean ≈ -20 to -35 dB. No-voice / noise-only: mean < -40 dB.
+**`_sanitize_tts_text(text)`** — used only on the final retry: collapses `...`/`…` → `, ` and strips leading dialog dashes, preserving spoken content. (Don't apply it on attempt 0 — it occasionally trips Edge TTS "No audio received", and plain retry already recovers most cases.)
 
-**`_rename_novoice(filepath, idx, mean_db, label="")`** — renames `line_0002.mp3` → `line_0002_novoice.mp3` and logs a warning. Because the original filename no longer exists, the next Resume/re-run regenerates that line automatically.
+**`_rename_bad_audio(filepath, idx, reason, detail, label="")`** — renames to `line_0002_novoice.mp3` / `_toolong` / `_tooshort`. Original name no longer exists → next Resume regenerates that line, and the suffix tells the user which lines to inspect.
 
-Applied to all 4 TTS flows, always on the **final** file after any post-processing (RVC or VoxCPM wav→mp3 conversion):
+Applied to all 4 TTS flows, QC'd on the **final** file. Provider flows get the full retry loop; VoxCPM flows get detection + rename only (the helper does its own silence-retry internally, and re-running a single line mid-batch isn't feasible — text is passed via an `idx → text` map built from `items`):
 
-| Flow | Check point |
-|---|---|
-| `generate_tts()` — SRT + Provider ± RVC | After `save_tts` + optional RVC |
-| `_generate_pdf_tts()` — PDF + Provider ± RVC | After `save_tts` + optional RVC |
-| `_run_voxcpm_batch()` — SRT + VoxCPM | After ffmpeg wav→mp3 succeeds |
-| `_run_voxcpm_batch_pdf()` — PDF + VoxCPM | After ffmpeg wav→mp3 succeeds |
+| Flow | QC point | Retry loop? |
+|---|---|---|
+| `generate_tts()` — SRT + Provider | After `save_tts`, before RVC | ✅ |
+| `_generate_pdf_tts()` — PDF + Provider | After `save_tts`, before RVC | ✅ |
+| …both, when RVC enabled | Again on RVC **output** | detection + rename only |
+| `_run_voxcpm_batch()` — SRT + VoxCPM | After ffmpeg wav→mp3 | detection + rename only |
+| `_run_voxcpm_batch_pdf()` — PDF + VoxCPM | After ffmpeg wav→mp3 | detection + rename only |
+
+**RVC output is QC'd twice over**: once on the provider-TTS audio feeding into RVC (full retry loop), then again on the RVC output (detection + rename, label `[RVC]`). RVC preserves duration so the second pass mainly catches `novoice` (RVC producing silence without raising).
 
 ### Error handling during generation (FAIL + continue)
 

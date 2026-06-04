@@ -770,6 +770,10 @@ TTS_API_KEY = ""
 TTS_DELAY_MIN = 0.8   # giây — delay ngẫu nhiên giữa các lần generate
 TTS_DELAY_MAX = 2.5
 
+# Số lần tạo lại 1 dòng khi audio bị lỗi chất lượng (im lặng / quá dài do lặp /
+# quá ngắn do bị cắt). Tổng số lần thử = _QC_MAX_RETRIES + 1.
+_QC_MAX_RETRIES = 2
+
 RVC_ENABLED = False
 
 VOICE_LISTS = {
@@ -4452,16 +4456,37 @@ async def _generate_pdf_tts():
         preview = text[:60] + ("..." if len(text) > 60 else "")
         log(f"[PDF] {current_index + 1}/{total}: {preview}")
 
-        try:
-            ok = await save_tts(text, filename)
-        except QuotaExhaustedError as qe:
-            log(f"HẾT QUOTA: {qe}")
-            _provider = TTS_PROVIDER
-            app.after(0, lambda p=_provider: _show_quota_banner(p))
-            app.after(0, lambda: set_mode("tts_stopped"))
-            return
+        ok = False
+        _bad = False
+        _reason = ""
+        _detail = ""
+        for _qc_attempt in range(_QC_MAX_RETRIES + 1):
+            _gen_text = (_sanitize_tts_text(text)
+                         if _qc_attempt == _QC_MAX_RETRIES else text)
+            try:
+                ok = await save_tts(_gen_text, filename)
+            except QuotaExhaustedError as qe:
+                log(f"HẾT QUOTA: {qe}")
+                _provider = TTS_PROVIDER
+                app.after(0, lambda p=_provider: _show_quota_banner(p))
+                app.after(0, lambda: set_mode("tts_stopped"))
+                return
+            if not ok:
+                break
+            _loop = asyncio.get_event_loop()
+            _bad, _reason, _detail = await _loop.run_in_executor(
+                None, _audio_quality_check, filename, text)
+            if not _bad:
+                break
+            if _qc_attempt < _QC_MAX_RETRIES:
+                log(f"  ⚠ [PDF] Dòng {current_index}: audio {_reason} ({_detail}) — "
+                    f"tạo lại lần {_qc_attempt + 1}/{_QC_MAX_RETRIES}")
+                try:
+                    os.remove(filename)
+                except Exception:
+                    pass
 
-        if ok:
+        if ok and not _bad:
             log(f"[PDF] OK {current_index}")
             if RVC_ENABLED and os.path.exists(filename):
                 try:
@@ -4469,19 +4494,22 @@ async def _generate_pdf_tts():
                     _loop = asyncio.get_event_loop()
                     await _loop.run_in_executor(None, _apply_rvc_sync, filename)
                     log(f"  RVC OK")
+                    _rbad, _rreason, _rdetail = await _loop.run_in_executor(
+                        None, _audio_quality_check, filename, text)
+                    if _rbad:
+                        _rename_bad_audio(filename, current_index, _rreason, _rdetail, "RVC")
+                        log(f"[PDF] FAIL {current_index}")
+                        FAIL_COUNT += 1
                 except Exception as _rvc_err:
                     log(f"❌ RVC thất bại tại dòng {current_index}: {_rvc_err}")
                     log("  • Thử đổi Algo sang rmvpe hoặc harvest")
                     log("  • Thử chuyển Device sang CPU")
                     log(f"[PDF] FAIL {current_index}")
                     FAIL_COUNT += 1
-            if os.path.exists(filename):
-                _loop = asyncio.get_event_loop()
-                _is_nv, _mean_db = await _loop.run_in_executor(
-                    None, _detect_novoice, filename)
-                if _is_nv:
-                    _rename_novoice(filename, current_index, _mean_db, "PDF")
-                    FAIL_COUNT += 1
+        elif ok and _bad:
+            _rename_bad_audio(filename, current_index, _reason, _detail, "PDF")
+            log(f"[PDF] FAIL {current_index}")
+            FAIL_COUNT += 1
         else:
             log(f"[PDF] FAIL {current_index}")
             FAIL_COUNT += 1
@@ -4850,11 +4878,22 @@ def _reset_rvc_instance():
     pass  # không còn cache instance — subprocess stateless
 
 
-def _detect_novoice(filepath, mean_threshold=-40.0):
-    """Dùng ffmpeg volumedetect kiểm tra mean_volume của file audio.
-    Trả về (is_novoice: bool, mean_db: float).
-    Giọng TTS bình thường: mean ~-20 đến -35 dB.
-    File không có giọng (im lặng/nhiễu): mean < -40 dB.
+def _audio_quality_check(filepath, text="", mean_threshold=-40.0,
+                         sec_per_char=0.09, base_pad=0.3,
+                         long_factor=3.0, long_pad=1.5, long_floor=5.0,
+                         short_factor=0.30, short_min_chars=12):
+    """Kiểm tra chất lượng audio TTS bằng 1 lần gọi ffmpeg volumedetect:
+      1. Im lặng / không có giọng  → mean_volume < mean_threshold (-40 dB)
+      2. Quá dài so với text       → hallucination / đọc lặp / runaway
+      3. Quá ngắn so với text      → bị cắt / thiếu nội dung
+
+    So sánh độ dài: audio TTS tiếng Việt bình thường ~0.08 s/ký tự
+    (median đo thực tế). Kỳ vọng = base_pad + n_ký_tự * sec_per_char.
+      - "toolong"  khi dur > long_floor VÀ dur > kỳ_vọng*long_factor + long_pad
+      - "tooshort" khi n_ký_tự >= short_min_chars VÀ dur < kỳ_vọng*short_factor
+
+    Trả về (is_bad: bool, reason: str, detail: str).
+    reason ∈ {"", "novoice", "toolong", "tooshort"}.
     """
     try:
         ffmpeg = get_ffmpeg()
@@ -4863,31 +4902,76 @@ def _detect_novoice(filepath, mean_threshold=-40.0):
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30, creationflags=CREATE_NO_WINDOW,
         )
-        output = result.stderr
-        m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", output)
-        if not m:
-            return False, 0.0
-        mean_db = float(m.group(1))
-        return mean_db < mean_threshold, mean_db
+        out = result.stderr
+        mm = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", out)
+        mean_db = float(mm.group(1)) if mm else 0.0
+        dm = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", out)
+        dur = (float(dm.group(1)) * 3600 + float(dm.group(2)) * 60
+               + float(dm.group(3))) if dm else 0.0
+
+        # 1) im lặng / không có giọng
+        if mm and mean_db < mean_threshold:
+            return True, "novoice", f"mean={mean_db:.1f} dB"
+
+        # 2 & 3) so sánh độ dài audio với độ dài text
+        nchar = len((text or "").strip())
+        if nchar >= 2 and dur > 0:
+            expected = base_pad + nchar * sec_per_char
+            if dur > long_floor and dur > expected * long_factor + long_pad:
+                return True, "toolong", (f"{dur:.1f}s cho {nchar} ký tự "
+                                         f"(kỳ vọng ~{expected:.1f}s)")
+            if nchar >= short_min_chars and dur < expected * short_factor:
+                return True, "tooshort", (f"{dur:.1f}s cho {nchar} ký tự "
+                                          f"(kỳ vọng ~{expected:.1f}s)")
+        return False, "", f"mean={mean_db:.1f} dB, dur={dur:.1f}s"
     except Exception:
-        return False, 0.0
+        return False, "", ""
 
 
-def _rename_novoice(filepath, idx, mean_db, label=""):
-    """Đổi tên file không có giọng thêm hậu tố _novoice.
+_BAD_AUDIO_SUFFIX = {"novoice": "_novoice", "toolong": "_toolong",
+                     "tooshort": "_tooshort"}
+_BAD_AUDIO_DESC = {
+    "novoice":  "không có giọng",
+    "toolong":  "quá dài (có thể bị lặp / đọc sai)",
+    "tooshort": "quá ngắn (thiếu nội dung so với phụ đề)",
+}
+
+
+def _rename_bad_audio(filepath, idx, reason, detail, label=""):
+    """Đổi tên file audio lỗi thêm hậu tố theo loại lỗi (_novoice / _toolong /
+    _tooshort). Vì tên gốc không còn tồn tại, lần Resume sau sẽ tự tạo lại dòng đó.
     Trả về đường dẫn mới nếu thành công, None nếu thất bại.
     """
+    suffix = _BAD_AUDIO_SUFFIX.get(reason, "_bad")
+    desc = _BAD_AUDIO_DESC.get(reason, "lỗi")
     base, ext = os.path.splitext(filepath)
-    new_path = base + "_novoice" + ext
+    new_path = base + suffix + ext
     try:
+        if os.path.exists(new_path):
+            os.remove(new_path)
         os.rename(filepath, new_path)
         tag = f"[{label}] " if label else ""
-        log(f"⚠ {tag}Dòng {idx}: audio không có giọng "
-            f"(mean={mean_db:.1f} dB) → {os.path.basename(new_path)}")
+        log(f"⚠ {tag}Dòng {idx}: audio {desc} ({detail}) → {os.path.basename(new_path)}")
         return new_path
     except Exception as e:
-        log(f"⚠ Dòng {idx}: audio không có giọng nhưng không đổi tên được: {e}")
+        log(f"⚠ Dòng {idx}: audio {desc} nhưng không đổi tên được: {e}")
         return None
+
+
+def _sanitize_tts_text(text):
+    """Chuẩn hóa các pattern dễ làm TTS đọc lặp / runaway / cắt giữa chừng.
+    Chỉ dùng khi TẠO LẠI một dòng đã sinh audio lỗi — giữ nguyên nội dung
+    đọc được, chỉ bỏ các ký hiệu gây nhiễu cho engine TTS:
+      - "..." / "…" (nhiều dấu chấm) → ", "  (engine hay đọc lặp ở dấu lửng)
+      - gạch đầu dòng hội thoại "- " → bỏ
+      - gộp khoảng trắng thừa
+    """
+    t = re.sub(r"\.{2,}", ", ", text)        # "..." → ", "
+    t = t.replace("…", ", ")                  # ký tự ellipsis
+    t = re.sub(r"(^|\s)[-–—]\s+", r"\1", t)  # gạch đầu dòng hội thoại
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    t = re.sub(r"(,\s*){2,}", ", ", t)        # gộp ", , ," → ", "
+    return t or text                          # tránh trả chuỗi rỗng
 
 
 def _check_rvc_preflight():
@@ -5098,16 +5182,43 @@ async def generate_tts():
 
         log(f"Generating {filename}")
 
-        try:
-            ok = await save_tts(text, filename)
-        except QuotaExhaustedError as qe:
-            log(f"HẾT QUOTA: {qe}")
-            _provider = TTS_PROVIDER
-            app.after(0, lambda p=_provider: _show_quota_banner(p))
-            app.after(0, lambda: set_mode("tts_stopped"))
-            return
+        # Tạo audio + kiểm tra chất lượng. Nếu im lặng / quá dài (lặp) / quá ngắn
+        # (bị cắt) thì xóa và tạo lại tối đa _QC_MAX_RETRIES lần (TTS không tất định
+        # nên lần tạo lại thường ra audio đúng).
+        ok = False
+        _bad = False
+        _reason = ""
+        _detail = ""
+        for _qc_attempt in range(_QC_MAX_RETRIES + 1):
+            # Edge TTS không tất định: tạo lại CÙNG text thường tự ra audio đúng
+            # (đã kiểm chứng). Chỉ ở lần thử CUỐI mới dùng text chuẩn hóa
+            # (bỏ "...", gạch hội thoại) như phương án chót.
+            _gen_text = (_sanitize_tts_text(text)
+                         if _qc_attempt == _QC_MAX_RETRIES else text)
+            try:
+                ok = await save_tts(_gen_text, filename)
+            except QuotaExhaustedError as qe:
+                log(f"HẾT QUOTA: {qe}")
+                _provider = TTS_PROVIDER
+                app.after(0, lambda p=_provider: _show_quota_banner(p))
+                app.after(0, lambda: set_mode("tts_stopped"))
+                return
+            if not ok:
+                break
+            _loop = asyncio.get_event_loop()
+            _bad, _reason, _detail = await _loop.run_in_executor(
+                None, _audio_quality_check, filename, text)
+            if not _bad:
+                break
+            if _qc_attempt < _QC_MAX_RETRIES:
+                log(f"  ⚠ Dòng {current_index}: audio {_reason} ({_detail}) — "
+                    f"tạo lại lần {_qc_attempt + 1}/{_QC_MAX_RETRIES}")
+                try:
+                    os.remove(filename)
+                except Exception:
+                    pass
 
-        if ok:
+        if ok and not _bad:
             log(f"OK {current_index}")
             if RVC_ENABLED and os.path.exists(filename):
                 try:
@@ -5115,6 +5226,14 @@ async def generate_tts():
                     _loop = asyncio.get_event_loop()
                     await _loop.run_in_executor(None, _apply_rvc_sync, filename)
                     log(f"  RVC OK")
+                    # QC lại output RVC: RVC giữ nguyên độ dài nên chủ yếu bắt
+                    # trường hợp RVC ra file im lặng (model lỗi mà không raise).
+                    _rbad, _rreason, _rdetail = await _loop.run_in_executor(
+                        None, _audio_quality_check, filename, text)
+                    if _rbad:
+                        _rename_bad_audio(filename, current_index, _rreason, _rdetail, "RVC")
+                        log(f"FAIL {current_index}")
+                        FAIL_COUNT += 1
                 except Exception as _rvc_err:
                     log(f"❌ RVC thất bại tại dòng {current_index}: {_rvc_err}")
                     log("  • Kiểm tra file model (.pth) có đúng đường dẫn không")
@@ -5123,14 +5242,11 @@ async def generate_tts():
                     log("  • Thử chuyển Device sang CPU")
                     log(f"FAIL {current_index}")
                     FAIL_COUNT += 1
-            # Kiểm tra novoice sau khi file đã hoàn chỉnh (kể cả sau RVC)
-            if os.path.exists(filename):
-                _loop = asyncio.get_event_loop()
-                _is_nv, _mean_db = await _loop.run_in_executor(
-                    None, _detect_novoice, filename)
-                if _is_nv:
-                    _rename_novoice(filename, current_index, _mean_db)
-                    FAIL_COUNT += 1
+        elif ok and _bad:
+            # Hết lượt thử mà audio vẫn lỗi → đổi tên đánh dấu, Resume sẽ tạo lại
+            _rename_bad_audio(filename, current_index, _reason, _detail)
+            log(f"FAIL {current_index}")
+            FAIL_COUNT += 1
         else:
             log(f"FAIL {current_index}")
             FAIL_COUNT += 1
@@ -5352,6 +5468,7 @@ def _run_voxcpm_batch():
         text = clean_text(sub.content)
         if text:
             items.append({"index": i, "text": text})
+    _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_voxcpm_texts.json")
     try:
@@ -5417,9 +5534,10 @@ def _run_voxcpm_batch():
                     except Exception:
                         pass
                     if r.returncode == 0:
-                        _is_nv, _mean_db = _detect_novoice(mp3_path)
-                        if _is_nv:
-                            _rename_novoice(mp3_path, idx, _mean_db)
+                        _bad, _reason, _detail = _audio_quality_check(
+                            mp3_path, _text_by_idx.get(idx, ""))
+                        if _bad:
+                            _rename_bad_audio(mp3_path, idx, _reason, _detail)
                             FAIL_COUNT += 1
                         else:
                             log(f"OK {idx}")
@@ -5558,6 +5676,7 @@ def _run_voxcpm_batch_pdf():
     # Ghi PDF chunks ra JSON — dùng prefix pdf_ để phân biệt với SRT
     items = [{"index": i, "text": chunk}
              for i, chunk in enumerate(PDF_CHUNKS) if chunk.strip()]
+    _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_voxcpm_pdf_texts.json")
     try:
@@ -5624,9 +5743,10 @@ def _run_voxcpm_batch_pdf():
                     except Exception:
                         pass
                     if r.returncode == 0:
-                        _is_nv, _mean_db = _detect_novoice(mp3_path)
-                        if _is_nv:
-                            _rename_novoice(mp3_path, idx, _mean_db, "PDF")
+                        _bad, _reason, _detail = _audio_quality_check(
+                            mp3_path, _text_by_idx.get(idx, ""))
+                        if _bad:
+                            _rename_bad_audio(mp3_path, idx, _reason, _detail, "PDF")
                             FAIL_COUNT += 1
                         else:
                             log(f"[PDF] VoxCPM OK {idx}")
@@ -7770,6 +7890,8 @@ btn_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 btn_open_se = ctk.CTkButton(_brow0, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_open_se.bind("<Enter>", lambda e: btn_open_se.configure(fg_color="#8B5CF6"))
+btn_open_se.bind("<Leave>", lambda e: btn_open_se.configure(fg_color=["#3B8ED0", "#1F6AA5"]))
 
 btn_edit = ctk.CTkButton(_brow0, text="Regenerate Line", command=ask_line_edit, height=36, font=("Arial", 13))
 btn_edit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
