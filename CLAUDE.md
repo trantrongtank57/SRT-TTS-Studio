@@ -205,6 +205,92 @@ Check pattern: `os.path.isfile(path) or shutil.which(path)`.
 ### Launching external applications
 Use `ctypes.windll.shell32.ShellExecuteW(None, "open", exe, args, None, 1)` instead of `subprocess.Popen` to launch GUI apps like Subtitle Edit. This launches them as independent processes (not child processes) so that the Windows IME (Unikey/EVKey Vietnamese input) works correctly. If launched as a child process via `Popen`, UIPI blocks IME keystrokes to the child window.
 
+## Voice Clone Pre-flight Validation Pattern
+
+All TTS entry points that support RVC or VoxCPM **must** validate voice clone components **before** calling `set_mode("tts_running")`. If validation fails, log the error and `return` — the UI stays in its pre-run state (no stuck "running" mode).
+
+### RVC pre-flight — `_check_rvc_preflight()`
+
+A shared helper (defined just before `_apply_rvc_sync`) that validates:
+1. Model (.pth) field not empty
+2. Model file exists on disk
+3. Index file exists on disk (if the field is non-empty)
+4. `rvc_helper.py` findable next to app/exe or `sys._MEIPASS`
+5. `rvc_env\Scripts\python.exe` found within 3 parent directories of the exe
+
+Returns `True` if all checks pass; logs `❌` guidance and returns `False` otherwise.
+
+**Usage pattern** (all 4 voice-enabled TTS entry points):
+```python
+# Inside generate_tts() / _generate_pdf_tts() / _quick_tts_run._run()
+if RVC_ENABLED and not _check_rvc_preflight():
+    return  # logged already — UI unchanged, no set_mode("tts_running") called yet
+app.after(0, lambda: set_mode("tts_running"))
+```
+
+### VoxCPM pre-flight — inline in each batch function
+
+`_run_voxcpm_batch()` and `_run_voxcpm_batch_pdf()` validate inline (before `set_mode("tts_running")`):
+1. `ckpt_dir` not empty
+2. `ckpt_dir` is an existing directory
+3. `ref_audio` file exists (if field is non-empty)
+4. `voxcpm_env` python found via `_find_voxcpm_python()`
+5. `voxcpm_helper.py` found in the standard search list
+
+### No-voice detection — `_detect_novoice()` / `_rename_novoice()`
+
+After every successful MP3 is produced (provider TTS, RVC, or VoxCPM), the file is checked for missing voice using `ffmpeg -af volumedetect`:
+
+```python
+_is_nv, _mean_db = _detect_novoice(filepath)   # or await run_in_executor(...) in async
+if _is_nv:
+    _rename_novoice(filepath, idx, _mean_db)
+    FAIL_COUNT += 1
+```
+
+**`_detect_novoice(filepath, mean_threshold=-40.0)`** — runs ffmpeg volumedetect, parses `mean_volume`, returns `(True, mean_db)` when `mean_db < threshold`. Normal TTS speech: mean ≈ -20 to -35 dB. No-voice / noise-only: mean < -40 dB.
+
+**`_rename_novoice(filepath, idx, mean_db, label="")`** — renames `line_0002.mp3` → `line_0002_novoice.mp3` and logs a warning. Because the original filename no longer exists, the next Resume/re-run regenerates that line automatically.
+
+Applied to all 4 TTS flows, always on the **final** file after any post-processing (RVC or VoxCPM wav→mp3 conversion):
+
+| Flow | Check point |
+|---|---|
+| `generate_tts()` — SRT + Provider ± RVC | After `save_tts` + optional RVC |
+| `_generate_pdf_tts()` — PDF + Provider ± RVC | After `save_tts` + optional RVC |
+| `_run_voxcpm_batch()` — SRT + VoxCPM | After ffmpeg wav→mp3 succeeds |
+| `_run_voxcpm_batch_pdf()` — PDF + VoxCPM | After ffmpeg wav→mp3 succeeds |
+
+### Error handling during generation (FAIL + continue)
+
+When a voice clone step fails **during** a batch run (not pre-flight), the convention is to log the error and **continue** to the next line — never stop the whole process:
+
+```python
+# RVC failure mid-batch — FAIL + continue
+except Exception as _rvc_err:
+    log(f"❌ RVC thất bại tại dòng {current_index}: {_rvc_err}")
+    log(f"FAIL {current_index}")
+    FAIL_COUNT += 1
+# (no return, loop continues)
+
+# VoxCPM helper ERROR:{idx}:... signal — FAIL + continue
+elif line.startswith("ERROR:"):
+    _fail_idx = int(line.split(":", 2)[1])
+    log(f"❌ VoxCPM {line}")
+    log(f"FAIL {_fail_idx}")
+    FAIL_COUNT += 1
+    done_count += 1
+    update_progress(done_count, len(items))
+```
+
+`voxcpm_helper.py` stdout protocol:
+| Signal | Meaning |
+|---|---|
+| `DONE:{idx}` | Line generated — wav ready to convert to mp3 |
+| `ERROR:{idx}:{reason}` | Line failed (audio silent after retries) — main app logs FAIL, continues |
+| `WARN:{idx}:{reason}` | Silent attempt, retrying |
+| `ALL_DONE` | Batch finished |
+
 ## Companion Script System
 
 8 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.

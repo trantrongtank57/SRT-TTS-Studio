@@ -1656,6 +1656,26 @@ def _quick_tts_run():
         _quick_tts_output_var.set(out)
 
     def _run():
+        # ── Pre-flight kiểm tra trước khi chạy ──────────────────────────────
+        if VOXCPM_ENABLED:
+            _qt_ckpt = voxcpm_ckpt_var.get().strip()
+            if not _qt_ckpt:
+                log("[Quick TTS] ❌ VoxCPM Clone: Chưa nhập đường dẫn thư mục Model")
+                log("  • Nhấn Browse ở ô Model để chọn thư mục chứa model VoxCPM")
+                return
+            if not os.path.isdir(_qt_ckpt):
+                log(f"[Quick TTS] ❌ VoxCPM Clone: Không tìm thấy thư mục Model: {_qt_ckpt}")
+                log("  • Kiểm tra lại đường dẫn — thư mục có thể đã bị di chuyển")
+                return
+            _qt_ref = voxcpm_ref_var.get().strip()
+            if _qt_ref and not os.path.isfile(_qt_ref):
+                log(f"[Quick TTS] ❌ VoxCPM Clone: Không tìm thấy file Audio mẫu: {_qt_ref}")
+                log("  • Browse lại để chọn đúng file, hoặc để trống nếu không dùng")
+                return
+        elif RVC_ENABLED:
+            if not _check_rvc_preflight():
+                return
+
         # VoxCPM chạy local; còn lại cần internet
         if not VOXCPM_ENABLED and not _require_internet("Quick TTS"):
             return
@@ -4392,6 +4412,10 @@ async def _generate_pdf_tts():
         return
 
     FAIL_COUNT = 0
+
+    if RVC_ENABLED and not _check_rvc_preflight():
+        return
+
     app.after(0, _hide_quota_banner)
     app.after(0, lambda: set_mode("tts_running"))
 
@@ -4447,14 +4471,17 @@ async def _generate_pdf_tts():
                     log(f"  RVC OK")
                 except Exception as _rvc_err:
                     log(f"❌ RVC thất bại tại dòng {current_index}: {_rvc_err}")
-                    log("━━━ Hướng xử lý RVC ━━━")
-                    log("  • Kiểm tra file model (.pth) có đúng đường dẫn không")
-                    log("  • Đảm bảo rvc_env\\Scripts\\python.exe tồn tại")
                     log("  • Thử đổi Algo sang rmvpe hoặc harvest")
                     log("  • Thử chuyển Device sang CPU")
-                    log("  • Xem chi tiết lỗi bên trên để biết nguyên nhân cụ thể")
-                    app.after(0, lambda: set_mode("tts_stopped"))
-                    return
+                    log(f"[PDF] FAIL {current_index}")
+                    FAIL_COUNT += 1
+            if os.path.exists(filename):
+                _loop = asyncio.get_event_loop()
+                _is_nv, _mean_db = await _loop.run_in_executor(
+                    None, _detect_novoice, filename)
+                if _is_nv:
+                    _rename_novoice(filename, current_index, _mean_db, "PDF")
+                    FAIL_COUNT += 1
         else:
             log(f"[PDF] FAIL {current_index}")
             FAIL_COUNT += 1
@@ -4823,6 +4850,91 @@ def _reset_rvc_instance():
     pass  # không còn cache instance — subprocess stateless
 
 
+def _detect_novoice(filepath, mean_threshold=-40.0):
+    """Dùng ffmpeg volumedetect kiểm tra mean_volume của file audio.
+    Trả về (is_novoice: bool, mean_db: float).
+    Giọng TTS bình thường: mean ~-20 đến -35 dB.
+    File không có giọng (im lặng/nhiễu): mean < -40 dB.
+    """
+    try:
+        ffmpeg = get_ffmpeg()
+        result = subprocess.run(
+            [ffmpeg, "-i", filepath, "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, creationflags=CREATE_NO_WINDOW,
+        )
+        output = result.stderr
+        m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", output)
+        if not m:
+            return False, 0.0
+        mean_db = float(m.group(1))
+        return mean_db < mean_threshold, mean_db
+    except Exception:
+        return False, 0.0
+
+
+def _rename_novoice(filepath, idx, mean_db, label=""):
+    """Đổi tên file không có giọng thêm hậu tố _novoice.
+    Trả về đường dẫn mới nếu thành công, None nếu thất bại.
+    """
+    base, ext = os.path.splitext(filepath)
+    new_path = base + "_novoice" + ext
+    try:
+        os.rename(filepath, new_path)
+        tag = f"[{label}] " if label else ""
+        log(f"⚠ {tag}Dòng {idx}: audio không có giọng "
+            f"(mean={mean_db:.1f} dB) → {os.path.basename(new_path)}")
+        return new_path
+    except Exception as e:
+        log(f"⚠ Dòng {idx}: audio không có giọng nhưng không đổi tên được: {e}")
+        return None
+
+
+def _check_rvc_preflight():
+    """Kiểm tra các thành phần RVC trước khi bắt đầu tiến trình.
+    Trả về True nếu hợp lệ, False + log lỗi nếu không.
+    """
+    _model = rvc_model_var.get().strip()
+    if not _model:
+        log("❌ RVC Voice Clone: Chưa chọn file Model (.pth) — tiến trình bị hủy")
+        log("  • Nhấn Browse ở ô Model (.pth) để chọn file model RVC")
+        log("  • File model thường có đuôi .pth, ví dụ: my_voice.pth")
+        return False
+    if not os.path.isfile(_model):
+        log(f"❌ RVC Voice Clone: Không tìm thấy file Model: {_model}")
+        log("  • Kiểm tra lại đường dẫn file model (.pth)")
+        log("  • File có thể đã bị di chuyển hoặc xóa — Browse lại để chọn đúng file")
+        return False
+    _index = rvc_index_var.get().strip()
+    if _index and not os.path.isfile(_index):
+        log(f"❌ RVC Voice Clone: Không tìm thấy file Index: {_index}")
+        log("  • Kiểm tra lại đường dẫn file Index (.index)")
+        log("  • Để trống ô Index nếu không dùng file index")
+        return False
+    _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    _helper = os.path.join(_base, 'rvc_helper.py')
+    if not os.path.exists(_helper):
+        _helper = os.path.join(os.path.dirname(sys.executable), 'rvc_helper.py')
+    if not os.path.exists(_helper):
+        log("❌ RVC Voice Clone: Không tìm thấy rvc_helper.py")
+        log("  • Đảm bảo rvc_helper.py nằm cùng thư mục với app hoặc exe")
+        return False
+    _srch = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+             else os.path.dirname(os.path.abspath(__file__)))
+    _s = _srch
+    for _ in range(3):
+        if os.path.exists(os.path.join(_s, 'rvc_env', 'Scripts', 'python.exe')):
+            return True
+        _p = os.path.dirname(_s)
+        if _p == _s:
+            break
+        _s = _p
+    log("❌ RVC Voice Clone: Không tìm thấy rvc_env\\Scripts\\python.exe")
+    log("  • Đảm bảo thư mục rvc_env\\ nằm cạnh app/exe")
+    log("  • rvc_env cần Python 3.10 với infer_rvc_python + fairseq đã cài")
+    return False
+
+
 def _apply_rvc_sync(filename):
     model_path = rvc_model_var.get().strip()
     index_path = rvc_index_var.get().strip()
@@ -4938,6 +5050,9 @@ async def generate_tts():
 
     FAIL_COUNT = 0
 
+    if RVC_ENABLED and not _check_rvc_preflight():
+        return
+
     app.after(0, _hide_quota_banner)
     app.after(0, lambda: set_mode("tts_running"))
 
@@ -5002,14 +5117,20 @@ async def generate_tts():
                     log(f"  RVC OK")
                 except Exception as _rvc_err:
                     log(f"❌ RVC thất bại tại dòng {current_index}: {_rvc_err}")
-                    log("━━━ Hướng xử lý RVC ━━━")
                     log("  • Kiểm tra file model (.pth) có đúng đường dẫn không")
                     log("  • Đảm bảo rvc_env\\Scripts\\python.exe tồn tại")
                     log("  • Thử đổi Algo sang rmvpe hoặc harvest")
                     log("  • Thử chuyển Device sang CPU")
-                    log("  • Xem chi tiết lỗi bên trên để biết nguyên nhân cụ thể")
-                    app.after(0, lambda: set_mode("tts_stopped"))
-                    return
+                    log(f"FAIL {current_index}")
+                    FAIL_COUNT += 1
+            # Kiểm tra novoice sau khi file đã hoàn chỉnh (kể cả sau RVC)
+            if os.path.exists(filename):
+                _loop = asyncio.get_event_loop()
+                _is_nv, _mean_db = await _loop.run_in_executor(
+                    None, _detect_novoice, filename)
+                if _is_nv:
+                    _rename_novoice(filename, current_index, _mean_db)
+                    FAIL_COUNT += 1
         else:
             log(f"FAIL {current_index}")
             FAIL_COUNT += 1
@@ -5151,21 +5272,34 @@ def _find_voxcpm_python(ckpt_dir):
 
 def _run_voxcpm_batch():
     """Chạy VoxCPM batch generation trong daemon thread."""
-    global current_index, stop_requested
+    global current_index, stop_requested, FAIL_COUNT
 
     load_subtitles(force_select=False)
     if not subtitles_cache:
         return
 
-    app.after(0, lambda: set_mode("tts_running"))
+    FAIL_COUNT = 0
 
+    # ── VoxCPM pre-flight: kiểm tra trước khi bắt đầu ───────────────────────
     ckpt_dir = voxcpm_ckpt_var.get().strip()
-    if not ckpt_dir or not os.path.isdir(ckpt_dir):
-        log("VoxCPM: Chưa chọn hoặc không tìm thấy thư mục model")
-        app.after(0, lambda: set_mode("tts_stopped"))
+    if not ckpt_dir:
+        log("❌ VoxCPM Clone: Chưa nhập đường dẫn thư mục Model — tiến trình bị hủy")
+        log("  • Nhấn Browse ở ô Model để chọn thư mục chứa model VoxCPM")
+        log("  • Ví dụ: E:\\VoxCPM-1.5-VN\\VoxCPM\\pretrained\\VoxCPM-1.5-VN")
+        return
+    if not os.path.isdir(ckpt_dir):
+        log(f"❌ VoxCPM Clone: Không tìm thấy thư mục Model: {ckpt_dir}")
+        log("  • Kiểm tra lại đường dẫn thư mục model")
+        log("  • Thư mục có thể đã bị đổi tên hoặc di chuyển — Browse lại để chọn đúng")
         return
 
     ref_audio = voxcpm_ref_var.get().strip()
+    if ref_audio and not os.path.isfile(ref_audio):
+        log(f"❌ VoxCPM Clone: Không tìm thấy file Audio mẫu: {ref_audio}")
+        log("  • Kiểm tra lại đường dẫn file Audio mẫu")
+        log("  • File có thể đã bị di chuyển hoặc xóa — Browse lại để chọn đúng file")
+        log("  • Để trống ô Audio mẫu nếu không dùng giọng tham chiếu")
+        return
     ref_text  = voxcpm_reftext_var.get().strip()
 
     try:
@@ -5180,8 +5314,9 @@ def _run_voxcpm_batch():
     # Tìm voxcpm_env python
     voxcpm_py = _find_voxcpm_python(ckpt_dir)
     if not voxcpm_py:
-        log("VoxCPM: Không tìm thấy voxcpm_env/Scripts/python.exe gần thư mục model")
-        app.after(0, lambda: set_mode("tts_stopped"))
+        log("❌ VoxCPM Clone: Không tìm thấy voxcpm_env\\Scripts\\python.exe — tiến trình bị hủy")
+        log("  • Đảm bảo thư mục voxcpm_env\\ nằm gần thư mục model hoặc cạnh app/exe")
+        log("  • Có thể cấu hình python tùy chỉnh trong ⚙ Cài đặt → voxcpm_env_override")
         return
 
     # Tìm voxcpm_helper.py — thử nhiều vị trí
@@ -5204,9 +5339,12 @@ def _run_voxcpm_batch():
             helper = _c
             break
     if not helper:
-        log(f"VoxCPM: Không tìm thấy voxcpm_helper.py. Đã tìm trong: {_helper_dirs}")
-        app.after(0, lambda: set_mode("tts_stopped"))
+        log(f"❌ VoxCPM Clone: Không tìm thấy voxcpm_helper.py — tiến trình bị hủy")
+        log("  • Đảm bảo voxcpm_helper.py nằm cùng thư mục với app hoặc exe")
         return
+    # ── Kết thúc VoxCPM pre-flight ───────────────────────────────────────────
+
+    app.after(0, lambda: set_mode("tts_running"))
 
     # Ghi texts ra JSON tạm
     items = []
@@ -5279,9 +5417,20 @@ def _run_voxcpm_batch():
                     except Exception:
                         pass
                     if r.returncode == 0:
-                        log(f"OK {idx}")
+                        _is_nv, _mean_db = _detect_novoice(mp3_path)
+                        if _is_nv:
+                            _rename_novoice(mp3_path, idx, _mean_db)
+                            FAIL_COUNT += 1
+                        else:
+                            log(f"OK {idx}")
                     else:
-                        log(f"FFMPEG lỗi line {idx}")
+                        log(f"❌ VoxCPM FFMPEG lỗi line {idx}")
+                        log(f"FAIL {idx}")
+                        FAIL_COUNT += 1
+                else:
+                    log(f"❌ VoxCPM không tạo được audio dòng {idx}")
+                    log(f"FAIL {idx}")
+                    FAIL_COUNT += 1
                 done_count += 1
                 _p = done_count / max(len(items), 1)
                 app.after(0, lambda p=_p, i=done_count, t=len(items):
@@ -5293,7 +5442,19 @@ def _run_voxcpm_batch():
             elif line == "ALL_DONE":
                 break
             elif line.startswith("ERROR:"):
-                log(f"VoxCPM {line}")
+                # Trích idx từ ERROR:{idx}:... để log FAIL N giống provider TTS
+                try:
+                    _parts = line.split(":", 2)
+                    _fail_idx = int(_parts[1])
+                    log(f"❌ VoxCPM {line}")
+                    log(f"FAIL {_fail_idx}")
+                    FAIL_COUNT += 1
+                    done_count += 1
+                    _p = done_count / max(len(items), 1)
+                    app.after(0, lambda p=_p, i=done_count, t=len(items):
+                              update_progress(i, t))
+                except (IndexError, ValueError):
+                    log(f"VoxCPM {line}")
     except Exception as e:
         log(f"VoxCPM stream error: {e}")
 
@@ -5322,21 +5483,34 @@ def _run_voxcpm_batch():
 
 def _run_voxcpm_batch_pdf():
     """VoxCPM batch cho PDF chunks — giống _run_voxcpm_batch nhưng dùng PDF_CHUNKS."""
-    global current_index, stop_requested
+    global current_index, stop_requested, FAIL_COUNT
 
     if not PDF_CHUNKS:
         log("[PDF] Chưa load file PDF")
         return
 
-    app.after(0, lambda: set_mode("tts_running"))
+    FAIL_COUNT = 0
 
+    # ── VoxCPM pre-flight ────────────────────────────────────────────────────
     ckpt_dir = voxcpm_ckpt_var.get().strip()
-    if not ckpt_dir or not os.path.isdir(ckpt_dir):
-        log("VoxCPM: Chưa chọn hoặc không tìm thấy thư mục model")
-        app.after(0, lambda: set_mode("tts_stopped"))
+    if not ckpt_dir:
+        log("❌ VoxCPM Clone: Chưa nhập đường dẫn thư mục Model — tiến trình bị hủy")
+        log("  • Nhấn Browse ở ô Model để chọn thư mục chứa model VoxCPM")
+        log("  • Ví dụ: E:\\VoxCPM-1.5-VN\\VoxCPM\\pretrained\\VoxCPM-1.5-VN")
+        return
+    if not os.path.isdir(ckpt_dir):
+        log(f"❌ VoxCPM Clone: Không tìm thấy thư mục Model: {ckpt_dir}")
+        log("  • Kiểm tra lại đường dẫn thư mục model")
+        log("  • Thư mục có thể đã bị đổi tên hoặc di chuyển — Browse lại để chọn đúng")
         return
 
     ref_audio = voxcpm_ref_var.get().strip()
+    if ref_audio and not os.path.isfile(ref_audio):
+        log(f"❌ VoxCPM Clone: Không tìm thấy file Audio mẫu: {ref_audio}")
+        log("  • Kiểm tra lại đường dẫn file Audio mẫu")
+        log("  • File có thể đã bị di chuyển hoặc xóa — Browse lại để chọn đúng file")
+        log("  • Để trống ô Audio mẫu nếu không dùng giọng tham chiếu")
+        return
     ref_text  = voxcpm_reftext_var.get().strip()
 
     try:
@@ -5350,8 +5524,9 @@ def _run_voxcpm_batch_pdf():
 
     voxcpm_py = _find_voxcpm_python(ckpt_dir)
     if not voxcpm_py:
-        log("VoxCPM: Không tìm thấy voxcpm_env/Scripts/python.exe")
-        app.after(0, lambda: set_mode("tts_stopped"))
+        log("❌ VoxCPM Clone: Không tìm thấy voxcpm_env\\Scripts\\python.exe — tiến trình bị hủy")
+        log("  • Đảm bảo thư mục voxcpm_env\\ nằm gần thư mục model hoặc cạnh app/exe")
+        log("  • Có thể cấu hình python tùy chỉnh trong ⚙ Cài đặt → voxcpm_env_override")
         return
 
     _helper_dirs = []
@@ -5373,9 +5548,12 @@ def _run_voxcpm_batch_pdf():
             helper = _c
             break
     if not helper:
-        log(f"VoxCPM: Không tìm thấy voxcpm_helper.py. Đã tìm trong: {_helper_dirs}")
-        app.after(0, lambda: set_mode("tts_stopped"))
+        log(f"❌ VoxCPM Clone: Không tìm thấy voxcpm_helper.py — tiến trình bị hủy")
+        log("  • Đảm bảo voxcpm_helper.py nằm cùng thư mục với app hoặc exe")
         return
+    # ── Kết thúc VoxCPM pre-flight ───────────────────────────────────────────
+
+    app.after(0, lambda: set_mode("tts_running"))
 
     # Ghi PDF chunks ra JSON — dùng prefix pdf_ để phân biệt với SRT
     items = [{"index": i, "text": chunk}
@@ -5446,9 +5624,20 @@ def _run_voxcpm_batch_pdf():
                     except Exception:
                         pass
                     if r.returncode == 0:
-                        log(f"[PDF] VoxCPM OK {idx}")
+                        _is_nv, _mean_db = _detect_novoice(mp3_path)
+                        if _is_nv:
+                            _rename_novoice(mp3_path, idx, _mean_db, "PDF")
+                            FAIL_COUNT += 1
+                        else:
+                            log(f"[PDF] VoxCPM OK {idx}")
                     else:
-                        log(f"[PDF] VoxCPM ffmpeg lỗi {idx}")
+                        log(f"❌ VoxCPM PDF FFMPEG lỗi line {idx}")
+                        log(f"[PDF] FAIL {idx}")
+                        FAIL_COUNT += 1
+                else:
+                    log(f"❌ VoxCPM PDF không tạo được audio đoạn {idx}")
+                    log(f"[PDF] FAIL {idx}")
+                    FAIL_COUNT += 1
                 done_count += 1
                 app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
             elif line.startswith("WARN:"):
@@ -5458,7 +5647,16 @@ def _run_voxcpm_batch_pdf():
             elif line == "ALL_DONE":
                 break
             elif line.startswith("ERROR:"):
-                log(f"VoxCPM PDF {line}")
+                try:
+                    _parts = line.split(":", 2)
+                    _fail_idx = int(_parts[1])
+                    log(f"❌ VoxCPM PDF {line}")
+                    log(f"[PDF] FAIL {_fail_idx}")
+                    FAIL_COUNT += 1
+                    done_count += 1
+                    app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+                except (IndexError, ValueError):
+                    log(f"VoxCPM PDF {line}")
     except Exception as e:
         log(f"VoxCPM PDF stream error: {e}")
 
