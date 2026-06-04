@@ -167,7 +167,7 @@ The button panel uses 7 fixed rows (`_brow0`–`_brow6`) created once at startup
 2. New `elif mode == "feature_ready":` / `"feature_running":` / `"feature_done":` branches
 3. The feature's buttons included in the disable sweep of all unrelated modes
 
-Current modes: `srt`, `pdf`, `pdf_tts_done`, `video`, `reset`, `tts_running`, `tts_stopped`, `tts_done`, `scanning`, `scan_done`, `scan_done_clean`, `repairing`, `repair_done`, `cleaning`, `clean_done`, `videocr`, `videocr_running`, `videocr_done`, `video_stt`, `video_stt_running`, `video_stt_done`, `compress_ready`, `compressing`, `compress_done`.
+Current modes: `srt`, `pdf`, `pdf_tts_done`, `video`, `reset`, `tts_running`, `tts_stopped`, `tts_done`, `scanning`, `scan_done`, `scan_done_clean`, `repairing`, `repair_done`, `cleaning`, `clean_done`, `videocr`, `videocr_running`, `videocr_done`, `video_stt`, `video_stt_running`, `video_stt_done`, `compress_ready`, `compressing`, `compress_done`, `mux_idle`, `mux_ready`, `muxing`, `mux_done`.
 
 ### Thread safety
 All UI mutations **must** happen on the main thread. From any worker thread:
@@ -346,6 +346,16 @@ When adding a new per-line/per-chunk regenerate, register its button in `_pdf_bt
 **Root overlap bug (fixed):** TTS audio (esp. Vietnamese / Edge TTS) is often longer than a subtitle's time slot, so `amix` overlays adjacent lines → "đè giọng / chồng giọng" (voice stacking) + timeline drift.
 
 **Fix — time-stretch to fit the slot:** for each line, `slot = next_sub.start − this.start`; if the real duration (`_probe_duration_sec` via ffprobe) exceeds `slot − _DUB_GAP_MS`, prepend an `atempo` chain (`_atempo_chain`, capped at `_DUB_MAX_SPEED = 2.0×`) before `adelay`. Each line then ends before the next begins → no overlap, start times preserved. Lines that still overflow at max speed (or whose source subtitles already overlap) are collected and logged with their 1-based line numbers so the user can fix the SRT timing/text. `_DUB_MAX_SPEED` / `_DUB_GAP_MS` are module-level constants just above `merge_ffmpeg`.
+
+## Edit Studio (`open_edit_studio`)
+
+A Toplevel preview/verify window (line ~6487) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
+
+Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-line `line_*.mp3`), **Load Audio File**.
+
+**Load Audio File** (`_load_audio_file`) loads a single full-length track — typically `final.mp3` after Merge FFmpeg (file dialog defaults to `OUTPUT_DIR/final.mp3`). It builds a temp WAV (waveaudio = MCI master clock), sets `es['audio_wav']`/`wav_ready`, then `seek_to(0)`:
+- **With video loaded** → **keeps the original video audio** and `amix`-es the loaded track on top (`[0:a][1:a]amix=inputs=2:duration=longest:normalize=0`, video + dub → one master WAV), so you hear original music/SFX *and* the dub. Falls back to dub-only if the video has no audio track.
+- **No video** → audio-only mode: `_seek_audio_only()` plays the track as master; clicking a subtitle row seeks to its timecode; `_toggle_play` (Play/Pause) and the ticker's end-of-track reset both branch on `not es['video_path'] and es['audio_wav']`. Temp WAV is tracked in `es['_tmp_wav']` and removed in `_on_close`.
 
 ## Companion Script System
 

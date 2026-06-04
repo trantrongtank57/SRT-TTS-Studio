@@ -846,6 +846,9 @@ VIDEOCR_OUTPUT_SRT = ""
 VIDEOCR_OUTPUT_DIR = ""   # rỗng = dùng OUTPUT_DIR chung
 COMPRESS_VIDEO_FILE = ""
 COMPRESS_OUTPUT_DIR = ""  # rỗng = dùng cùng thư mục file gốc
+MUX_VIDEO_FILE = ""       # video nguồn để ghép audio final
+MUX_AUDIO_FILE = ""       # file audio final cần ghép vào video
+MUX_OUTPUT_DIR = ""       # rỗng = dùng cùng thư mục video gốc
 VIDEOCR_CLI_DIR = r"C:\Users\os\Downloads\Compressed\VideOCR-1.5.1\VideOCR-1.5.1\CLI"
 
 STT_VIDEO_FILE = ""   # video/audio đang chờ STT
@@ -2646,6 +2649,8 @@ _brow5 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow5.pack(fill="x")
 _brow6 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow6.pack(fill="x")
+_brow7 = ctk.CTkFrame(button_frame, fg_color="transparent")
+_brow7.pack(fill="x")
 
 
 # =========================
@@ -4229,6 +4234,213 @@ def open_compress_folder():
         os.startfile(COMPRESS_OUTPUT_DIR)
     else:
         log("[Nén Video] Thư mục output chưa xác định.")
+
+
+# ── Ghép Audio Final vào Video ───────────────────────────────────────────────
+
+def _mux_ready_mode():
+    """compress_ready nếu đủ video+audio, ngược lại compress_ready vẫn cho chọn."""
+    if MUX_VIDEO_FILE and MUX_AUDIO_FILE:
+        return "mux_ready"
+    return "mux_idle"
+
+
+def load_mux_video():
+    global MUX_VIDEO_FILE, MUX_OUTPUT_DIR
+    selected = filedialog.askopenfilename(
+        title="Chọn video để ghép audio",
+        filetypes=[
+            ("Video files", "*.mp4 *.mkv *.avi *.mov *.ts *.flv *.wmv"),
+            ("All files", "*.*"),
+        ]
+    )
+    if not selected:
+        return
+    MUX_VIDEO_FILE = selected
+    if not MUX_OUTPUT_DIR:
+        MUX_OUTPUT_DIR = os.path.dirname(os.path.abspath(selected))
+    log(f"[Ghép Audio] 🎬 Video: {os.path.basename(selected)}")
+    app.after(0, lambda: set_mode(_mux_ready_mode()))
+
+
+def load_mux_audio():
+    global MUX_AUDIO_FILE
+    initdir = OUTPUT_DIR if (OUTPUT_DIR and os.path.isdir(OUTPUT_DIR)) else None
+    initfile = ""
+    if initdir and os.path.isfile(os.path.join(initdir, "final.mp3")):
+        initfile = "final.mp3"
+    selected = filedialog.askopenfilename(
+        title="Chọn file audio final để ghép",
+        initialdir=initdir,
+        initialfile=initfile,
+        filetypes=[
+            ("Audio files", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus"),
+            ("All files", "*.*"),
+        ]
+    )
+    if not selected:
+        return
+    MUX_AUDIO_FILE = selected
+    log(f"[Ghép Audio] 🔊 Audio: {os.path.basename(selected)}")
+    app.after(0, lambda: set_mode(_mux_ready_mode()))
+
+
+def choose_mux_output_folder():
+    global MUX_OUTPUT_DIR
+    selected = filedialog.askdirectory(title="Chọn thư mục lưu video đã ghép")
+    if not selected:
+        return
+    MUX_OUTPUT_DIR = selected
+    log(f"[Ghép Audio] Output folder: {MUX_OUTPUT_DIR}")
+
+
+def _parse_volume(raw, default=1.0):
+    """Đọc giá trị âm lượng (hệ số nhân, 1.0 = giữ nguyên). Chấp nhận
+    '1.0', '0.5', '150%', '0' ..."""
+    try:
+        raw = (raw or "").strip()
+        if not raw:
+            return default
+        if raw.endswith("%"):
+            return max(0.0, float(raw[:-1].strip()) / 100.0)
+        return max(0.0, float(raw))
+    except Exception:
+        return default
+
+
+def _run_mux_thread():
+    global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR
+
+    vid = MUX_VIDEO_FILE
+    aud = MUX_AUDIO_FILE
+    if not vid or not os.path.isfile(vid):
+        app.after(0, lambda: log("[Ghép Audio] ❌ Chưa chọn video hợp lệ"))
+        app.after(0, lambda: set_mode(_mux_ready_mode()))
+        return
+    if not aud or not os.path.isfile(aud):
+        app.after(0, lambda: log("[Ghép Audio] ❌ Chưa chọn audio hợp lệ"))
+        app.after(0, lambda: set_mode(_mux_ready_mode()))
+        return
+
+    vid_vol = _parse_volume(mux_video_vol_var.get(), 1.0)
+    aud_vol = _parse_volume(mux_audio_vol_var.get(), 1.0)
+    keep_orig = bool(mux_keep_orig_var.get())
+
+    # Thời lượng video để hiển thị progress
+    info, _err = _get_mediainfo(vid)
+    duration_s = info.get("duration_s", 0) if info else 0
+    has_video_audio = bool(info and info.get("audio_codec"))
+
+    # Kiểm tra ffmpeg tồn tại TRƯỚC KHI set_mode để tránh treo UI
+    ffmpeg_ok, ffmpeg_path, ffmpeg_guide = _check_ffmpeg_exists()
+    if not ffmpeg_ok:
+        for line in ffmpeg_guide.splitlines():
+            app.after(0, lambda l=line: log(l))
+        app.after(0, lambda: set_mode(_mux_ready_mode()))
+        return
+
+    base     = os.path.splitext(os.path.basename(vid))[0]
+    out_path = os.path.join(MUX_OUTPUT_DIR or os.path.dirname(os.path.abspath(vid)),
+                            f"{base}_dubbed.mp4")
+
+    # Xây filter_complex cho audio
+    # input 0 = video (kèm audio gốc nếu có), input 1 = audio final
+    if keep_orig and has_video_audio:
+        # Trộn audio gốc (video) + audio final
+        filt = (
+            f"[0:a]volume={vid_vol}[a0];"
+            f"[1:a]volume={aud_vol}[a1];"
+            f"[a0][a1]amix=inputs=2:duration=longest:normalize=0[aout]"
+        )
+        amap = "[aout]"
+        mode_desc = f"trộn (video×{vid_vol} + audio×{aud_vol})"
+    else:
+        # Chỉ dùng audio final (thay thế audio gốc)
+        filt = f"[1:a]volume={aud_vol}[aout]"
+        amap = "[aout]"
+        if keep_orig and not has_video_audio:
+            app.after(0, lambda: log("[Ghép Audio] ⚠ Video không có audio gốc — chỉ dùng audio final"))
+        mode_desc = f"thay thế (audio×{aud_vol})"
+
+    app.after(0, lambda: log(f"[Ghép Audio] Chế độ: {mode_desc}"))
+    app.after(0, lambda: log(f"[Ghép Audio] Output: {out_path}"))
+    app.after(0, lambda: set_mode("muxing"))
+    update_progress(1, 100)
+
+    cmd = [
+        ffmpeg_path, "-y",
+        "-i", vid,
+        "-i", aud,
+        "-filter_complex", filt,
+        "-map", "0:v:0",
+        "-map", amap,
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        out_path
+    ]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW
+        )
+
+        _last_pct = [-1]
+        _last_log_pct = [-1]
+
+        for line in proc.stdout:
+            line = line.rstrip()
+            m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
+            if m and duration_s > 0:
+                elapsed = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                pct = max(1, min(99, int(elapsed / duration_s * 100)))
+                if pct != _last_pct[0]:
+                    _last_pct[0] = pct
+                    update_progress(pct, 100)
+                if pct // 10 != _last_log_pct[0]:
+                    _last_log_pct[0] = pct // 10
+                    app.after(0, lambda p=pct: log(f"[Ghép Audio] ⏳ {p}%"))
+
+        proc.wait()
+
+        if proc.returncode == 0 and os.path.isfile(out_path):
+            new_mb = os.path.getsize(out_path) / (1024 * 1024)
+            update_progress(100, 100)
+            app.after(0, lambda: log(f"[Ghép Audio] ✅ Hoàn tất! → {os.path.basename(out_path)} ({new_mb:.1f} MB)"))
+            app.after(0, show_fireworks)
+            app.after(0, lambda: set_mode("mux_done"))
+            app.after(200, open_mux_folder)
+        else:
+            app.after(0, lambda: log(f"[Ghép Audio] ❌ ffmpeg lỗi (exit {proc.returncode})"))
+            app.after(0, lambda: set_mode(_mux_ready_mode()))
+
+    except Exception as exc:
+        app.after(0, lambda: log(f"[Ghép Audio] ❌ Exception: {exc}"))
+        app.after(0, lambda: set_mode(_mux_ready_mode()))
+
+
+def start_mux_video():
+    if not MUX_VIDEO_FILE:
+        msg.showerror("Ghép Audio", "Chưa chọn video. Nhấn 'Chọn Video (Ghép)' trước.")
+        return
+    if not MUX_AUDIO_FILE:
+        msg.showerror("Ghép Audio", "Chưa chọn audio. Nhấn 'Chọn Audio (Ghép)' trước.")
+        return
+    threading.Thread(target=_run_mux_thread, daemon=True).start()
+
+
+def open_mux_folder():
+    d = MUX_OUTPUT_DIR or (os.path.dirname(os.path.abspath(MUX_VIDEO_FILE)) if MUX_VIDEO_FILE else "")
+    if d and os.path.isdir(d):
+        os.startfile(d)
+    else:
+        log("[Ghép Audio] Thư mục output chưa xác định.")
 
 
 def _find_whisper_python():
@@ -6520,6 +6732,7 @@ def open_edit_studio():
         'srt_path'    : SRT_FILE,
         'video_path'  : None,
         'audio_dir'   : OUTPUT_DIR,
+        'audio_file'  : None,     # file audio dài đầy đủ đã nạp (vd final.mp3)
         'subtitles'   : list(subtitles_cache),
         'audio_files' : [],
         'audio_proc'  : None,
@@ -6589,6 +6802,7 @@ def open_edit_studio():
     _tb("📂 Load SRT",         lambda: _load_srt())
     _tb("🎬 Load Video",        lambda: _load_video())
     _tb("🎵 Load Audio Folder", lambda: _load_audio_folder())
+    _tb("🎧 Load Audio File",   lambda: _load_audio_file())
 
     status_var = tk.StringVar(value="Chưa load file nào")
     status_lbl = tk.Label(toolbar, textvariable=status_var, bg=PANEL, fg=TEXT_DIM,
@@ -6995,6 +7209,22 @@ def open_edit_studio():
             buf += chunk
         return bytes(buf)
 
+    def _seek_audio_only(pos):
+        """Phát file audio dài (audio_wav) như track chính khi KHÔNG có video.
+        Dùng cho 'Load Audio File' (vd final.mp3): click phụ đề → nhảy tới
+        đúng mốc thời gian, play/pause chạy trên chính track này."""
+        if not (es.get('audio_wav') and es.get('wav_ready')):
+            return
+        pos = max(0.0, float(pos))
+        _stop_render()
+        _stop_audio()
+        es['seek_offset'] = pos
+        es['play_start']  = time.time()
+        es['master_ms']   = -1
+        es['playing']     = True
+        btn_pp.configure(text="⏸ Pause")
+        _play_video_audio(pos)   # mở audio_wav (waveaudio) làm master clock
+
     def seek_to(pos, overlay_idx=None):
         """Seek video frames to `pos` (sec) and play synced audio.
         Luôn phát tiếng gốc video tại `pos`. Nếu `overlay_idx` ≥ 0 thì phát thêm
@@ -7003,6 +7233,8 @@ def open_edit_studio():
         Toàn bộ việc nặng chạy trong worker thread (UI không đơ).
         """
         if not es['video_path']:
+            # Không có video nhưng đã nạp file audio dài → phát audio-only
+            _seek_audio_only(pos)
             return
         pos = max(0.0, float(pos))
 
@@ -7187,6 +7419,15 @@ def open_edit_studio():
 
     def _toggle_play():
         if not es['video_path']:
+            # Audio-only (file audio dài đã nạp, vd final.mp3)
+            if es.get('audio_wav') and es.get('wav_ready'):
+                if es['playing']:
+                    es['seek_offset'] = _cur_pos()
+                    _stop_audio()
+                    es['playing'] = False
+                    btn_pp.configure(text="▶  Play")
+                else:
+                    _seek_audio_only(es['seek_offset'])
             return
         if es['playing']:
             es['seek_offset'] = _cur_pos()
@@ -7234,6 +7475,13 @@ def open_edit_studio():
         pos = _cur_pos()
         dur = es['duration']
         time_var.set(f"{_fmt(pos)} / {_fmt(dur) if dur else '--:--'}")
+
+        # Audio-only (file audio dài) chạy hết → dừng, reset nút Play
+        if (es['playing'] and not es['video_path'] and dur and pos >= dur):
+            es['playing']     = False
+            es['seek_offset'] = dur
+            _stop_audio()
+            btn_pp.configure(text="▶  Play")
 
         if es['panel_mode'] == 'subs' and es['subtitles']:
             for i, sub in enumerate(es['subtitles']):
@@ -7382,6 +7630,122 @@ def open_edit_studio():
             f"Audio: {len(es['audio_files'])} files — {os.path.basename(path)}")
         if es['panel_mode'] == 'audio':
             _build_audio()
+
+    def _load_audio_file(path=None):
+        """Nạp 1 file audio dài đầy đủ (vd final.mp3 sau khi Merge FFmpeg).
+        Có video → GIỮ NGUYÊN tiếng gốc video, trộn (amix) dub đè lên trên →
+        nghe cả nhạc/SFX gốc lẫn lồng tiếng. Không video → click phụ đề để
+        nhảy mốc + play/pause trên chính track audio này."""
+        if path is None:
+            init_dir = OUTPUT_DIR if (OUTPUT_DIR and os.path.isdir(OUTPUT_DIR)) else None
+            init_file = ""
+            if init_dir and os.path.exists(os.path.join(init_dir, "final.mp3")):
+                init_file = "final.mp3"
+            path = filedialog.askopenfilename(
+                parent=win,
+                title="Chọn file audio (vd final.mp3 sau khi Merge FFmpeg)",
+                initialdir=init_dir, initialfile=init_file,
+                filetypes=[
+                    ("Audio", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus"),
+                    ("All files", "*.*"),
+                ])
+        if not path:
+            return
+        _stop_render()
+        _stop_audio()
+        es['playing']     = False
+        es['seek_offset'] = 0.0
+        es['wav_ready']   = False
+        # dọn WAV cũ (tiếng gốc video hoặc audio đã nạp trước)
+        old = es.get('audio_wav')
+        if old:
+            try: os.remove(old)
+            except Exception: pass
+        es['audio_wav']  = None
+        es['audio_file'] = path
+        base = os.path.basename(path)
+        _set_status(f"⏳ Đang nạp audio: {base} …")
+
+        # Chuyển sang WAV (waveaudio mở được + báo vị trí phát = master clock)
+        has_video = bool(es['video_path'])
+        vpath     = es['video_path']
+
+        def _prep():
+            import tempfile
+            wav = os.path.join(tempfile.gettempdir(),
+                               f"es_loadaudio_{os.getpid()}.wav")
+
+            def _run(cmd):
+                try:
+                    r = subprocess.run(
+                        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    return (r.returncode == 0 and os.path.exists(wav)
+                            and os.path.getsize(wav) > 1024)
+                except Exception:
+                    return False
+
+            ok, dur, mixed = False, 0.0, False
+            if has_video and vpath:
+                # GIỮ tiếng gốc video + trộn dub (final.mp3) → 1 track master
+                ok = _run([
+                    get_ffmpeg(), "-y",
+                    "-i", vpath, "-i", path,
+                    "-filter_complex",
+                    "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0[a]",
+                    "-map", "[a]",
+                    "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", wav,
+                ])
+                mixed = ok
+            if not ok:
+                # Không có video, hoặc video không có tiếng → chỉ dùng audio đã nạp
+                ok = _run([
+                    get_ffmpeg(), "-y", "-i", path, "-vn",
+                    "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", wav,
+                ])
+                mixed = False
+            if ok:
+                try:
+                    out = subprocess.check_output(
+                        [get_ffprobe(), "-v", "error",
+                         "-show_entries", "format=duration",
+                         "-of", "default=noprint_wrappers=1:nokey=1", wav],
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    ).decode().strip()
+                    dur = float(out)
+                except Exception:
+                    dur = 0.0
+
+            def _after():
+                if not win.winfo_exists():
+                    return
+                if ok:
+                    es['audio_wav'] = wav
+                    es['_tmp_wav']  = wav     # dọn khi đóng cửa sổ
+                    es['wav_ready'] = True
+                    if not es['video_path'] and dur:
+                        es['duration'] = dur
+                    if mixed:
+                        hint = "(giữ tiếng gốc video + lồng dub)"
+                    elif es['video_path']:
+                        hint = "(lồng lên video — video không có tiếng gốc)"
+                    else:
+                        hint = f"({_fmt(dur)})"
+                    _set_status(f"🎧 Audio: {base}  {hint}")
+                    # video → phát hình + audio này làm master; không video → audio-only
+                    seek_to(0.0)
+                else:
+                    _set_status(f"Lỗi nạp audio: {base}", error=True)
+                    log(f"[Edit Studio] ❌ Không nạp được audio: {base}")
+                    log("━━━ Hướng xử lý ━━━")
+                    log("  • Kiểm tra file audio có hợp lệ không (thử mở bằng trình phát khác)")
+                    log("  • Kiểm tra ffmpeg hợp lệ tại ⚙ Cài đặt → ffmpeg folder")
+            if win.winfo_exists():
+                win.after(0, _after)
+
+        threading.Thread(target=_prep, daemon=True).start()
 
     # ── CLEANUP ───────────────────────────────────────────────────────────────
     def _on_close():
@@ -8415,6 +8779,34 @@ btn_compress_open = ctk.CTkButton(_brow6, text="Mở Thư Mục", command=open_c
 btn_compress_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 
+# ── Row 7: Ghép Audio Final vào Video ────────────────────────────────────────
+btn_mux_video = ctk.CTkButton(_brow7, text="Chọn Video (Ghép)", command=load_mux_video, height=36, font=("Arial", 13))
+btn_mux_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_mux_audio = ctk.CTkButton(_brow7, text="Chọn Audio (Ghép)", command=load_mux_audio, height=36, font=("Arial", 13))
+btn_mux_audio.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+ctk.CTkLabel(_brow7, text="Vol Video:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
+mux_video_vol_var = ctk.StringVar(value="1.0")
+mux_video_vol_entry = ctk.CTkEntry(_brow7, textvariable=mux_video_vol_var, width=55, font=("Arial", 12))
+mux_video_vol_entry.pack(side="left", padx=(0, 6))
+
+ctk.CTkLabel(_brow7, text="Vol Audio:", font=("Arial", 12)).pack(side="left", padx=(0, 2))
+mux_audio_vol_var = ctk.StringVar(value="1.0")
+mux_audio_vol_entry = ctk.CTkEntry(_brow7, textvariable=mux_audio_vol_var, width=55, font=("Arial", 12))
+mux_audio_vol_entry.pack(side="left", padx=(0, 6))
+
+mux_keep_orig_var = ctk.BooleanVar(value=False)
+mux_keep_orig_check = ctk.CTkCheckBox(_brow7, text="Giữ audio gốc", variable=mux_keep_orig_var, width=110, font=("Arial", 12))
+mux_keep_orig_check.pack(side="left", padx=(0, 6))
+
+btn_mux_run = ctk.CTkButton(_brow7, text="Ghép Vào Video", command=start_mux_video, height=36, font=("Arial", 13), state="disabled")
+btn_mux_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_mux_open = ctk.CTkButton(_brow7, text="Mở Thư Mục", command=open_mux_folder, height=36, font=("Arial", 13), state="disabled")
+btn_mux_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+
 # =========================
 # Mode switching
 # =========================
@@ -8438,6 +8830,7 @@ def set_mode(mode):
     _videocr_btns  = [btn_videocr_load, btn_videocr_run, btn_videocr_open]
     _stt_btns      = [btn_stt_load, btn_stt_run, btn_stt_open]
     _compress_btns = [btn_compress_load, btn_compress_run, btn_compress_open]
+    _mux_btns      = [btn_mux_video, btn_mux_audio, btn_mux_run, btn_mux_open]
 
     # VideoOCR + STT: run/open disabled by default; specific modes re-enable
     btn_videocr_run.configure(state="disabled")
@@ -8452,6 +8845,12 @@ def set_mode(mode):
     btn_compress_open.configure(state="disabled")
     compress_quality_menu.configure(state="disabled")
     compress_gpu_check.configure(state="disabled")
+    # Ghép Audio: run/open disabled by default
+    btn_mux_run.configure(state="disabled")
+    btn_mux_open.configure(state="disabled")
+    mux_video_vol_entry.configure(state="disabled")
+    mux_audio_vol_entry.configure(state="disabled")
+    mux_keep_orig_check.configure(state="disabled")
 
     # Helpers
     _rvc_voxcpm_ctrls = [
@@ -8560,6 +8959,11 @@ def set_mode(mode):
         btn_compress_load.configure(state="normal")
         compress_quality_menu.configure(state="normal")
         compress_gpu_check.configure(state="normal")
+        btn_mux_video.configure(state="normal")
+        btn_mux_audio.configure(state="normal")
+        mux_video_vol_entry.configure(state="normal")
+        mux_audio_vol_entry.configure(state="normal")
+        mux_keep_orig_check.configure(state="normal")
         btn_open_folder.configure(state="normal")
         _enable_voice_settings()
         _enable_rvc_voxcpm()
@@ -8714,7 +9118,7 @@ def set_mode(mode):
 
     elif mode == "compress_ready":
         # Video đã chọn, sẵn sàng nén
-        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns:
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _mux_btns:
             b.configure(state="disabled")
         btn_compress_load.configure(state="normal")
         btn_compress_run.configure(state="normal")
@@ -8726,7 +9130,7 @@ def set_mode(mode):
 
     elif mode == "compressing":
         # Đang nén — tắt hết
-        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns:
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns + _mux_btns:
             b.configure(state="disabled")
         compress_quality_menu.configure(state="disabled")
         compress_gpu_check.configure(state="disabled")
@@ -8735,13 +9139,48 @@ def set_mode(mode):
 
     elif mode == "compress_done":
         # Nén xong
-        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns:
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _mux_btns:
             b.configure(state="disabled")
         btn_compress_load.configure(state="normal")
         btn_compress_run.configure(state="normal")
         btn_compress_open.configure(state="normal")
         compress_quality_menu.configure(state="normal")
         compress_gpu_check.configure(state="normal")
+        _disable_voice_settings()
+        btn_reset_mode.configure(state="normal")
+
+    elif mode in ("mux_idle", "mux_ready"):
+        # Ghép Audio: chọn video/audio; run bật khi đủ cả 2 (mux_ready)
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns:
+            b.configure(state="disabled")
+        btn_mux_video.configure(state="normal")
+        btn_mux_audio.configure(state="normal")
+        mux_video_vol_entry.configure(state="normal")
+        mux_audio_vol_entry.configure(state="normal")
+        mux_keep_orig_check.configure(state="normal")
+        btn_mux_run.configure(state="normal" if mode == "mux_ready" else "disabled")
+        btn_mux_open.configure(state="disabled")
+        _disable_voice_settings()
+        btn_reset_mode.configure(state="normal")
+
+    elif mode == "muxing":
+        # Đang ghép — tắt hết
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns + _mux_btns:
+            b.configure(state="disabled")
+        _disable_voice_settings()
+        btn_reset_mode.configure(state="disabled")
+
+    elif mode == "mux_done":
+        # Ghép xong
+        for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns:
+            b.configure(state="disabled")
+        btn_mux_video.configure(state="normal")
+        btn_mux_audio.configure(state="normal")
+        mux_video_vol_entry.configure(state="normal")
+        mux_audio_vol_entry.configure(state="normal")
+        mux_keep_orig_check.configure(state="normal")
+        btn_mux_run.configure(state="normal")
+        btn_mux_open.configure(state="normal")
         _disable_voice_settings()
         btn_reset_mode.configure(state="normal")
 
