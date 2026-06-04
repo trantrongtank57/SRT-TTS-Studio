@@ -6002,21 +6002,290 @@ def open_subtitle_edit():
 # Retry Line
 # =========================
 
+def _voxcpm_generate_one_sync(index, text, out_prefix="line_"):
+    """Tạo 1 dòng bằng VoxCPM → {out_prefix}{index:04d}.mp3 trong OUTPUT_DIR
+    (dùng cho regenerate_line / regenerate_pdf_line).
+    out_prefix="line_" cho SRT, "pdf_line_" cho PDF.
+    Trả về (ok: bool, err: str).
+    """
+    import json as _json
+    ckpt_dir = voxcpm_ckpt_var.get().strip()
+    voxcpm_py = _find_voxcpm_python(ckpt_dir) if ckpt_dir else None
+    if not voxcpm_py:
+        return False, "Không tìm thấy voxcpm_env python"
+    helper = None
+    for _d in [getattr(sys, "_MEIPASS", None), os.path.dirname(__file__),
+               os.path.dirname(sys.argv[0]), os.path.dirname(sys.executable)]:
+        if _d and os.path.isfile(os.path.join(_d, "voxcpm_helper.py")):
+            helper = os.path.join(_d, "voxcpm_helper.py")
+            break
+    if not helper:
+        return False, "Không tìm thấy voxcpm_helper.py"
+
+    tmp_json = os.path.join(OUTPUT_DIR, f"_regen_vox_{index}.json")
+    try:
+        with open(tmp_json, "w", encoding="utf-8") as f:
+            _json.dump([{"index": index, "text": text}], f, ensure_ascii=False)
+        ref_audio = voxcpm_ref_var.get().strip() or None
+        ref_text  = voxcpm_reftext_var.get().strip() or None
+        cmd = [voxcpm_py, helper, "--texts-json", tmp_json,
+               "--output-dir", OUTPUT_DIR, "--ckpt-dir", ckpt_dir,
+               "--timesteps", voxcpm_steps_var.get(),
+               "--cfg-value", voxcpm_cfg_var.get()]
+        if ref_audio:
+            cmd += ["--reference", ref_audio]
+        if ref_text:
+            cmd += ["--reference-text", ref_text]
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              creationflags=CREATE_NO_WINDOW)
+    finally:
+        try:
+            os.remove(tmp_json)
+        except Exception:
+            pass
+
+    gen_wav = os.path.join(OUTPUT_DIR, f"line_{index:04d}.wav")
+    if not os.path.isfile(gen_wav):
+        return False, f"VoxCPM không tạo được wav. {(proc.stderr or '')[-200:]}"
+    mp3_path = os.path.join(OUTPUT_DIR, f"{out_prefix}{index:04d}.mp3")
+    r = subprocess.run([FFMPEG, "-y", "-i", gen_wav, "-q:a", "2", mp3_path],
+                       capture_output=True, creationflags=CREATE_NO_WINDOW)
+    try:
+        os.remove(gen_wav)
+    except Exception:
+        pass
+    if r.returncode != 0 or not os.path.isfile(mp3_path):
+        return False, "ffmpeg wav→mp3 lỗi"
+    return True, ""
+
+
 async def regenerate_line(index, text):
-
-    filename = os.path.join(
-        OUTPUT_DIR,
-        f"line_{index:04d}.mp3"
-    )
-
+    """Tạo lại 1 dòng — áp dụng đầy đủ VoxCPM / RVC + kiểm tra chất lượng (QC)
+    + retry giống các luồng generate chính, để dòng regen nhất quán với batch.
+    """
+    filename = os.path.join(OUTPUT_DIR, f"line_{index:04d}.mp3")
     log(f"REGENERATE {index}")
+    _loop = asyncio.get_event_loop()
 
-    ok = await save_tts(text, filename)
+    # ── VoxCPM ────────────────────────────────────────────────────────────────
+    if VOXCPM_ENABLED:
+        _ck = voxcpm_ckpt_var.get().strip()
+        if not _ck or not os.path.isdir(_ck):
+            log(f"❌ VoxCPM: thư mục Model trống/không tồn tại — bỏ qua dòng {index}")
+            log(f"FAILED {index}")
+            return
+        _rf = voxcpm_ref_var.get().strip()
+        if _rf and not os.path.isfile(_rf):
+            log(f"❌ VoxCPM: không tìm thấy Audio mẫu: {_rf}")
+            log(f"FAILED {index}")
+            return
+        _vok, _verr = await _loop.run_in_executor(
+            None, _voxcpm_generate_one_sync, index, text)
+        if not _vok:
+            log(f"❌ VoxCPM regen lỗi: {_verr}")
+            log(f"FAILED {index}")
+            return
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if _bad:
+            _rename_bad_audio(filename, index, _reason, _detail, "VoxCPM")
+            log(f"FAILED {index}")
+        else:
+            log(f"DONE {index}")
+        return
 
-    if ok:
+    # ── Provider TTS (Edge/FPT/…) + RVC tùy chọn ───────────────────────────────
+    if RVC_ENABLED and not _check_rvc_preflight():
+        log(f"FAILED {index}")
+        return
+
+    ok = False
+    _bad = False
+    _reason = ""
+    _detail = ""
+    for _qc_attempt in range(_QC_MAX_RETRIES + 1):
+        _gen_text = (_sanitize_tts_text(text)
+                     if _qc_attempt == _QC_MAX_RETRIES else text)
+        try:
+            ok = await save_tts(_gen_text, filename)
+        except QuotaExhaustedError as qe:
+            log(f"HẾT QUOTA: {qe}")
+            log(f"FAILED {index}")
+            return
+        if not ok:
+            break
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if not _bad:
+            break
+        if _qc_attempt < _QC_MAX_RETRIES:
+            log(f"  ⚠ Dòng {index}: audio {_reason} ({_detail}) — "
+                f"tạo lại lần {_qc_attempt + 1}/{_QC_MAX_RETRIES}")
+            try:
+                os.remove(filename)
+            except Exception:
+                pass
+
+    if ok and not _bad:
+        if RVC_ENABLED and os.path.exists(filename):
+            try:
+                log(f"  RVC convert {index}...")
+                await _loop.run_in_executor(None, _apply_rvc_sync, filename)
+                log(f"  RVC OK")
+                _rbad, _rreason, _rdetail = await _loop.run_in_executor(
+                    None, _audio_quality_check, filename, text)
+                if _rbad:
+                    _rename_bad_audio(filename, index, _rreason, _rdetail, "RVC")
+                    log(f"FAILED {index}")
+                    return
+            except Exception as _rvc_err:
+                log(f"❌ RVC thất bại tại dòng {index}: {_rvc_err}")
+                log(f"FAILED {index}")
+                return
         log(f"DONE {index}")
+    elif ok and _bad:
+        _rename_bad_audio(filename, index, _reason, _detail)
+        log(f"FAILED {index}")
     else:
         log(f"FAILED {index}")
+
+
+async def regenerate_pdf_line(index, text):
+    """Tạo lại 1 đoạn PDF (pdf_line_{index:04d}.mp3) — áp dụng đầy đủ
+    VoxCPM / RVC + QC + retry giống _generate_pdf_tts, để đoạn regen nhất quán.
+    """
+    filename = os.path.join(OUTPUT_DIR, f"pdf_line_{index:04d}.mp3")
+    log(f"[PDF] REGENERATE {index}")
+    _loop = asyncio.get_event_loop()
+
+    # ── VoxCPM ────────────────────────────────────────────────────────────────
+    if VOXCPM_ENABLED:
+        _ck = voxcpm_ckpt_var.get().strip()
+        if not _ck or not os.path.isdir(_ck):
+            log(f"❌ VoxCPM: thư mục Model trống/không tồn tại — bỏ qua đoạn {index}")
+            log(f"[PDF] FAILED {index}")
+            return
+        _rf = voxcpm_ref_var.get().strip()
+        if _rf and not os.path.isfile(_rf):
+            log(f"❌ VoxCPM: không tìm thấy Audio mẫu: {_rf}")
+            log(f"[PDF] FAILED {index}")
+            return
+        _vok, _verr = await _loop.run_in_executor(
+            None, _voxcpm_generate_one_sync, index, text, "pdf_line_")
+        if not _vok:
+            log(f"❌ VoxCPM regen lỗi: {_verr}")
+            log(f"[PDF] FAILED {index}")
+            return
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if _bad:
+            _rename_bad_audio(filename, index, _reason, _detail, "PDF")
+            log(f"[PDF] FAILED {index}")
+        else:
+            log(f"[PDF] DONE {index}")
+        return
+
+    # ── Provider TTS (Edge/FPT/…) + RVC tùy chọn ───────────────────────────────
+    if RVC_ENABLED and not _check_rvc_preflight():
+        log(f"[PDF] FAILED {index}")
+        return
+
+    ok = False
+    _bad = False
+    _reason = ""
+    _detail = ""
+    for _qc_attempt in range(_QC_MAX_RETRIES + 1):
+        _gen_text = (_sanitize_tts_text(text)
+                     if _qc_attempt == _QC_MAX_RETRIES else text)
+        try:
+            ok = await save_tts(_gen_text, filename)
+        except QuotaExhaustedError as qe:
+            log(f"HẾT QUOTA: {qe}")
+            log(f"[PDF] FAILED {index}")
+            return
+        if not ok:
+            break
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if not _bad:
+            break
+        if _qc_attempt < _QC_MAX_RETRIES:
+            log(f"  ⚠ [PDF] Đoạn {index}: audio {_reason} ({_detail}) — "
+                f"tạo lại lần {_qc_attempt + 1}/{_QC_MAX_RETRIES}")
+            try:
+                os.remove(filename)
+            except Exception:
+                pass
+
+    if ok and not _bad:
+        if RVC_ENABLED and os.path.exists(filename):
+            try:
+                log(f"  RVC convert {index}...")
+                await _loop.run_in_executor(None, _apply_rvc_sync, filename)
+                log(f"  RVC OK")
+                _rbad, _rreason, _rdetail = await _loop.run_in_executor(
+                    None, _audio_quality_check, filename, text)
+                if _rbad:
+                    _rename_bad_audio(filename, index, _rreason, _rdetail, "RVC")
+                    log(f"[PDF] FAILED {index}")
+                    return
+            except Exception as _rvc_err:
+                log(f"❌ RVC thất bại tại đoạn {index}: {_rvc_err}")
+                log(f"[PDF] FAILED {index}")
+                return
+        log(f"[PDF] DONE {index}")
+    elif ok and _bad:
+        _rename_bad_audio(filename, index, _reason, _detail, "PDF")
+        log(f"[PDF] FAILED {index}")
+    else:
+        log(f"[PDF] FAILED {index}")
+
+
+def ask_pdf_chunk_edit():
+    """Hỏi số đoạn PDF (0-based, phân tách bằng dấu phẩy) rồi tạo lại từng đoạn."""
+    if not PDF_CHUNKS:
+        msg.showerror("Error", "Chưa load PDF — không có đoạn nào để tạo lại.")
+        return
+
+    if FAIL_COUNT > 1:
+        prompt = (f"Nhập số đoạn PDF cần tạo lại (cách nhau bằng dấu phẩy, vd: 0,5,12)\n"
+                  f"Có {FAIL_COUNT} đoạn lỗi.\nTổng: {len(PDF_CHUNKS)} đoạn (0..{len(PDF_CHUNKS)-1}).")
+    else:
+        prompt = (f"Nhập số đoạn PDF cần tạo lại (cách nhau bằng dấu phẩy, vd: 0,5,12)\n"
+                  f"Tổng: {len(PDF_CHUNKS)} đoạn (0..{len(PDF_CHUNKS)-1}).")
+
+    dialog = ctk.CTkInputDialog(text=prompt, title="Regenerate đoạn PDF")
+    value = dialog.get_input()
+    if not value:
+        return
+
+    try:
+        indices = []
+        for part in value.split(","):
+            part = part.strip()
+            if part == "":
+                continue
+            indices.append(int(part))
+        if not indices:
+            msg.showerror("Error", "Không có số đoạn hợp lệ.")
+            return
+        invalid = [i for i in indices if i < 0 or i >= len(PDF_CHUNKS)]
+        if invalid:
+            msg.showerror("Error", f"Đoạn ngoài phạm vi: {', '.join(map(str, invalid))}")
+            return
+
+        def run_all():
+            for index in indices:
+                text = PDF_CHUNKS[index].strip()
+                if not text:
+                    log(f"[PDF] Đoạn {index} rỗng — bỏ qua")
+                    continue
+                asyncio.run(regenerate_pdf_line(index, text))
+
+        threading.Thread(target=run_all, daemon=True).start()
+    except ValueError:
+        msg.showerror("Error", "Nhập sai. Dùng các số cách nhau bằng dấu phẩy.")
 
 
 def open_editor(index):
@@ -7989,6 +8258,9 @@ btn_pdf_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_pdf_merge = ctk.CTkButton(_brow3, text="Merge PDF Audio", command=merge_pdf_audio, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
+btn_pdf_regen = ctk.CTkButton(_brow3, text="Regenerate đoạn PDF", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
+btn_pdf_regen.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
 # ── Row 4: Video OCR ──────────────────────────────────────────────────────────
 btn_videocr_load = ctk.CTkButton(_brow4, text="Chọn Video OCR", command=load_videocr_video, height=36, font=("Arial", 13))
 btn_videocr_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -8074,7 +8346,7 @@ def set_mode(mode):
     _video_btns = [
         btn_choose_video, btn_scan_video, btn_repair_video, btn_clean_video
     ]
-    _pdf_btns      = [btn_load_pdf, btn_pdf_tts, btn_pdf_merge]
+    _pdf_btns      = [btn_load_pdf, btn_pdf_tts, btn_pdf_merge, btn_pdf_regen]
     _videocr_btns  = [btn_videocr_load, btn_videocr_run, btn_videocr_open]
     _stt_btns      = [btn_stt_load, btn_stt_run, btn_stt_open]
     _compress_btns = [btn_compress_load, btn_compress_run, btn_compress_open]
@@ -8145,6 +8417,7 @@ def set_mode(mode):
         btn_load_pdf.configure(state="disabled")
         btn_pdf_tts.configure(state="disabled")
         btn_pdf_merge.configure(state="disabled")
+        btn_pdf_regen.configure(state="disabled")
         for b in _videocr_btns:
             b.configure(state="disabled")
         _enable_voice_settings()
@@ -8158,6 +8431,7 @@ def set_mode(mode):
         btn_load_pdf.configure(state="normal")
         btn_pdf_tts.configure(state="normal")
         btn_pdf_merge.configure(state="normal")
+        btn_pdf_regen.configure(state="normal")
         btn_choose_output.configure(state="normal")
         _enable_voice_settings()
         _enable_rvc_voxcpm()
@@ -8170,6 +8444,7 @@ def set_mode(mode):
         btn_load_pdf.configure(state="normal")
         btn_pdf_tts.configure(state="normal")
         btn_pdf_merge.configure(state="normal")
+        btn_pdf_regen.configure(state="normal")
         btn_choose_output.configure(state="normal")
         btn_reset_mode.configure(state="normal")
         _enable_voice_settings()
@@ -8235,6 +8510,7 @@ def set_mode(mode):
         btn_load_pdf.configure(state="disabled")
         btn_pdf_tts.configure(state="disabled")
         btn_pdf_merge.configure(state="disabled")
+        btn_pdf_regen.configure(state="disabled")
         for b in _srt_btns:
             b.configure(state="normal")
         btn_reset_mode.configure(state="normal")
@@ -8413,7 +8689,7 @@ _quick_tts_dim_widgets = [
     btn_merge, btn_open_se, btn_edit,
     btn_clear, btn_reset_mode, btn_choose_video, btn_choose_output, btn_open_folder,
     btn_scan_video, btn_repair_video, btn_clean_video,
-    btn_load_pdf, btn_pdf_tts, btn_pdf_merge,
+    btn_load_pdf, btn_pdf_tts, btn_pdf_merge, btn_pdf_regen,
     btn_videocr_load, btn_videocr_run, btn_videocr_open,
     btn_stt_load, btn_stt_run, btn_stt_open,
     stt_model_menu, stt_lang_menu,

@@ -324,6 +324,21 @@ elif line.startswith("ERROR:"):
 | `WARN:{idx}:{reason}` | Silent attempt, retrying |
 | `ALL_DONE` | Batch finished |
 
+### Single-line regenerate — `regenerate_line()` / `regenerate_pdf_line()`
+
+Two parallel regenerate paths exist, both mirroring the **full** generation pipeline (VoxCPM / RVC / QC + retry / sanitize / rename), not just a bare `save_tts`:
+
+| Function | Target file | Source text | UI entry |
+|---|---|---|---|
+| `regenerate_line(index, text)` | `line_{index:04d}.mp3` | `subtitles_cache` (SRT) | `ask_line_edit()` → "Regenerate Line" btn; also `open_editor` save |
+| `regenerate_pdf_line(index, text)` | `pdf_line_{index:04d}.mp3` | `PDF_CHUNKS` | `ask_pdf_chunk_edit()` → "Regenerate đoạn PDF" btn (`btn_pdf_regen`, row 3) |
+
+Branch logic inside both (matching the batch flows): `VOXCPM_ENABLED` → single-line via `_voxcpm_generate_one_sync(index, text, out_prefix)` + QC; `RVC_ENABLED` → provider TTS + QC-retry → RVC → QC again; else provider TTS + QC-retry.
+
+**`_voxcpm_generate_one_sync(index, text, out_prefix="line_")`** — shared single-line VoxCPM helper. The `voxcpm_helper.py` always writes `line_{idx:04d}.wav` (filename driven by the JSON `index`); this fn converts it to `{out_prefix}{idx:04d}.mp3` (`"line_"` for SRT, `"pdf_line_"` for PDF).
+
+When adding a new per-line/per-chunk regenerate, register its button in `_pdf_btns`/`_srt_btns` (auto-disable sweep) AND the explicit disable spots in the SRT/`tts_running` modes (those toggle PDF buttons individually, not via the list).
+
 ## Companion Script System
 
 8 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
