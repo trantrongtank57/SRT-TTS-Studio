@@ -5830,6 +5830,47 @@ def start_tts():
 # FFMPEG
 # =========================
 
+# =========================
+# Lồng tiếng theo timeline — khớp khe thời gian, KHÔNG đè giọng
+# =========================
+
+# Ép mỗi câu vừa khít khe thời gian của nó để giọng câu này kết thúc
+# trước khi câu kế tiếp bắt đầu → không còn đè/chồng giọng.
+_DUB_MAX_SPEED = 2.0    # tăng tốc tối đa (giữ độ rõ); câu vẫn dài hơn sẽ được cảnh báo
+_DUB_GAP_MS    = 50     # khe hở an toàn giữa 2 câu (ms)
+
+
+def _probe_duration_sec(path):
+    """Thời lượng audio (giây) qua ffprobe; 0.0 nếu lỗi."""
+    try:
+        probe = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=30, creationflags=CREATE_NO_WINDOW
+        )
+        return float(probe.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def _atempo_chain(factor):
+    """Chuỗi filter atempo cho hệ số tốc độ bất kỳ (>1 = nhanh hơn).
+    Mỗi tầng atempo chỉ nhận 0.5–2.0 nên phải nối nhiều tầng cho hệ số lớn."""
+    if factor <= 0:
+        return "atempo=1.0"
+    parts = []
+    f = float(factor)
+    while f > 2.0:
+        parts.append("atempo=2.0")
+        f /= 2.0
+    while f < 0.5:
+        parts.append("atempo=0.5")
+        f /= 0.5
+    parts.append(f"atempo={f:.6f}")
+    return ",".join(parts)
+
+
 def merge_ffmpeg():
 
     if not subtitles_cache:
@@ -5840,6 +5881,13 @@ def merge_ffmpeg():
     mixes = []
 
     real_index = 0
+    n_sub   = len(subtitles_cache)
+    gap_sec = _DUB_GAP_MS / 1000.0
+
+    stretched = []   # các dòng (1-based) bị tăng tốc cho khớp khe
+    overflow  = []   # các dòng vẫn dài hơn khe dù đã tăng tốc tối đa
+
+    log("Phân tích thời lượng để khớp timeline (chống đè giọng)...")
 
     for i, sub in enumerate(subtitles_cache):
 
@@ -5850,21 +5898,61 @@ def merge_ffmpeg():
         if not os.path.exists(abs_path):
             continue
 
-        start_ms = int(sub.start.total_seconds() * 1000)
+        start_sec = sub.start.total_seconds()
+        start_ms  = int(start_sec * 1000)
+
+        # Khe thời gian = tới lúc câu KẾ TIẾP bắt đầu (giữ đúng mốc timeline gốc)
+        next_start = None
+        if i + 1 < n_sub:
+            next_start = subtitles_cache[i + 1].start.total_seconds()
+
+        factor = 1.0
+        if next_start is not None:
+            slot = next_start - start_sec
+            if slot <= 0:
+                # Phụ đề gốc đã chồng mốc thời gian — không nén được
+                overflow.append(i + 1)
+            else:
+                target = max(0.20, slot - gap_sec)
+                actual = _probe_duration_sec(abs_path)
+                if actual > target + 0.02:
+                    raw = actual / target
+                    factor = min(raw, _DUB_MAX_SPEED)
+                    stretched.append(i + 1)
+                    if raw > _DUB_MAX_SPEED + 1e-3:
+                        overflow.append(i + 1)
 
         inputs.append(f'-i "{rel_name}"')
 
-        filters.append(
-            f'[{real_index}:a]adelay={start_ms}:all=1[a{real_index}]'
-        )
+        if factor > 1.001:
+            chain = _atempo_chain(factor)
+            filters.append(
+                f'[{real_index}:a]{chain},adelay={start_ms}:all=1[a{real_index}]'
+            )
+        else:
+            filters.append(
+                f'[{real_index}:a]adelay={start_ms}:all=1[a{real_index}]'
+            )
 
         mixes.append(f'[a{real_index}]')
 
         real_index += 1
 
+        if real_index % 50 == 0:
+            log(f"  ...đã phân tích {real_index} câu")
+
     if real_index == 0:
         log("No mp3 files found")
         return
+
+    if stretched:
+        log(f"⏩ Đã tăng tốc {len(stretched)} câu cho khớp khe thời gian (chống đè giọng).")
+    if overflow:
+        dedup   = sorted(set(overflow))
+        preview = ", ".join(str(x) for x in dedup[:20])
+        more    = "" if len(dedup) <= 20 else f" …(+{len(dedup) - 20})"
+        log(f"⚠️ {len(dedup)} câu vẫn dài hơn khe dù đã tăng tốc {_DUB_MAX_SPEED}x — "
+            f"nên sửa timing/nội dung phụ đề ở các dòng: {preview}{more}")
 
     filter_text = ";\n".join(filters)
     filter_text += (

@@ -339,6 +339,14 @@ Branch logic inside both (matching the batch flows): `VOXCPM_ENABLED` → single
 
 When adding a new per-line/per-chunk regenerate, register its button in `_pdf_btns`/`_srt_btns` (auto-disable sweep) AND the explicit disable spots in the SRT/`tts_running` modes (those toggle PDF buttons individually, not via the list).
 
+## Timeline Dubbing — anti voice-overlap (`merge_ffmpeg`)
+
+`merge_ffmpeg()` (line ~5875) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
+
+**Root overlap bug (fixed):** TTS audio (esp. Vietnamese / Edge TTS) is often longer than a subtitle's time slot, so `amix` overlays adjacent lines → "đè giọng / chồng giọng" (voice stacking) + timeline drift.
+
+**Fix — time-stretch to fit the slot:** for each line, `slot = next_sub.start − this.start`; if the real duration (`_probe_duration_sec` via ffprobe) exceeds `slot − _DUB_GAP_MS`, prepend an `atempo` chain (`_atempo_chain`, capped at `_DUB_MAX_SPEED = 2.0×`) before `adelay`. Each line then ends before the next begins → no overlap, start times preserved. Lines that still overflow at max speed (or whose source subtitles already overlap) are collected and logged with their 1-based line numbers so the user can fix the SRT timing/text. `_DUB_MAX_SPEED` / `_DUB_GAP_MS` are module-level constants just above `merge_ffmpeg`.
+
 ## Companion Script System
 
 8 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
