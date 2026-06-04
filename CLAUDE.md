@@ -148,18 +148,22 @@ Detection uses 6 independent layers — passing one layer is enough:
 | 1–100 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
 | 100–850 | Security checks (`_check_integrity`, DRM, trial, VM detection), global state vars |
 | 850–1100 | Settings load/save, CustomTkinter app/window creation, UI layout frames |
-| 1100–2600 | Voice/provider UI, progress bar canvas, button rows `_brow0`–`_brow6` definition |
+| 1100–2600 | Voice/provider UI, progress bar canvas, scrollable `button_frame` + button-row (`_brow0`–`_brow7`) definitions |
 | 2600–3200 | Fireworks animation + sound, `log()`, `update_progress()`, helper utilities |
 | 3200–5600 | Feature functions: TTS (Edge, FPT, Vbee, Zalo, EverAI, MiniMax), RVC, VoxCPM, PDF |
-| 5600–7400 | Video tools (scan/repair/clean), Subtitle Edit, OCR, STT, video compress |
-| 7400–7700 | UI widget instantiation for all button rows |
-| 7700–8050 | `set_mode()` — the central UI state machine |
-| 8050–end | `app.mainloop()` at module level |
+| 5600–8580 | Video tools (scan/repair/clean), Subtitle Edit, OCR, STT, video compress, mux, Edit Studio |
+| 8590–8810 | UI widget instantiation for all button rows |
+| 8820–10180 | `set_mode()` — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, quick-TTS dimming) |
+| 10184–end | `app.mainloop()` at module level |
 
 ## UI Architecture Patterns (apppp_integrated.py)
 
 ### Button rows
-The button panel uses 7 fixed rows (`_brow0`–`_brow6`) created once at startup and populated later. All rows are `ctk.CTkFrame` packed into `button_frame`. When adding a new feature, add a new `_browN` at the row-definition block (~line 2610) **and** populate it in the widget-instantiation block (~line 7400).
+The button panel uses fixed rows (`_brow0`, `_brow0b`, `_brow1`–`_brow7`) created once at startup (~line 2638) and populated later in the widget-instantiation block (~line 8590). When adding a new feature, add a new `_browN` at the row-definition block **and** populate it there.
+
+`button_frame` is a **`CTkScrollableFrame`** (fixed `height=340`, ~line 2634), not a plain frame — extra rows scroll instead of being clipped off the bottom of the window. Each `_browN` is a transparent `ctk.CTkFrame` packed `fill="x"`.
+
+**Uniform-width rule:** every button packs `side="left", expand=True, fill="x"` (no fixed `width`), so within a row all buttons share the width equally. Buttons are *not* assigned a fixed pixel width — a previous attempt at uniform fixed-width caused overflow (10-button rows ran off-screen) and large gaps on 3-button rows. To keep button sizes even *across* rows, keep button counts per row similar (this is why the original 10-button SRT/TTS row was split into `_brow0` + `_brow0b`, 5 buttons each). Mixed rows (`_brow5`/`_brow6`/`_brow7`) interleave `CTkOptionMenu`/`CTkLabel`/`CTkEntry`/`CTkCheckBox` (fixed `width`, packed without `expand`) between the expanding buttons.
 
 ### set_mode() — UI state machine
 `set_mode(mode)` is the single function that enables/disables all buttons and controls. It must be called from the main thread (use `app.after(0, lambda: set_mode("..."))` from worker threads). Every new feature needs:

@@ -2631,12 +2631,16 @@ subtitle_size_slider = ctk.CTkSlider(
 subtitle_size_slider.set(260)
 subtitle_size_slider.pack(fill="x", padx=10, pady=(0, 10))
 
-button_frame = ctk.CTkFrame(_root)
-button_frame.pack(fill="x", padx=10, pady=10)
+# Vùng nút có thanh cuộn dọc — khi cửa sổ thấp, các hàng cuối (vd "Ghép Vào Video")
+# không bị cắt mất nữa mà cuộn xuống để xem.
+button_frame = ctk.CTkScrollableFrame(_root, height=340)
+button_frame.pack(fill="both", expand=False, padx=10, pady=10)
 
 # Per-row frames — mỗi hàng tự chia đều width cho tất cả nút (pack expand=True)
 _brow0 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow0.pack(fill="x")
+_brow0b = ctk.CTkFrame(button_frame, fg_color="transparent")
+_brow0b.pack(fill="x")
 _brow1 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow1.pack(fill="x")
 _brow2 = ctk.CTkFrame(button_frame, fg_color="transparent")
@@ -8603,21 +8607,21 @@ btn_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_stop = ctk.CTkButton(_brow0, text="Stop", command=stop_tts, height=36, font=("Arial", 13))
 btn_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_restart = ctk.CTkButton(_brow0, text="Start Over", command=restart_tts, height=36, font=("Arial", 13))
+btn_restart = ctk.CTkButton(_brow0b, text="Start Over", command=restart_tts, height=36, font=("Arial", 13))
 btn_restart.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_merge = ctk.CTkButton(_brow0, text="Merge FFmpeg", command=start_merge, height=36, font=("Arial", 13))
+btn_merge = ctk.CTkButton(_brow0b, text="Merge FFmpeg", command=start_merge, height=36, font=("Arial", 13))
 btn_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_open_se = ctk.CTkButton(_brow0, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
+btn_open_se = ctk.CTkButton(_brow0b, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_open_se.bind("<Enter>", lambda e: btn_open_se.configure(fg_color="#8B5CF6"))
 btn_open_se.bind("<Leave>", lambda e: btn_open_se.configure(fg_color=["#3B8ED0", "#1F6AA5"]))
 
-btn_edit = ctk.CTkButton(_brow0, text="Regenerate Line", command=ask_line_edit, height=36, font=("Arial", 13))
+btn_edit = ctk.CTkButton(_brow0b, text="Regenerate Line", command=ask_line_edit, height=36, font=("Arial", 13))
 btn_edit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_exit = ctk.CTkButton(_brow0, text="Exit", command=lambda: on_app_close(), height=36, font=("Arial", 13), hover_color="#cc0000")
+btn_exit = ctk.CTkButton(_brow0b, text="Exit", command=lambda: on_app_close(), height=36, font=("Arial", 13), hover_color="#cc0000")
 btn_exit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 1: Log / mode / output ───────────────────────────────────────────────
