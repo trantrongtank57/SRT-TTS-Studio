@@ -137,7 +137,7 @@ Detection uses 6 independent layers — passing one layer is enough:
 
 ## Codebase Structure
 
-`apppp_integrated.py` (~10800 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
+`apppp_integrated.py` (~11550 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
 
 `app.mainloop()` runs at **module level** (not inside `__main__`), so `import apppp_integrated` starts the full app. This is intentional for the launcher entry-point pattern.
 
@@ -145,24 +145,23 @@ Detection uses 6 independent layers — passing one layer is enough:
 
 | Lines (approx.) | Section |
 |---|---|
-| 1–100 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
-| 100–880 | Security checks (`_check_integrity` @114, DRM, trial, VM detection), global state vars (incl. translate/LLM globals @~845) |
-| 880–1150 | Settings load/save (`_load_settings` @884, `_save_settings`), CustomTkinter app/window creation, UI layout frames |
-| 1150–2690 | Voice/provider UI, progress bar canvas, scrollable `button_frame` (@2688) + button-row (`_brow0`–`_brow8`) definitions |
-| 2690–3100 | Fireworks animation + sound, `show_settings_dialog` (@2995), `log()`, helper utilities |
-| 3100–3640 | **Translation to Vietnamese** (LLM + offline) — `_translate_segments`, `_llm_call_*`, `translate_srt/pdf`, `_translate_segments_local` |
-| 3640–5900 | Feature functions: `update_progress`, TTS (Edge, FPT, Vbee, Zalo, EverAI, MiniMax), RVC, VoxCPM, PDF |
-| 5900–9080 | Video tools (scan/repair/clean), Subtitle Edit, OCR, STT, video compress, mux, `merge_ffmpeg` (@6624), Edit Studio (@7237) |
-| 9080–9385 | UI widget instantiation for all button rows |
-| 9385–10745 | `set_mode()` (@9385) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, quick-TTS dimming) |
-| 10747–end | `app.mainloop()` at module level |
+| 1–110 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
+| 110–890 | Security checks (`_check_integrity` @114, DRM, trial, VM detection), global state vars (incl. translate / OCR-control / Edit-Studio globals) |
+| 890–1160 | Settings load/save (`_load_settings` @894, `_save_settings` @933), CustomTkinter app/window creation, UI layout frames |
+| 1160–2760 | Voice/provider UI, progress bar canvas, scrollable `button_frame` (@2703) + button-row (`_brow0`–`_brow8b`) definitions |
+| 2760–3240 | Fireworks animation + sound (`show_fireworks` @2762), `show_settings_dialog` (@3014), `log()`, helper utilities |
+| 3240–3960 | **Translation to Vietnamese** (LLM online + offline) — `_translate_active_key` (@3246), `_llm_call_*` (@3262), `_translate_segments`, `translate_srt/pdf/doc` (@3759), `_write_translated_doc`, `_read_text_smart` |
+| 3960–7100 | Feature functions: `update_progress` (@4172), TTS (Edge, FPT, Vbee, Zalo, EverAI, MiniMax), RVC, VoxCPM, `_split_text_chunks` (@4297), **Video OCR** (`_run_videocr_thread` @4562 + pause/stop), **PDF + Word/TXT TTS** (`load_pdf` @5528, `load_doc_tts`), STT, compress, mux |
+| 7100–10150 | `merge_ffmpeg` (@7114), **Edit Studio** (`open_edit_studio` @7727 + sequential playlist), remaining video tools, UI widget instantiation for all button rows (`_brow0` widgets @9857) |
+| 10150–11530 | `set_mode()` (@10158) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, quick-TTS dimming) |
+| 11531–end | `app.mainloop()` at module level |
 
 ## UI Architecture Patterns (apppp_integrated.py)
 
 ### Button rows
-The button panel uses fixed rows (`_brow0`, `_brow0b`, `_brow1`–`_brow8`) created once at startup (~line 2690) and populated later in the widget-instantiation block (~line 9090). When adding a new feature, add a new `_browN` at the row-definition block **and** populate it there. (`_brow8` = the SRT/PDF translation row.)
+The button panel uses fixed rows (`_brow0`, `_brow0b`, `_brow1`–`_brow8`, `_brow8b`, plus `_brow4b`) created once at startup (~line 2700) and populated later in the widget-instantiation block (~line 9857). When adding a new feature, add a new `_browN` at the row-definition block **and** populate it there. (`_brow8` = SRT/PDF/Word-TXT translation row; `_brow8b` = translate pause/resume/stop; `_brow4b` = OCR pause/resume/stop.)
 
-`button_frame` is a **`CTkScrollableFrame`** (fixed `height=340`, ~line 2688), not a plain frame — extra rows scroll instead of being clipped off the bottom of the window. Each `_browN` is a transparent `ctk.CTkFrame` packed `fill="x"`.
+`button_frame` is a **`CTkScrollableFrame`** (fixed `height=340`, ~line 2703), not a plain frame — extra rows scroll instead of being clipped off the bottom of the window. Each `_browN` is a transparent `ctk.CTkFrame` packed `fill="x"`.
 
 **Uniform-width rule:** every button packs `side="left", expand=True, fill="x"` (no fixed `width`), so within a row all buttons share the width equally. Buttons are *not* assigned a fixed pixel width — a previous attempt at uniform fixed-width caused overflow (10-button rows ran off-screen) and large gaps on 3-button rows. To keep button sizes even *across* rows, keep button counts per row similar (this is why the original 10-button SRT/TTS row was split into `_brow0` + `_brow0b`, 5 buttons each). Mixed rows (`_brow5`/`_brow6`/`_brow7`) interleave `CTkOptionMenu`/`CTkLabel`/`CTkEntry`/`CTkCheckBox` (fixed `width`, packed without `expand`) between the expanding buttons.
 
@@ -352,7 +351,7 @@ When adding a new per-line/per-chunk regenerate, register its button in `_pdf_bt
 
 ## Timeline Dubbing — anti voice-overlap (`merge_ffmpeg`)
 
-`merge_ffmpeg()` (line ~6624) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
+`merge_ffmpeg()` (line ~7114) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
 
 **Root overlap bug (fixed):** TTS audio (esp. Vietnamese / Edge TTS) is often longer than a subtitle's time slot, so `amix` overlays adjacent lines → "đè giọng / chồng giọng" (voice stacking) + timeline drift.
 
@@ -369,7 +368,7 @@ Row `_brow7` — "Ghép Audio Final vào Video": pick a video + a final audio tr
 
 ## Edit Studio (`open_edit_studio`)
 
-A Toplevel preview/verify window (line ~7237) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
+A Toplevel preview/verify window (line ~7727) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
 
 Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-line `line_*.mp3`, timeline-placed), **Load Audio File**, **Load nhiều Audio** (sequential playlist).
 
