@@ -135,6 +135,22 @@ Detection uses 6 independent layers — passing one layer is enough:
 
 **Hyper-V host false-positive risk (known issue)**: `00155d` vEthernet adapters appear on physical machines with Hyper-V enabled (Docker/WSL2). The combined guard (Layer 6) can false-positive if the host ALSO has Storage Spaces/iSCSI disks showing "Virtual Disk". Layer 6 is a fallback only; Layers 1–2 already cover standard Hyper-V guests reliably.
 
+## Startup, Auth & Exit/Logout flow
+
+Module import order (all at module level, before `app.mainloop()`): `_ensure_single_instance()` (Windows named mutex `Global\SRT_TTS_Studio_SingleInstance`, stored in `builtins._srt_studio_mutex`) → security checks → app window created **hidden** → `run_auth()` shows the password dialog (`show_set_password_dialog` first-run / `show_login_dialog`) → on success `app.deiconify()`. The **login screen is the auth dialog at startup**; there is no separate post-launch login window.
+
+Two ways to leave the running app — both live near the bottom of the file:
+
+| Trigger | Function | Behavior |
+|---|---|---|
+| Window **X** button (`WM_DELETE_WINDOW`) | `on_app_close()` @10958 | Confirm dialog → `stop_all_processes()` → goodbye sound (`naycaugioi.wav`, sync) → `os._exit(0)`. Quits for good. |
+| **Logout** button (`btn_exit`, top-right `_g6`) | `on_logout()` @10983 | Same X effect (confirm + stop processes + goodbye sound), but **relaunches** instead of exiting → returns to the login screen. |
+
+**Logout relaunch must NOT use `os.execl`.** Under PyInstaller onefile, re-exec inherits the bootloader's injected env vars (`_MEIPASS`, `_PYI_*`, `SSL_CERT_FILE`/`SSL_CERT_DIR`) pointing at the temp extraction dir that gets cleaned up on exit → `FileNotFoundError` in `ssl`/`edge_tts` at next import. Instead `on_logout()`:
+1. **Releases the single-instance mutex** (`ReleaseMutex` + `CloseHandle` on `builtins._srt_studio_mutex`) — else the fresh process hits "Phần mềm đang chạy!".
+2. Spawns a brand-new process via `subprocess.Popen` with a **cleaned env** (those PyInstaller vars stripped so the new bootloader sets them fresh), handling both frozen `.exe` and dev `python` invocation.
+3. `os._exit(0)` the current process.
+
 ## Codebase Structure
 
 `apppp_integrated.py` (~11550 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
@@ -153,7 +169,7 @@ Detection uses 6 independent layers — passing one layer is enough:
 | 3240–3960 | **Translation to Vietnamese** (LLM online + offline) — `_translate_active_key` (@3246), `_llm_call_*` (@3262), `_translate_segments`, `translate_srt/pdf/doc` (@3759), `_write_translated_doc`, `_read_text_smart` |
 | 3960–7100 | Feature functions: `update_progress` (@4172), TTS (Edge, FPT, Vbee, Zalo, EverAI, MiniMax), RVC, VoxCPM, `_split_text_chunks` (@4297), **Video OCR** (`_run_videocr_thread` @4562 + pause/stop), **PDF + Word/TXT TTS** (`load_pdf` @5528, `load_doc_tts`), STT, compress, mux |
 | 7100–10150 | `merge_ffmpeg` (@7114), **Edit Studio** (`open_edit_studio` @7727 + sequential playlist), remaining video tools, UI widget instantiation for all button rows (`_brow0` widgets @9857) |
-| 10150–11530 | `set_mode()` (@10158) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, quick-TTS dimming) |
+| 10150–11530 | `set_mode()` (@10392) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, Logout button) and the exit / Logout flow (`on_app_close` @10958, `on_logout` @10983) |
 | 11531–end | `app.mainloop()` at module level |
 
 ## UI Architecture Patterns (apppp_integrated.py)

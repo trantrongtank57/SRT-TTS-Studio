@@ -1212,6 +1212,15 @@ ctk.CTkCheckBox(
     font=("Arial", 11),
 ).place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=10)
 
+# Nut an/hien Console (đặt cạnh "Luôn trên cùng"); toggle_console() định nghĩa sau → lambda
+btn_toggle_console = ctk.CTkButton(
+    _root, text="\U0001F5A5  Ẩn Console", width=118, height=26,
+    font=("Arial", 11), corner_radius=6,
+    fg_color="#2b3340", hover_color="#363f4e", text_color="#c7d0db",
+    command=lambda: toggle_console(),
+)
+btn_toggle_console.place(relx=1.0, rely=0.0, anchor="ne", x=-150, y=11)
+
 if _TRIAL_REMAINING_SECONDS >= 0:
     _bh = _TRIAL_REMAINING_SECONDS // 3600
     _bm = (_TRIAL_REMAINING_SECONDS % 3600) // 60
@@ -1287,41 +1296,6 @@ delay_max_entry.pack(side="left")
 
 ctk.CTkLabel(voice_row1, text="giây", font=("Arial", 12)).pack(side="left", padx=(3, 6))
 
-# ── VideoOCR settings (bên phải voice_row1) ──────────────────────────────────
-_videocr_inline = ctk.CTkFrame(voice_row1, fg_color="transparent")
-_videocr_inline.pack(side="right", padx=(0, 10))
-
-ctk.CTkLabel(_videocr_inline, text="│", font=("Arial", 14), text_color="gray").pack(side="left", padx=(0, 10))
-
-ctk.CTkLabel(_videocr_inline, text="OCR Ngôn ngữ:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
-videocr_lang_menu = ctk.CTkOptionMenu(
-    _videocr_inline,
-    variable=videocr_lang_var,
-    values=["vi", "en", "chinese_sim", "chinese_cht", "japan", "korean", "fr", "de", "ru", "ar", "th", "id"],
-    width=120,
-    font=("Arial", 12),
-)
-videocr_lang_menu.pack(side="left", padx=(0, 10))
-
-ctk.CTkLabel(_videocr_inline, text="Engine:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
-videocr_engine_menu = ctk.CTkOptionMenu(
-    _videocr_inline,
-    variable=videocr_engine_var,
-    values=["paddleocr", "google_lens"],
-    width=130,
-    font=("Arial", 12),
-)
-videocr_engine_menu.pack(side="left", padx=(0, 10))
-
-videocr_gpu_check = ctk.CTkCheckBox(_videocr_inline, text="GPU", variable=videocr_gpu_var, width=70,
-                font=("Arial", 12))
-videocr_gpu_check.pack(side="left", padx=(0, 6))
-videocr_fullframe_check = ctk.CTkCheckBox(_videocr_inline, text="Full Frame", variable=videocr_fullframe_var, width=100,
-                font=("Arial", 12))
-videocr_fullframe_check.pack(side="left", padx=(0, 6))
-videocr_align_check = ctk.CTkCheckBox(_videocr_inline, text="Căn giọng", variable=videocr_align_var, width=100,
-                font=("Arial", 12))
-videocr_align_check.pack(side="left", padx=(0, 4))
 
 # Row 2: API Key (ẩn khi dùng Edge TTS)
 voice_row2 = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -1370,7 +1344,11 @@ def _toggle_rvc_panel():
     # Mở rộng voice_frame để hàng settings không bị sash che mất
     app.update_idletasks()
     req = voice_frame.winfo_reqheight()
-    _vpane.sash_place(0, 0, req)
+    try:
+        if len(_vpane.panes()) > 1:
+            _vpane.sash_place(0, 0, req)
+    except Exception:
+        pass
     _apply_voice_exclusivity()
 
 rvc_enable_check = ctk.CTkCheckBox(
@@ -1474,7 +1452,11 @@ def _toggle_voxcpm_panel():
     # Dời sash để voice_frame vừa đủ chỗ cho content mới
     app.update_idletasks()
     req = voice_frame.winfo_reqheight()
-    _vpane.sash_place(0, 0, req)
+    try:
+        if len(_vpane.panes()) > 1:
+            _vpane.sash_place(0, 0, req)
+    except Exception:
+        pass
     _apply_voice_exclusivity()
 
 voxcpm_enable_check = ctk.CTkCheckBox(
@@ -1721,18 +1703,8 @@ def _apply_voice_exclusivity():
         _set_state(_voxcpm_all_ctrls, "normal")
 
 # ── Quick TTS row ─────────────────────────────────────────────────────────────
-quick_tts_row = ctk.CTkFrame(voice_frame, fg_color="transparent")
-quick_tts_row.pack(fill="x", padx=2, pady=(2, 4))
-
-ctk.CTkLabel(quick_tts_row, text="Text:", font=("Arial", 12)).pack(side="left", padx=(10, 4))
-
+# Quick TTS: widget UI duoc tao o workspace "Text -> Audio" (xem phia duoi)
 quick_tts_var = ctk.StringVar(value="")
-quick_tts_entry = ctk.CTkEntry(
-    quick_tts_row, textvariable=quick_tts_var,
-    placeholder_text="Nhập hoặc dán text bất kỳ để tạo audio...",
-    font=("Arial", 12),
-)
-quick_tts_entry.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
 _quick_tts_output_var = ctk.StringVar(value="")
 
@@ -1747,11 +1719,7 @@ def _quick_tts_choose_output():
         _quick_tts_output_var.set(path)
         log(f"[Quick TTS] Output: {path}")
 
-ctk.CTkButton(
-    quick_tts_row, text="Output", width=72,
-    command=_quick_tts_choose_output,
-    font=("Arial", 12),
-).pack(side="left", padx=(0, 4))
+# (nut Output -> workspace "Text -> Audio")
 
 def _quick_tts_run():
     text = quick_tts_var.get().strip()
@@ -1878,12 +1846,7 @@ def _quick_tts_run():
 
     threading.Thread(target=_run, daemon=True).start()
 
-ctk.CTkButton(
-    quick_tts_row, text="Gen Audio", width=100,
-    command=_quick_tts_run,
-    font=("Arial", 12, "bold"),
-    fg_color="#1E6B3C", hover_color="#145229",
-).pack(side="left", padx=(0, 6))
+# (nut Gen Audio -> workspace "Text -> Audio")
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2741,34 +2704,258 @@ subtitle_size_slider.pack(fill="x", padx=10, pady=(0, 10))
 
 # Vùng nút có thanh cuộn dọc — khi cửa sổ thấp, các hàng cuối (vd "Ghép Vào Video")
 # không bị cắt mất nữa mà cuộn xuống để xem.
-button_frame = ctk.CTkScrollableFrame(_root, height=340)
-button_frame.pack(fill="both", expand=False, padx=10, pady=10)
+# =====================================================================
+# BO CUC SIDEBAR-WORKSPACE
+#   - Khu chuc nang chia thanh cac "khong gian lam viec"; sidebar trai
+#     de chuyen qua lai - moi luc chi hien dung nhom lien quan.
+#   - Console/preview (main_frame) an/hien duoc bang nut trong sidebar.
+#   - Ten bien nut + section giu NGUYEN -> khong ham nao phai sua.
+# =====================================================================
+_WS_NAVBG   = "#1a1e25"
+_WS_ACTIVE  = "#274156"
+_WS_HOVER   = "#222831"
+_WS_TXT     = "#c7d0db"
+_WS_TXT_ACT = "#ffffff"
+
+ws_shell = ctk.CTkFrame(_root, fg_color="transparent")
+ws_shell.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+ws_nav = ctk.CTkFrame(ws_shell, width=216, fg_color=_WS_NAVBG, corner_radius=10)
+ws_nav.pack(side="left", fill="y", padx=(0, 8))
+ws_nav.pack_propagate(False)
+
+ws_content = ctk.CTkScrollableFrame(ws_shell, fg_color="transparent")
+ws_content.pack(side="left", fill="both", expand=True)
+button_frame = ws_content  # tuong thich nguoc
+
+_WS_KEYS = ["tts", "textaudio", "doc", "extract", "translate", "video", "system"]
+ws_pages = {_k: ctk.CTkFrame(ws_content, fg_color="transparent") for _k in _WS_KEYS}
+
+ws_nav_buttons = {}
+_ws_current = {"key": "tts"}
+
+def show_workspace(key):
+    for _pg in ws_pages.values():
+        _pg.pack_forget()
+    ws_pages[key].pack(fill="both", expand=True)
+    _ws_current["key"] = key
+    for _kk, _b in ws_nav_buttons.items():
+        if _kk == key:
+            _b.configure(fg_color=_WS_ACTIVE, text_color=_WS_TXT_ACT)
+        else:
+            _b.configure(fg_color="transparent", text_color=_WS_TXT)
+    try:
+        ws_content._parent_canvas.yview_moveto(0)
+    except Exception:
+        pass
+
+_WS_NAV_ITEMS = [
+    ("__cap1",    "TẠO GIỌNG NÓI"),
+    ("tts",       "\U0001F3A7   SRT \u2192 Lồng tiếng"),
+    ("textaudio", "\U0001F4DD   Text \u2192 Audio"),
+    ("doc",       "\U0001F4C4   Tài liệu \u2192 Audio"),
+    ("__cap2",    "PHỤ ĐỀ"),
+    ("extract",   "\U0001F50D   Video \u2192 Phụ đề"),
+    ("translate", "\U0001F310   Dịch thuật AI"),
+    ("__cap3",    "TIỆN ÍCH"),
+    ("video",     "\U0001F3AC   Công cụ Video"),
+    ("system",    "\u2699\uFE0F   Hệ thống"),
+]
+
+# Nut an/hien Console o DAY sidebar (co dinh, luon thay) - tao truoc de pack bottom
+_console_visible = {"on": True}
+def toggle_console():
+    if _console_visible["on"]:
+        try:
+            _vpane.forget(main_frame)
+            _vpane.paneconfigure(voice_frame, stretch="always")
+        except Exception:
+            pass
+        _console_visible["on"] = False
+        btn_toggle_console.configure(text="\U0001F5A5   Hiện Console")
+    else:
+        try:
+            _vpane.paneconfigure(voice_frame, stretch="never")
+            _vpane.add(main_frame, sticky="nsew", stretch="always")
+        except Exception:
+            pass
+        _console_visible["on"] = True
+        btn_toggle_console.configure(text="\U0001F5A5   Ẩn Console")
+
+# Vung danh sach nav CO THE CUON (khi cua so thap khong bi che mat muc cuoi)
+ws_nav_scroll = ctk.CTkScrollableFrame(ws_nav, fg_color="transparent")
+ws_nav_scroll.pack(side="top", fill="both", expand=True, padx=0, pady=(4, 0))
+
+for _key, _label in _WS_NAV_ITEMS:
+    if _key.startswith("__cap"):
+        ctk.CTkLabel(ws_nav_scroll, text=_label, font=("Arial", 10, "bold"),
+                     text_color="#6b7480", anchor="w").pack(fill="x", padx=12, pady=(12, 2))
+        continue
+    _b = ctk.CTkButton(
+        ws_nav_scroll, text=_label, anchor="w", height=38,
+        font=("Arial", 13), corner_radius=8,
+        fg_color="transparent", text_color=_WS_TXT, hover_color=_WS_HOVER,
+        command=lambda k=_key: show_workspace(k),
+    )
+    _b.pack(fill="x", padx=4, pady=2)
+    ws_nav_buttons[_key] = _b
 
 # Per-row frames — mỗi hàng tự chia đều width cho tất cả nút (pack expand=True)
-_brow0 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow0.pack(fill="x")
-_brow0b = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow0b.pack(fill="x")
-_brow1 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow1.pack(fill="x")
-_brow2 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow2.pack(fill="x")
-_brow3 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow3.pack(fill="x")
-_brow4 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow4.pack(fill="x")
-_brow4b = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow4b.pack(fill="x")
-_brow5 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow5.pack(fill="x")
-_brow6 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow6.pack(fill="x")
-_brow7 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow7.pack(fill="x")
-_brow8 = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow8.pack(fill="x")
-_brow8b = ctk.CTkFrame(button_frame, fg_color="transparent")
-_brow8b.pack(fill="x")
+# === Bố cục nút theo NHÓM CHỨC NĂNG (thay cho các hàng phẳng _brow*) ===
+# Mỗi nhóm = 1 "thẻ" có tiêu đề + vạch màu; tên biến nút giữ NGUYÊN.
+_SEC_BG, _SEC_BORDER = "#23272f", "#333a45"
+_SUB_FG, _TTL_FG, _SUBTTL_FG = "#7b8593", "#e6eaf0", "#7a828f"
+
+def _make_section(title, subtitle="", accent="#3b8ed0", ws="tts"):
+    _parent = ws_pages.get(ws, button_frame)
+    card = ctk.CTkFrame(_parent, fg_color=_SEC_BG,
+                        border_color=_SEC_BORDER, border_width=1, corner_radius=10)
+    card.pack(fill="x", padx=2, pady=(0, 9))
+    head = ctk.CTkFrame(card, fg_color="transparent")
+    head.pack(fill="x", padx=12, pady=(9, 0))
+    ctk.CTkFrame(head, fg_color=accent, width=4, height=28, corner_radius=2).pack(side="left", padx=(0, 10))
+    box = ctk.CTkFrame(head, fg_color="transparent")
+    box.pack(side="left", fill="x", expand=True)
+    ctk.CTkLabel(box, text=title, font=("Arial", 14, "bold"),
+                 text_color=_TTL_FG, anchor="w").pack(fill="x")
+    if subtitle:
+        ctk.CTkLabel(box, text=subtitle, font=("Arial", 11),
+                     text_color=_SUBTTL_FG, anchor="w").pack(fill="x")
+    body = ctk.CTkFrame(card, fg_color="transparent")
+    body.pack(fill="x", padx=8, pady=(2, 8))
+    return body
+
+def _sec_row(parent):
+    r = ctk.CTkFrame(parent, fg_color="transparent")
+    r.pack(fill="x")
+    return r
+
+def _sec_col(parent):
+    c = ctk.CTkFrame(parent, fg_color="transparent")
+    c.pack(side="left", fill="both", expand=True, padx=4)
+    return c
+
+def _sec_sublabel(parent, text):
+    ctk.CTkLabel(parent, text=text, font=("Arial", 10, "bold"),
+                 text_color=_SUB_FG, anchor="w").pack(fill="x", padx=5, pady=(7, 1))
+
+# Nhom 1
+_sec1 = _make_section("SRT → Lồng tiếng (TTS)", "Nạp phụ đề → tạo giọng → ghép vào video", "#3b8ed0", ws="tts")
+_sec_sublabel(_sec1, "TẠO")
+_g1_create = _sec_row(_sec1)
+_sec_sublabel(_sec1, "ĐIỀU KHIỂN TIẾN TRÌNH")
+_g1_ctrl = _sec_row(_sec1)
+_sec_sublabel(_sec1, "CHỈNH SỬA & ĐẦU RA")
+_g1_io = _sec_row(_sec1)
+
+# Nhom 2
+_sec2 = _make_section("Tài liệu → Audio (PDF / Word / TXT)", "Đọc tài liệu thành giọng nói", "#9b6cff", ws="doc")
+_sec_sublabel(_sec2, "NẠP & ĐỌC")
+_g2_load = _sec_row(_sec2)
+_sec_sublabel(_sec2, "SỬA & GHÉP")
+_g2_edit = _sec_row(_sec2)
+
+# Nhom 3
+_sec3 = _make_section("Video → Phụ đề", "Trích phụ đề từ video: OCR (sub cứng) hoặc STT (giọng nói)", "#2fa572", ws="extract")
+_g3_cols = _sec_row(_sec3)
+_g3_ocr_col = _sec_col(_g3_cols)
+_g3_stt_col = _sec_col(_g3_cols)
+_sec_sublabel(_g3_ocr_col, "TÁCH SUB CỨNG (OCR)")
+_g3_ocr_opt1 = _sec_row(_g3_ocr_col)
+_g3_ocr_opt2 = _sec_row(_g3_ocr_col)
+_g3_ocr = _sec_row(_g3_ocr_col)
+_g3_ocr_ctrl = _sec_row(_g3_ocr_col)
+_sec_sublabel(_g3_stt_col, "GIỌNG NÓI → VĂN BẢN (STT)")
+_g3_stt = _sec_row(_g3_stt_col)
+_g3_stt_opt = _sec_row(_g3_stt_col)
+
+# Nhom 4
+_sec4 = _make_section("Dịch thuật AI", "Dịch phụ đề & tài liệu sang tiếng Việt bằng LLM", "#e0913b", ws="translate")
+_sec_sublabel(_sec4, "TUỲ CHỌN DỊCH")
+_g4_opt = _sec_row(_sec4)
+_sec_sublabel(_sec4, "DỊCH & ĐIỀU KHIỂN")
+_g4_run = _sec_row(_sec4)
+
+# Nhom 5
+_sec5 = _make_section("Công cụ Video", "Sửa lỗi · nén dung lượng · ghép audio vào video", "#6b7686", ws="video")
+_g5_cols = _sec_row(_sec5)
+_g5_repair_col = _sec_col(_g5_cols)
+_g5_comp_col = _sec_col(_g5_cols)
+_g5_mux_col = _sec_col(_g5_cols)
+_sec_sublabel(_g5_repair_col, "SỬA LỖI VIDEO")
+_g5_rep0 = _sec_row(_g5_repair_col)
+_g5_rep1 = _sec_row(_g5_repair_col)
+_g5_rep2 = _sec_row(_g5_repair_col)
+_g5_rep3 = _sec_row(_g5_repair_col)
+_sec_sublabel(_g5_comp_col, "NÉN MP4")
+_g5_comp1 = _sec_row(_g5_comp_col)
+_g5_comp2 = _sec_row(_g5_comp_col)
+_g5_comp3 = _sec_row(_g5_comp_col)
+_sec_sublabel(_g5_mux_col, "GHÉP AUDIO VÀO VIDEO")
+_g5_mux1 = _sec_row(_g5_mux_col)
+_g5_mux2 = _sec_row(_g5_mux_col)
+_g5_mux3 = _sec_row(_g5_mux_col)
+_sec_sublabel(_sec5, "BIÊN TẬP")
+_g5_studio = _sec_row(_sec5)
+
+# Nhom 6
+_sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#48505d", ws="system")
+_g6 = _sec_row(_sec6)
+
+# Mo workspace mac dinh khi khoi dong
+show_workspace("tts")
+
+# === Thiet lap OCR (chuyen tu thanh tren xuong workspace "Video -> Phu de") ===
+ctk.CTkLabel(_g3_ocr_opt1, text="OCR Ngôn ngữ:", font=("Arial", 12)).pack(side="left", padx=(2, 4))
+videocr_lang_menu = ctk.CTkOptionMenu(
+    _g3_ocr_opt1,
+    variable=videocr_lang_var,
+    values=["vi", "en", "chinese_sim", "chinese_cht", "japan", "korean", "fr", "de", "ru", "ar", "th", "id"],
+    width=110,
+    font=("Arial", 12),
+)
+videocr_lang_menu.pack(side="left", padx=(0, 10))
+
+ctk.CTkLabel(_g3_ocr_opt1, text="Engine:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
+videocr_engine_menu = ctk.CTkOptionMenu(
+    _g3_ocr_opt1,
+    variable=videocr_engine_var,
+    values=["paddleocr", "google_lens"],
+    width=120,
+    font=("Arial", 12),
+)
+videocr_engine_menu.pack(side="left", padx=(0, 4))
+
+videocr_gpu_check = ctk.CTkCheckBox(_g3_ocr_opt2, text="GPU", variable=videocr_gpu_var, width=60, font=("Arial", 12))
+videocr_gpu_check.pack(side="left", padx=(2, 12))
+videocr_fullframe_check = ctk.CTkCheckBox(_g3_ocr_opt2, text="Full Frame", variable=videocr_fullframe_var, width=90, font=("Arial", 12))
+videocr_fullframe_check.pack(side="left", padx=(0, 12))
+videocr_align_check = ctk.CTkCheckBox(_g3_ocr_opt2, text="Căn giọng", variable=videocr_align_var, width=90, font=("Arial", 12))
+videocr_align_check.pack(side="left", padx=(0, 4))
+
+# === Workspace "Text -> Audio": go/dan van ban -> tao audio le ===
+_sec_qt = _make_section("Text → Audio", "Gõ hoặc dán văn bản bất kỳ để tạo một audio lẻ", "#3b8ed0", ws="textaudio")
+_sec_sublabel(_sec_qt, "VĂN BẢN")
+_qt_row1 = _sec_row(_sec_qt)
+_sec_sublabel(_sec_qt, "TẠO AUDIO")
+_qt_row2 = _sec_row(_sec_qt)
+
+quick_tts_entry = ctk.CTkEntry(
+    _qt_row1, textvariable=quick_tts_var,
+    placeholder_text="Nhập hoặc dán text bất kỳ để tạo audio...",
+    height=40, font=("Arial", 13),
+)
+quick_tts_entry.pack(side="left", expand=True, fill="x", padx=(2, 2))
+
+ctk.CTkButton(
+    _qt_row2, text="📁 Chọn Output", command=_quick_tts_choose_output,
+    height=40, font=("Arial", 13),
+).pack(side="left", expand=True, fill="x", padx=4, pady=2)
+ctk.CTkButton(
+    _qt_row2, text="🔊 Gen Audio", command=_quick_tts_run,
+    height=40, font=("Arial", 13, "bold"),
+    fg_color="#2fa572", hover_color="#37b87f",
+).pack(side="left", expand=True, fill="x", padx=4, pady=2)
 
 
 # =========================
@@ -9901,58 +10088,58 @@ def start_clean_noaudio():
 # =========================
 
 # ── Row 0: SRT / TTS controls ────────────────────────────────────────────────
-btn_load = ctk.CTkButton(_brow0, text="Load SRT", command=load_subtitles, height=36, font=("Arial", 13))
+btn_load = ctk.CTkButton(_g1_create, text="Load SRT", command=load_subtitles, height=36, font=("Arial", 13))
 btn_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_tts = ctk.CTkButton(_brow0, text="Generate TTS", command=start_tts, height=36, font=("Arial", 13))
+btn_tts = ctk.CTkButton(_g1_create, text="Generate TTS", command=start_tts, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
 btn_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_pause = ctk.CTkButton(_brow0, text="Pause", command=pause_tts, height=36, font=("Arial", 13))
+btn_pause = ctk.CTkButton(_g1_ctrl, text="⏸ Pause", command=pause_tts, height=36, font=("Arial", 13), fg_color="#B8860B", hover_color="#946c09")
 btn_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_resume = ctk.CTkButton(_brow0, text="Resume", command=resume_tts, height=36, font=("Arial", 13))
+btn_resume = ctk.CTkButton(_g1_ctrl, text="▶ Resume", command=resume_tts, height=36, font=("Arial", 13), fg_color="#1E6B3C", hover_color="#145229")
 btn_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_stop = ctk.CTkButton(_brow0, text="Stop", command=stop_tts, height=36, font=("Arial", 13))
+btn_stop = ctk.CTkButton(_g1_ctrl, text="⏹ Stop", command=stop_tts, height=36, font=("Arial", 13), fg_color="#8B2020", hover_color="#5e1616")
 btn_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_restart = ctk.CTkButton(_brow0b, text="Start Over", command=restart_tts, height=36, font=("Arial", 13))
+btn_restart = ctk.CTkButton(_g1_ctrl, text="↺ Start Over", command=restart_tts, height=36, font=("Arial", 13), fg_color="#414b5a", hover_color="#4c5667")
 btn_restart.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_merge = ctk.CTkButton(_brow0b, text="Merge FFmpeg", command=start_merge, height=36, font=("Arial", 13))
+btn_merge = ctk.CTkButton(_g1_create, text="Merge FFmpeg", command=start_merge, height=36, font=("Arial", 13))
 btn_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_open_se = ctk.CTkButton(_brow0b, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
+btn_open_se = ctk.CTkButton(_g1_io, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_open_se.bind("<Enter>", lambda e: btn_open_se.configure(fg_color="#8B5CF6"))
 btn_open_se.bind("<Leave>", lambda e: btn_open_se.configure(fg_color=["#3B8ED0", "#1F6AA5"]))
 
-btn_edit = ctk.CTkButton(_brow0b, text="Regenerate Line", command=ask_line_edit, height=36, font=("Arial", 13))
+btn_edit = ctk.CTkButton(_g1_io, text="Regenerate Line", command=ask_line_edit, height=36, font=("Arial", 13))
 btn_edit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_exit = ctk.CTkButton(_brow0b, text="Exit", command=lambda: on_app_close(), height=36, font=("Arial", 13), hover_color="#cc0000")
-btn_exit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_exit = ctk.CTkButton(_g6, text="🚪 Logout", command=lambda: on_logout(), height=36, font=("Arial", 13), fg_color="#9a3b3b", hover_color="#cc0000")
+btn_exit.pack(side="right", padx=4, pady=4)
 
 # ── Row 1: Log / mode / output ───────────────────────────────────────────────
-btn_clear = ctk.CTkButton(_brow1, text="Clear Log", command=clear_log, height=36, font=("Arial", 13))
+btn_clear = ctk.CTkButton(_g6, text="Clear Log", command=clear_log, height=36, font=("Arial", 13))
 btn_clear.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # btn_reset_mode packed here (defined later after set_mode)
 # ← placeholder; actual widget packed after set_mode definition
 
-btn_choose_video = ctk.CTkButton(_brow1, text="Choose Video Files", command=choose_video_files, height=36, font=("Arial", 13))
+btn_choose_video = ctk.CTkButton(_g5_rep0, text="🎞 Choose Video Files", command=choose_video_files, height=36, font=("Arial", 13))
 btn_choose_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_choose_output = ctk.CTkButton(_brow1, text="Choose Output Folder", command=choose_output_folder, height=36, font=("Arial", 13))
+btn_choose_output = ctk.CTkButton(_g1_io, text="Choose Output Folder", command=choose_output_folder, height=36, font=("Arial", 13))
 btn_choose_output.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_open_folder = ctk.CTkButton(_brow1, text="Open Output Folder", command=open_output_folder, height=36, font=("Arial", 13))
+btn_open_folder = ctk.CTkButton(_g1_io, text="Open Output Folder", command=open_output_folder, height=36, font=("Arial", 13))
 btn_open_folder.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_settings = ctk.CTkButton(_brow1, text="⚙ Cài đặt", command=show_settings_dialog, height=36, font=("Arial", 13))
+btn_settings = ctk.CTkButton(_g6, text="⚙ Cài đặt", command=show_settings_dialog, height=36, font=("Arial", 13))
 btn_settings.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_media_edit = ctk.CTkButton(_brow1, text="🎬 Edit Studio", command=open_edit_studio, height=36, font=("Arial", 13))
+btn_media_edit = ctk.CTkButton(_g5_studio, text="🎬 Edit Studio", command=open_edit_studio, height=36, font=("Arial", 13))
 btn_media_edit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # Hover: chuyển nút Cài đặt sang xanh lá + chữ đen; rời chuột → mặc định
@@ -10004,56 +10191,56 @@ btn_clear.bind("<Enter>", _on_clear_enter)
 btn_clear.bind("<Leave>", _on_clear_leave)
 
 # ── Row 2: Video repair ───────────────────────────────────────────────────────
-btn_scan_video = ctk.CTkButton(_brow2, text="Scan Bad Videos", command=start_scan_bad_videos, height=36, font=("Arial", 13))
+btn_scan_video = ctk.CTkButton(_g5_rep1, text="Scan Bad Videos", command=start_scan_bad_videos, height=36, font=("Arial", 13))
 btn_scan_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_repair_video = ctk.CTkButton(_brow2, text="Repair Bad Videos", command=start_repair_bad_videos, height=36, font=("Arial", 13))
+btn_repair_video = ctk.CTkButton(_g5_rep2, text="Repair Bad Videos", command=start_repair_bad_videos, height=36, font=("Arial", 13))
 btn_repair_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_clean_video = ctk.CTkButton(_brow2, text="Clean NoAudio Videos", command=start_clean_noaudio, height=36, font=("Arial", 13))
+btn_clean_video = ctk.CTkButton(_g5_rep3, text="Clean NoAudio Videos", command=start_clean_noaudio, height=36, font=("Arial", 13))
 btn_clean_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 3: PDF TTS ───────────────────────────────────────────────────────────
-btn_load_pdf = ctk.CTkButton(_brow3, text="Load PDF", command=load_pdf, height=36, font=("Arial", 13))
+btn_load_pdf = ctk.CTkButton(_g2_load, text="Load PDF", command=load_pdf, height=36, font=("Arial", 13))
 btn_load_pdf.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_load_doc_tts = ctk.CTkButton(_brow3, text="Load Word/TXT", command=load_doc_tts, height=36, font=("Arial", 13))
+btn_load_doc_tts = ctk.CTkButton(_g2_load, text="Load Word/TXT", command=load_doc_tts, height=36, font=("Arial", 13))
 btn_load_doc_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_pdf_tts = ctk.CTkButton(_brow3, text="Đọc (TTS)", command=start_pdf_tts, height=36, font=("Arial", 13), state="disabled")
+btn_pdf_tts = ctk.CTkButton(_g2_load, text="Đọc (TTS)", command=start_pdf_tts, height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
 btn_pdf_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_pdf_merge = ctk.CTkButton(_brow3, text="Merge Audio", command=merge_pdf_audio, height=36, font=("Arial", 13), state="disabled")
+btn_pdf_merge = ctk.CTkButton(_g2_edit, text="Merge Audio", command=merge_pdf_audio, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_pdf_regen = ctk.CTkButton(_brow3, text="Regenerate đoạn", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
+btn_pdf_regen = ctk.CTkButton(_g2_edit, text="Regenerate đoạn", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_regen.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 4: Video OCR ──────────────────────────────────────────────────────────
-btn_videocr_load = ctk.CTkButton(_brow4, text="Chọn Video OCR", command=load_videocr_video, height=36, font=("Arial", 13))
+btn_videocr_load = ctk.CTkButton(_g3_ocr, text="Chọn Video OCR", command=load_videocr_video, height=36, font=("Arial", 13))
 btn_videocr_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_videocr_outdir = ctk.CTkButton(_brow4, text="Chọn Output OCR", command=choose_videocr_output_folder, height=36, font=("Arial", 13))
+btn_videocr_outdir = ctk.CTkButton(_g3_ocr, text="Chọn Output OCR", command=choose_videocr_output_folder, height=36, font=("Arial", 13))
 btn_videocr_outdir.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_videocr_run = ctk.CTkButton(_brow4, text="Tách Sub Cứng (OCR)", command=start_videocr, height=36, font=("Arial", 13), state="disabled")
+btn_videocr_run = ctk.CTkButton(_g3_ocr, text="Tách Sub Cứng (OCR)", command=start_videocr, height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
 btn_videocr_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_videocr_open = ctk.CTkButton(_brow4, text="Mở Thư Mục SRT", command=open_videocr_srt, height=36, font=("Arial", 13), state="disabled")
+btn_videocr_open = ctk.CTkButton(_g3_ocr, text="Mở Thư Mục SRT", command=open_videocr_srt, height=36, font=("Arial", 13), state="disabled")
 btn_videocr_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # Hàng điều khiển Tách Sub Cứng (OCR): Tạm dừng / Tiếp tục / Dừng hẳn
-btn_videocr_pause = ctk.CTkButton(_brow4b, text="⏸ Tạm dừng OCR", command=_videocr_pause,
+btn_videocr_pause = ctk.CTkButton(_g3_ocr_ctrl, text="⏸ Tạm dừng OCR", command=_videocr_pause,
                                   height=32, font=("Arial", 13), state="disabled",
                                   fg_color="#B8860B", hover_color="#946c09")
 btn_videocr_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_videocr_resume = ctk.CTkButton(_brow4b, text="▶ Tiếp tục OCR", command=_videocr_resume,
+btn_videocr_resume = ctk.CTkButton(_g3_ocr_ctrl, text="▶ Tiếp tục OCR", command=_videocr_resume,
                                    height=32, font=("Arial", 13), state="disabled",
                                    fg_color="#1E6B3C", hover_color="#145229")
 btn_videocr_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_videocr_stop = ctk.CTkButton(_brow4b, text="⏹ Dừng hẳn OCR", command=_videocr_stop,
+btn_videocr_stop = ctk.CTkButton(_g3_ocr_ctrl, text="⏹ Dừng hẳn OCR", command=_videocr_stop,
                                  height=32, font=("Arial", 13), state="disabled",
                                  fg_color="#8B2020", hover_color="#5e1616")
 btn_videocr_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -10064,78 +10251,78 @@ videocr_instdir_var = ctk.StringVar(value="")  # dùng trong _run_videocr_thread
 stt_model_var = ctk.StringVar(value="large-v3")
 stt_lang_var  = ctk.StringVar(value="vi")
 
-btn_stt_load = ctk.CTkButton(_brow5, text="Chọn Video/Audio", command=lambda: load_stt_video(), height=36, font=("Arial", 13))
+btn_stt_load = ctk.CTkButton(_g3_stt, text="Chọn Video/Audio", command=lambda: load_stt_video(), height=36, font=("Arial", 13))
 btn_stt_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-ctk.CTkLabel(_brow5, text="Model:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
-stt_model_menu = ctk.CTkOptionMenu(_brow5, variable=stt_model_var,
+ctk.CTkLabel(_g3_stt_opt, text="Model:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
+stt_model_menu = ctk.CTkOptionMenu(_g3_stt_opt, variable=stt_model_var,
     values=["tiny", "base", "small", "medium", "large-v3"],
     width=110, font=("Arial", 12))
 stt_model_menu.pack(side="left", padx=(0, 6))
 
-ctk.CTkLabel(_brow5, text="Ngôn ngữ:", font=("Arial", 12)).pack(side="left", padx=(0, 2))
-stt_lang_menu = ctk.CTkOptionMenu(_brow5, variable=stt_lang_var,
+ctk.CTkLabel(_g3_stt_opt, text="Ngôn ngữ:", font=("Arial", 12)).pack(side="left", padx=(0, 2))
+stt_lang_menu = ctk.CTkOptionMenu(_g3_stt_opt, variable=stt_lang_var,
     values=["vi", "en", "auto", "zh", "ja", "ko", "fr", "de", "th", "id"],
     width=80, font=("Arial", 12))
 stt_lang_menu.pack(side="left", padx=(0, 6))
 
-btn_stt_run = ctk.CTkButton(_brow5, text="Video → Text (STT)", command=lambda: start_video_stt(), height=36, font=("Arial", 13), state="disabled")
+btn_stt_run = ctk.CTkButton(_g3_stt, text="Video → Text (STT)", command=lambda: start_video_stt(), height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
 btn_stt_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_stt_open = ctk.CTkButton(_brow5, text="Mở Thư Mục STT", command=lambda: open_stt_folder(), height=36, font=("Arial", 13), state="disabled")
+btn_stt_open = ctk.CTkButton(_g3_stt, text="Mở Thư Mục STT", command=lambda: open_stt_folder(), height=36, font=("Arial", 13), state="disabled")
 btn_stt_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 6: Giảm dung lượng MP4 ───────────────────────────────────────────────
-btn_compress_load = ctk.CTkButton(_brow6, text="Chọn Video (Nén)", command=load_compress_video, height=36, font=("Arial", 13))
+btn_compress_load = ctk.CTkButton(_g5_comp1, text="Chọn Video (Nén)", command=load_compress_video, height=36, font=("Arial", 13))
 btn_compress_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_compress_outdir = ctk.CTkButton(_brow6, text="Chọn Output (Nén)", command=choose_compress_output_folder, height=36, font=("Arial", 13))
+btn_compress_outdir = ctk.CTkButton(_g5_comp1, text="Chọn Output (Nén)", command=choose_compress_output_folder, height=36, font=("Arial", 13))
 btn_compress_outdir.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-ctk.CTkLabel(_brow6, text="Chất lượng:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
+ctk.CTkLabel(_g5_comp2, text="Chất lượng:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
 compress_quality_var = ctk.StringVar(value="Khuyến nghị (CRF 23)")
 compress_quality_menu = ctk.CTkOptionMenu(
-    _brow6, variable=compress_quality_var,
+    _g5_comp2, variable=compress_quality_var,
     values=["Cao (CRF 20)", "Khuyến nghị (CRF 23)", "Cân bằng (CRF 26)", "Nén mạnh (CRF 30)"],
     width=175, font=("Arial", 12))
 compress_quality_menu.pack(side="left", padx=(0, 8))
 
 compress_gpu_var = ctk.BooleanVar(value=False)
-compress_gpu_check = ctk.CTkCheckBox(_brow6, text="GPU", variable=compress_gpu_var, width=70, font=("Arial", 12))
+compress_gpu_check = ctk.CTkCheckBox(_g5_comp2, text="GPU", variable=compress_gpu_var, width=70, font=("Arial", 12))
 compress_gpu_check.pack(side="left", padx=(0, 6))
 
-btn_compress_run = ctk.CTkButton(_brow6, text="Giảm Dung Lượng", command=start_compress_video, height=36, font=("Arial", 13), state="disabled")
+btn_compress_run = ctk.CTkButton(_g5_comp3, text="Giảm Dung Lượng", command=start_compress_video, height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
 btn_compress_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_compress_open = ctk.CTkButton(_brow6, text="Mở Thư Mục", command=open_compress_folder, height=36, font=("Arial", 13), state="disabled")
+btn_compress_open = ctk.CTkButton(_g5_comp3, text="Mở Thư Mục", command=open_compress_folder, height=36, font=("Arial", 13), state="disabled")
 btn_compress_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 
 # ── Row 7: Ghép Audio Final vào Video ────────────────────────────────────────
-btn_mux_video = ctk.CTkButton(_brow7, text="Chọn Video (Ghép)", command=load_mux_video, height=36, font=("Arial", 13))
+btn_mux_video = ctk.CTkButton(_g5_mux1, text="Chọn Video (Ghép)", command=load_mux_video, height=36, font=("Arial", 13))
 btn_mux_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_mux_audio = ctk.CTkButton(_brow7, text="Chọn Audio (Ghép)", command=load_mux_audio, height=36, font=("Arial", 13))
+btn_mux_audio = ctk.CTkButton(_g5_mux1, text="Chọn Audio (Ghép)", command=load_mux_audio, height=36, font=("Arial", 13))
 btn_mux_audio.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-ctk.CTkLabel(_brow7, text="Vol Video:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
+ctk.CTkLabel(_g5_mux2, text="Vol Video:", font=("Arial", 12)).pack(side="left", padx=(4, 2))
 mux_video_vol_var = ctk.StringVar(value="1.0")
-mux_video_vol_entry = ctk.CTkEntry(_brow7, textvariable=mux_video_vol_var, width=55, font=("Arial", 12))
+mux_video_vol_entry = ctk.CTkEntry(_g5_mux2, textvariable=mux_video_vol_var, width=55, font=("Arial", 12))
 mux_video_vol_entry.pack(side="left", padx=(0, 6))
 
-ctk.CTkLabel(_brow7, text="Vol Audio:", font=("Arial", 12)).pack(side="left", padx=(0, 2))
+ctk.CTkLabel(_g5_mux2, text="Vol Audio:", font=("Arial", 12)).pack(side="left", padx=(0, 2))
 mux_audio_vol_var = ctk.StringVar(value="1.0")
-mux_audio_vol_entry = ctk.CTkEntry(_brow7, textvariable=mux_audio_vol_var, width=55, font=("Arial", 12))
+mux_audio_vol_entry = ctk.CTkEntry(_g5_mux2, textvariable=mux_audio_vol_var, width=55, font=("Arial", 12))
 mux_audio_vol_entry.pack(side="left", padx=(0, 6))
 
 mux_keep_orig_var = ctk.BooleanVar(value=False)
-mux_keep_orig_check = ctk.CTkCheckBox(_brow7, text="Giữ audio gốc", variable=mux_keep_orig_var, width=110, font=("Arial", 12))
+mux_keep_orig_check = ctk.CTkCheckBox(_g5_mux2, text="Giữ audio gốc", variable=mux_keep_orig_var, width=110, font=("Arial", 12))
 mux_keep_orig_check.pack(side="left", padx=(0, 6))
 
-btn_mux_run = ctk.CTkButton(_brow7, text="Ghép Vào Video", command=start_mux_video, height=36, font=("Arial", 13), state="disabled")
+btn_mux_run = ctk.CTkButton(_g5_mux3, text="Ghép Vào Video", command=start_mux_video, height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
 btn_mux_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_mux_open = ctk.CTkButton(_brow7, text="Mở Thư Mục", command=open_mux_folder, height=36, font=("Arial", 13), state="disabled")
+btn_mux_open = ctk.CTkButton(_g5_mux3, text="Mở Thư Mục", command=open_mux_folder, height=36, font=("Arial", 13), state="disabled")
 btn_mux_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 8: Dịch phụ đề / PDF sang tiếng Việt (LLM) ────────────────────────────
@@ -10145,50 +10332,50 @@ translate_context_var   = ctk.StringVar(value="")
 translate_bilingual_var = ctk.BooleanVar(value=False)
 translate_pdf_format_var = ctk.StringVar(value="txt")
 
-ctk.CTkLabel(_brow8, text="Dịch (AI):", font=("Arial", 12)).pack(side="left", padx=(4, 2))
+ctk.CTkLabel(_g4_opt, text="Dịch (AI):", font=("Arial", 12)).pack(side="left", padx=(4, 2))
 translate_provider_menu = ctk.CTkOptionMenu(
-    _brow8, variable=translate_provider_var,
+    _g4_opt, variable=translate_provider_var,
     values=["Claude", "Gemini", "OpenAI", "Offline"],
     command=set_translate_provider, width=110, font=("Arial", 12))
 translate_provider_menu.pack(side="left", padx=(0, 6))
 
-ctk.CTkLabel(_brow8, text="Ngữ cảnh/xưng hô:", font=("Arial", 12)).pack(side="left", padx=(2, 2))
+ctk.CTkLabel(_g4_opt, text="Ngữ cảnh/xưng hô:", font=("Arial", 12)).pack(side="left", padx=(2, 2))
 translate_context_entry = ctk.CTkEntry(
-    _brow8, textvariable=translate_context_var, width=200, font=("Arial", 11),
+    _g4_opt, textvariable=translate_context_var, width=200, font=("Arial", 11),
     placeholder_text="VD: A là sếp, B gọi A 'anh' xưng 'em'")
 translate_context_entry.pack(side="left", padx=(0, 6))
 
 translate_bilingual_check = ctk.CTkCheckBox(
-    _brow8, text="Song ngữ", variable=translate_bilingual_var, width=90, font=("Arial", 12))
+    _g4_opt, text="Song ngữ", variable=translate_bilingual_var, width=90, font=("Arial", 12))
 translate_bilingual_check.pack(side="left", padx=(0, 6))
 
-ctk.CTkLabel(_brow8, text="Ra (PDF/Word/TXT):", font=("Arial", 12)).pack(side="left", padx=(2, 2))
+ctk.CTkLabel(_g4_opt, text="Ra (PDF/Word/TXT):", font=("Arial", 12)).pack(side="left", padx=(2, 2))
 translate_pdf_format_menu = ctk.CTkOptionMenu(
-    _brow8, variable=translate_pdf_format_var, values=["txt", "pdf", "docx"],
+    _g4_opt, variable=translate_pdf_format_var, values=["txt", "pdf", "docx"],
     width=80, font=("Arial", 12))
 translate_pdf_format_menu.pack(side="left", padx=(0, 6))
 
-btn_translate_srt = ctk.CTkButton(_brow8, text="Dịch SRT", command=translate_srt, height=36, font=("Arial", 13))
+btn_translate_srt = ctk.CTkButton(_g4_run, text="Dịch SRT", command=translate_srt, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
 btn_translate_srt.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_translate_pdf = ctk.CTkButton(_brow8, text="Dịch PDF", command=translate_pdf, height=36, font=("Arial", 13))
+btn_translate_pdf = ctk.CTkButton(_g4_run, text="Dịch PDF", command=translate_pdf, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
 btn_translate_pdf.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_translate_doc = ctk.CTkButton(_brow8, text="Dịch Word/TXT", command=translate_doc, height=36, font=("Arial", 13))
+btn_translate_doc = ctk.CTkButton(_g4_run, text="Dịch Word/TXT", command=translate_doc, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
 btn_translate_doc.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # Hàng điều khiển dịch: Tạm dừng / Tiếp tục / Dừng hẳn (bật khi đang dịch)
-btn_tr_pause = ctk.CTkButton(_brow8b, text="⏸ Tạm dừng dịch", command=_translate_pause,
+btn_tr_pause = ctk.CTkButton(_g4_run, text="⏸ Tạm dừng dịch", command=_translate_pause,
                              height=32, font=("Arial", 13), state="disabled",
                              fg_color="#B8860B", hover_color="#946c09")
 btn_tr_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_tr_resume = ctk.CTkButton(_brow8b, text="▶ Tiếp tục dịch", command=_translate_resume,
+btn_tr_resume = ctk.CTkButton(_g4_run, text="▶ Tiếp tục dịch", command=_translate_resume,
                               height=32, font=("Arial", 13), state="disabled",
                               fg_color="#1E6B3C", hover_color="#145229")
 btn_tr_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_tr_stop = ctk.CTkButton(_brow8b, text="⏹ Dừng hẳn", command=_translate_stop,
+btn_tr_stop = ctk.CTkButton(_g4_run, text="⏹ Dừng hẳn", command=_translate_stop,
                             height=32, font=("Arial", 13), state="disabled",
                             fg_color="#8B2020", hover_color="#5e1616")
 btn_tr_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -10588,7 +10775,7 @@ def set_mode(mode):
 
 
 btn_reset_mode = ctk.CTkButton(
-    _brow1,
+    _g6,
     text="Reset Mode",
     command=lambda: set_mode("reset"),
     height=36,
@@ -10598,61 +10785,6 @@ btn_reset_mode = ctk.CTkButton(
     hover_color="#777777"
 )
 btn_reset_mode.pack(side="left", expand=True, fill="x", padx=4, pady=4, after=btn_clear)
-
-
-# =========================
-# Quick TTS focus → làm mờ vùng khoanh đỏ (OCR settings + tất cả nút trừ Exit)
-# =========================
-
-# Các widget trong vùng khoanh đỏ (KHÔNG gồm nút Exit)
-_quick_tts_dim_widgets = [
-    # OCR settings (oval đỏ phía trên)
-    videocr_lang_menu, videocr_engine_menu,
-    videocr_gpu_check, videocr_fullframe_check, videocr_align_check,
-    # Tất cả nút (vùng đỏ phía dưới) — trừ btn_exit
-    btn_load, btn_tts, btn_pause, btn_resume, btn_stop, btn_restart,
-    btn_merge, btn_open_se, btn_edit,
-    btn_clear, btn_reset_mode, btn_choose_video, btn_choose_output, btn_open_folder,
-    btn_scan_video, btn_repair_video, btn_clean_video,
-    btn_load_pdf, btn_load_doc_tts, btn_pdf_tts, btn_pdf_merge, btn_pdf_regen,
-    btn_videocr_load, btn_videocr_run, btn_videocr_open,
-    btn_stt_load, btn_stt_run, btn_stt_open,
-    stt_model_menu, stt_lang_menu,
-]
-
-# Lưu trạng thái gốc để khôi phục đúng (state do set_mode quản lý)
-_quick_tts_saved_states = {}
-_quick_tts_dimmed = False
-
-def _quick_tts_dim_on():
-    """Làm mờ (disable) các widget vùng khoanh đỏ khi click vào ô Text."""
-    global _quick_tts_dimmed
-    if _quick_tts_dimmed:
-        return
-    _quick_tts_saved_states.clear()
-    for w in _quick_tts_dim_widgets:
-        try:
-            _quick_tts_saved_states[w] = w.cget("state")
-            w.configure(state="disabled")
-        except Exception:
-            pass
-    _quick_tts_dimmed = True
-
-def _quick_tts_dim_off():
-    """Khôi phục các widget về trạng thái ban đầu khi click ra ngoài ô Text."""
-    global _quick_tts_dimmed
-    if not _quick_tts_dimmed:
-        return
-    for w in _quick_tts_dim_widgets:
-        try:
-            w.configure(state=_quick_tts_saved_states.get(w, "normal"))
-        except Exception:
-            pass
-    _quick_tts_saved_states.clear()
-    _quick_tts_dimmed = False
-
-quick_tts_entry.bind("<FocusIn>",  lambda e: _quick_tts_dim_on())
-quick_tts_entry.bind("<FocusOut>", lambda e: _quick_tts_dim_off())
 
 
 # =========================
@@ -10843,6 +10975,62 @@ def on_app_close():
     try:
         app.destroy()
     except:
+        pass
+
+    os._exit(0)
+
+
+def on_logout():
+    """Đăng xuất: thoát chương trình và quay lại màn hình đăng nhập.
+    Dùng đúng hiệu ứng của nút X (xác nhận + dừng tiến trình + âm thanh tạm biệt),
+    nhưng thay vì thoát hẳn thì khởi động lại app để hiện màn hình đăng nhập."""
+    if not msg.askyesno("Xác nhận đăng xuất", "Bạn chắc chắn muốn đăng xuất?"):
+        # Nhấn No → phát âm thanh (async, không chặn UI)
+        _play_wav_async("toyeucaunhieulamday.wav")
+        return
+
+    # Dừng ngay tất cả tiến trình con (như nút X)
+    try:
+        stop_all_processes()
+    except:
+        pass
+
+    # Phát âm thanh tạm biệt (đồng bộ) — giống hiệu ứng nút X
+    _play_wav_sync("naycaugioi.wav")
+
+    try:
+        app.destroy()
+    except:
+        pass
+
+    # Khởi động lại tiến trình → quay về màn hình đăng nhập.
+    # KHÔNG dùng os.execl: với PyInstaller onefile, re-exec giữ lại các biến môi
+    # trường PyInstaller tự chèn (_MEIPASS / _PYI_* / SSL_CERT_FILE) trỏ vào thư
+    # mục temp sẽ bị dọn → gây FileNotFoundError trong ssl/edge_tts. Thay vào đó
+    # spawn một tiến trình MỚI hoàn toàn với env đã được làm sạch, rồi thoát.
+    # Nhả mutex single-instance trước, nếu không tiến trình mới sẽ báo
+    # "Phần mềm đang chạy!" do mutex của tiến trình cũ chưa được giải phóng.
+    try:
+        import builtins, ctypes
+        _mtx = getattr(builtins, "_srt_studio_mutex", None)
+        if _mtx:
+            ctypes.windll.kernel32.ReleaseMutex(_mtx)
+            ctypes.windll.kernel32.CloseHandle(_mtx)
+            builtins._srt_studio_mutex = None
+    except Exception:
+        pass
+
+    try:
+        _env = dict(os.environ)
+        for _k in ("_MEIPASS", "_MEIPASS2", "_PYI_APPLICATION_HOME_DIR",
+                   "_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                   "SSL_CERT_FILE", "SSL_CERT_DIR"):
+            _env.pop(_k, None)
+        if getattr(sys, "frozen", False):
+            subprocess.Popen([sys.executable, *sys.argv[1:]], env=_env, close_fds=True)
+        else:
+            subprocess.Popen([sys.executable, *sys.argv], env=_env, close_fds=True)
+    except Exception:
         pass
 
     os._exit(0)

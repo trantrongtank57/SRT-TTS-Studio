@@ -35,6 +35,17 @@ build_log*.txt
 *.lockout
 *.integrity
 
+# Scratch / backup copies of the main source (contain _HMAC_SECRET / _PBKDF2_SALT
+# in plaintext — must NEVER be committed; they would defeat the Cython protection)
+1.py
+[0-9].py
+[0-9][0-9].py
+*_backup.py
+*_bak.py
+*_copy.py
+*.py.bak
+apppp_integrated*.py.orig
+
 # IDE
 .vscode/
 .idea/
