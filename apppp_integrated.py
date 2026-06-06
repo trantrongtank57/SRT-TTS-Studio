@@ -841,6 +841,22 @@ PDF_FILE = ""
 PDF_CHUNKS = []
 _pdf_mode_active = False
 
+# ── Dịch phụ đề / PDF sang tiếng Việt (LLM) ─────────────────────────────
+ANTHROPIC_API_KEY = ""
+GEMINI_API_KEY    = ""
+OPENAI_API_KEY    = ""
+TRANSLATE_PROVIDER = "Claude"          # Claude | Gemini | OpenAI | Offline
+TRANSLATE_MODEL    = ""                # rỗng = dùng mặc định theo provider
+LOCAL_TRANSLATE_MODEL_DIR = ""         # thư mục model offline (NLLB/envit5/...) hoặc HF id
+LOCAL_TRANSLATE_SRC_LANG  = "eng_Latn" # mã ngôn ngữ nguồn cho NLLB (envit5 luôn Anh→Việt)
+# Model mặc định cho từng nhà cung cấp (override bằng TRANSLATE_MODEL trong settings)
+_TRANSLATE_DEFAULT_MODEL = {
+    "Claude": "claude-sonnet-4-6",
+    "Gemini": "gemini-2.5-pro",
+    "OpenAI": "gpt-4o",
+}
+_TRANSLATE_BATCH = 40                  # số dòng/đoạn mỗi lần gọi API
+
 VIDEOCR_VIDEO = ""
 VIDEOCR_OUTPUT_SRT = ""
 VIDEOCR_OUTPUT_DIR = ""   # rỗng = dùng OUTPUT_DIR chung
@@ -868,6 +884,8 @@ _SETTINGS_FILE = os.path.join(
 def _load_settings():
     """Đọc settings.json và áp dụng vào các global path."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, FFMPEG_DIR, FFMPEG, FFPROBE
+    global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
+    global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG
     try:
         if os.path.isfile(_SETTINGS_FILE):
             with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -883,17 +901,44 @@ def _load_settings():
                 # Áp dụng lại FFMPEG/FFPROBE ngay sau khi có FFMPEG_DIR
                 FFMPEG  = get_ffmpeg()
                 FFPROBE = get_ffprobe()
+            if d.get("anthropic_api_key"):
+                ANTHROPIC_API_KEY = d["anthropic_api_key"]
+            if d.get("gemini_api_key"):
+                GEMINI_API_KEY = d["gemini_api_key"]
+            if d.get("openai_api_key"):
+                OPENAI_API_KEY = d["openai_api_key"]
+            if d.get("translate_provider"):
+                TRANSLATE_PROVIDER = d["translate_provider"]
+            if d.get("translate_model"):
+                TRANSLATE_MODEL = d["translate_model"]
+            if d.get("local_translate_model_dir"):
+                LOCAL_TRANSLATE_MODEL_DIR = d["local_translate_model_dir"]
+            if d.get("local_translate_src_lang"):
+                LOCAL_TRANSLATE_SRC_LANG = d["local_translate_src_lang"]
     except Exception:
         pass
 
 def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
-                   voxcpm_ckpt_dir, ffmpeg_dir=""):
-    """Lưu settings.json và áp dụng ngay vào các global path."""
+                   voxcpm_ckpt_dir, ffmpeg_dir="",
+                   anthropic_api_key=None, gemini_api_key=None, openai_api_key=None,
+                   translate_provider=None, translate_model=None,
+                   local_translate_model_dir=None, local_translate_src_lang=None):
+    """Lưu settings.json và áp dụng ngay vào các global path.
+    Các tham số translate_*/local_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, FFMPEG_DIR, FFMPEG, FFPROBE
+    global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
+    global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG
     VIDEOCR_CLI_DIR     = videocr_cli_dir
     SUBTITLE_EDIT_PATH  = subtitle_edit_path
     VOXCPM_ENV_OVERRIDE = voxcpm_env_override
     FFMPEG_DIR          = ffmpeg_dir
+    if anthropic_api_key  is not None: ANTHROPIC_API_KEY  = anthropic_api_key
+    if gemini_api_key     is not None: GEMINI_API_KEY     = gemini_api_key
+    if openai_api_key     is not None: OPENAI_API_KEY     = openai_api_key
+    if translate_provider is not None: TRANSLATE_PROVIDER = translate_provider
+    if translate_model    is not None: TRANSLATE_MODEL    = translate_model
+    if local_translate_model_dir is not None: LOCAL_TRANSLATE_MODEL_DIR = local_translate_model_dir
+    if local_translate_src_lang  is not None: LOCAL_TRANSLATE_SRC_LANG  = local_translate_src_lang
     # Áp dụng lại đường dẫn ffmpeg/ffprobe ngay lập tức
     FFMPEG  = get_ffmpeg()
     FFPROBE = get_ffprobe()
@@ -904,6 +949,13 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
             "subtitle_edit_path": subtitle_edit_path,
             "voxcpm_ckpt_dir":    voxcpm_ckpt_dir,
             "ffmpeg_dir":         ffmpeg_dir,
+            "anthropic_api_key":  ANTHROPIC_API_KEY,
+            "gemini_api_key":     GEMINI_API_KEY,
+            "openai_api_key":     OPENAI_API_KEY,
+            "translate_provider": TRANSLATE_PROVIDER,
+            "translate_model":    TRANSLATE_MODEL,
+            "local_translate_model_dir": LOCAL_TRANSLATE_MODEL_DIR,
+            "local_translate_src_lang":  LOCAL_TRANSLATE_SRC_LANG,
         }
         with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
@@ -2655,6 +2707,8 @@ _brow6 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow6.pack(fill="x")
 _brow7 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow7.pack(fill="x")
+_brow8 = ctk.CTkFrame(button_frame, fg_color="transparent")
+_brow8.pack(fill="x")
 
 
 # =========================
@@ -3005,6 +3059,100 @@ def show_settings_dialog():
             filedialog.askdirectory(title="Chọn thư mục chứa ffmpeg.exe / ffprobe.exe"))
     ).pack(side="left")
 
+    # ── API key dịch (Claude / Gemini / OpenAI) ────────────────────────
+    ctk.CTkLabel(dlg, text="API key dịch phụ đề / PDF sang tiếng Việt",
+                 font=("Arial", 13, "bold")).pack(pady=(12, 2))
+
+    v_anthropic, e_anthropic, _ = _row(dlg, "Claude API key:")
+    v_anthropic.set(ANTHROPIC_API_KEY)
+    e_anthropic.configure(show="*")
+    v_gemini, e_gemini, _ = _row(dlg, "Gemini API key:")
+    v_gemini.set(GEMINI_API_KEY)
+    e_gemini.configure(show="*")
+    v_openai, e_openai, _ = _row(dlg, "OpenAI API key:")
+    v_openai.set(OPENAI_API_KEY)
+    e_openai.configure(show="*")
+
+    # Model dịch — dropdown chọn sẵn theo nhà cung cấp (không phải đường dẫn:
+    # các model này chạy online qua API, không có file lưu trên máy).
+    _MODEL_DEFAULT = "(Mặc định theo nhà cung cấp)"
+    _MODEL_CHOICES = [
+        _MODEL_DEFAULT,
+        "Claude — claude-opus-4-8",
+        "Claude — claude-sonnet-4-6",
+        "Claude — claude-haiku-4-5-20251001",
+        "Gemini — gemini-2.5-pro",
+        "Gemini — gemini-2.5-flash",
+        "OpenAI — gpt-4o",
+        "OpenAI — gpt-4o-mini",
+        "OpenAI — gpt-4.1",
+    ]
+    # ánh xạ id model thật → nhãn hiển thị (để khôi phục lựa chọn đã lưu)
+    _model_id_to_label = {c.split(" — ", 1)[1]: c for c in _MODEL_CHOICES if " — " in c}
+    fr_tmodel = ctk.CTkFrame(dlg, fg_color="transparent")
+    fr_tmodel.pack(fill="x", **PAD)
+    ctk.CTkLabel(fr_tmodel, text="Model dịch (tùy chọn):", width=180, anchor="w",
+                 font=("Arial", 12)).pack(side="left")
+    v_tmodel = ctk.StringVar()
+    _cur = TRANSLATE_MODEL.strip()
+    if not _cur:
+        v_tmodel.set(_MODEL_DEFAULT)
+    elif _cur in _model_id_to_label:
+        v_tmodel.set(_model_id_to_label[_cur])
+    else:
+        # model lạ đã lưu trước đó → thêm vào danh sách để giữ nguyên
+        _MODEL_CHOICES.append(_cur)
+        v_tmodel.set(_cur)
+    ctk.CTkOptionMenu(fr_tmodel, variable=v_tmodel, values=_MODEL_CHOICES,
+                      width=W_ENTRY, font=("Arial", 11)).pack(side="left", padx=(0, 4))
+    ctk.CTkLabel(dlg, text="Mặc định: Claude→sonnet-4-6, Gemini→2.5-pro, OpenAI→gpt-4o. "
+                           "Nhớ chọn model đúng với nhà cung cấp bạn dùng.",
+                 font=("Arial", 10), text_color="gray").pack(pady=(0, 4))
+
+    def _resolve_model():
+        """Tách model id thật từ nhãn dropdown ('Claude — id' → 'id'; mặc định → '')."""
+        sel = v_tmodel.get().strip()
+        if sel == _MODEL_DEFAULT or not sel:
+            return ""
+        return sel.split(" — ", 1)[1] if " — " in sel else sel
+
+    # ── Dịch OFFLINE (model chạy trên máy, không cần API/mạng) ──────────
+    ctk.CTkLabel(dlg, text="Dịch offline (model chạy trên máy)",
+                 font=("Arial", 13, "bold")).pack(pady=(12, 2))
+    v_local_dir, _, fr_loc = _row(dlg, "Thư mục model offline:")
+    v_local_dir.set(LOCAL_TRANSLATE_MODEL_DIR)
+    ctk.CTkButton(fr_loc, text="Browse", width=72,
+        command=lambda: (lambda p: v_local_dir.set(p) if p else None)(
+            filedialog.askdirectory(title="Chọn thư mục model dịch (NLLB / envit5 / ...)"))
+    ).pack(side="left")
+
+    # Ngôn ngữ nguồn cho NLLB (envit5 luôn Anh→Việt nên bỏ qua giá trị này)
+    _SRC_LANGS = [
+        ("Tiếng Anh (English)",      "eng_Latn"),
+        ("Tiếng Trung giản thể",     "zho_Hans"),
+        ("Tiếng Trung phồn thể",     "zho_Hant"),
+        ("Tiếng Nhật",               "jpn_Jpan"),
+        ("Tiếng Hàn",                "kor_Hang"),
+        ("Tiếng Pháp",               "fra_Latn"),
+        ("Tiếng Tây Ban Nha",        "spa_Latn"),
+        ("Tiếng Nga",                "rus_Cyrl"),
+        ("Tiếng Thái",               "tha_Thai"),
+    ]
+    _src_label_to_code = {lbl: code for lbl, code in _SRC_LANGS}
+    _src_code_to_label = {code: lbl for lbl, code in _SRC_LANGS}
+    fr_src = ctk.CTkFrame(dlg, fg_color="transparent")
+    fr_src.pack(fill="x", **PAD)
+    ctk.CTkLabel(fr_src, text="Ngôn ngữ nguồn (NLLB):", width=180, anchor="w",
+                 font=("Arial", 12)).pack(side="left")
+    v_src = ctk.StringVar(value=_src_code_to_label.get(LOCAL_TRANSLATE_SRC_LANG,
+                                                       "Tiếng Anh (English)"))
+    ctk.CTkOptionMenu(fr_src, variable=v_src, values=[l for l, _ in _SRC_LANGS],
+                      width=W_ENTRY, font=("Arial", 11)).pack(side="left", padx=(0, 4))
+    ctk.CTkLabel(dlg, text="Offline cần voxcpm_env có torch+transformers+sentencepiece. "
+                           "Gợi ý model: facebook/nllb-200-distilled-600M (đa ngôn ngữ), "
+                           "VietAI/envit5-translation (Anh→Việt, văn phong VN đẹp nhất).",
+                 font=("Arial", 10), text_color="gray").pack(pady=(0, 4))
+
     def _save():
         ckpt = v_ckpt.get().strip()
         _save_settings(
@@ -3013,6 +3161,12 @@ def show_settings_dialog():
             subtitle_edit_path = v_se.get().strip(),
             voxcpm_ckpt_dir    = ckpt,
             ffmpeg_dir         = v_ffmpeg.get().strip(),
+            anthropic_api_key  = v_anthropic.get().strip(),
+            gemini_api_key     = v_gemini.get().strip(),
+            openai_api_key     = v_openai.get().strip(),
+            translate_model    = _resolve_model(),
+            local_translate_model_dir = v_local_dir.get().strip(),
+            local_translate_src_lang  = _src_label_to_code.get(v_src.get(), "eng_Latn"),
         )
         if ckpt:
             voxcpm_ckpt_var.set(ckpt)
@@ -3051,6 +3205,386 @@ def set_provider(provider):
     else:
         voice_row2.pack(fill="x", padx=2, pady=(0, 4))
     log(f"Provider -> {provider}  |  Voice -> {VOICE}")
+
+
+# =========================
+# DỊCH PHỤ ĐỀ / PDF SANG TIẾNG VIỆT (LLM: Claude / Gemini / OpenAI)
+# =========================
+
+_TR_MARK_RE = re.compile(r"\[\[(\d+)\]\]\s*(.*)", re.S)
+
+
+def _translate_active_key():
+    """Trả về (provider, api_key, model) đang dùng. Raise nếu thiếu key."""
+    provider = TRANSLATE_PROVIDER or "Claude"
+    key_map = {
+        "Claude": ANTHROPIC_API_KEY,
+        "Gemini": GEMINI_API_KEY,
+        "OpenAI": OPENAI_API_KEY,
+    }
+    api_key = (key_map.get(provider) or "").strip()
+    if not api_key:
+        raise RuntimeError(
+            f"Chưa nhập API key cho {provider}. Vào ⚙ Cài đặt để nhập.")
+    model = (TRANSLATE_MODEL or "").strip() or _TRANSLATE_DEFAULT_MODEL[provider]
+    return provider, api_key, model
+
+
+def _llm_call_claude(api_key, model, system, user):
+    body = json.dumps({
+        "model": model,
+        "max_tokens": 8192,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }).encode("utf-8")
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body)
+    req.add_header("x-api-key", api_key)
+    req.add_header("anthropic-version", "2023-06-01")
+    req.add_header("content-type", "application/json")
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return "".join(b.get("text", "") for b in data.get("content", []))
+
+
+def _llm_call_gemini(api_key, model, system, user):
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{model}:generateContent?key={urllib.parse.quote(api_key)}")
+    body = json.dumps({
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 8192},
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=body)
+    req.add_header("content-type", "application/json")
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    cands = data.get("candidates", [])
+    if not cands:
+        raise RuntimeError(f"Gemini không trả kết quả: {str(data)[:200]}")
+    parts = cands[0].get("content", {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts)
+
+
+def _llm_call_openai(api_key, model, system, user):
+    body = json.dumps({
+        "model": model,
+        "temperature": 0.3,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }).encode("utf-8")
+    req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=body)
+    req.add_header("Authorization", f"Bearer {api_key}")
+    req.add_header("content-type", "application/json")
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data["choices"][0]["message"]["content"]
+
+
+def _llm_call(provider, api_key, model, system, user):
+    if provider == "Claude":
+        return _llm_call_claude(api_key, model, system, user)
+    if provider == "Gemini":
+        return _llm_call_gemini(api_key, model, system, user)
+    if provider == "OpenAI":
+        return _llm_call_openai(api_key, model, system, user)
+    raise RuntimeError(f"Provider không hợp lệ: {provider}")
+
+
+def _translate_system_prompt(context):
+    sys_p = (
+        "Bạn là dịch giả phụ đề phim chuyên nghiệp người Việt. "
+        "Dịch sang tiếng Việt TỰ NHIÊN, đúng văn phong nói của người Việt, "
+        "không dịch word-by-word, giữ đúng sắc thái (trang trọng/suồng sã/đùa/mỉa mai). "
+        "Chọn đại từ xưng hô (tôi/anh/em/cậu/tớ/ông/bà...) cho hợp ngữ cảnh và nhất quán. "
+        "Giữ nguyên tên riêng, thuật ngữ không cần dịch."
+    )
+    if context.strip():
+        sys_p += f"\n\nNgữ cảnh / quan hệ nhân vật / xưng hô do người dùng cung cấp:\n{context.strip()}"
+    sys_p += (
+        "\n\nĐầu vào gồm nhiều dòng, mỗi dòng có dạng [[n]] nội_dung. "
+        "Hãy dịch phần nội_dung của TỪNG dòng sang tiếng Việt và trả về ĐÚNG định dạng "
+        "[[n]] bản_dịch, đúng số dòng, đúng thứ tự, KHÔNG thêm giải thích, "
+        "KHÔNG gộp dòng, KHÔNG bỏ dòng. Giữ nguyên số n của mỗi dòng."
+    )
+    return sys_p
+
+
+def _parse_marked(text, n_expected):
+    """Phân tích đầu ra [[n]] ... → dict {idx0: translation}. idx tính từ 0."""
+    out = {}
+    # tách theo marker [[number]]
+    chunks = re.split(r"\[\[(\d+)\]\]", text)
+    # chunks: ['', '1', ' a', '2', ' b', ...]
+    i = 1
+    while i < len(chunks) - 0:
+        if i + 1 <= len(chunks) - 1:
+            try:
+                num = int(chunks[i])
+            except ValueError:
+                i += 2
+                continue
+            val = chunks[i + 1].strip()
+            if 1 <= num <= n_expected:
+                out[num - 1] = val
+            i += 2
+        else:
+            break
+    return out
+
+
+def _find_translate_helper():
+    """Tìm translate_helper.py theo thứ tự ưu tiên (giống các helper khác)."""
+    name = 'translate_helper.py'
+    search = [
+        getattr(sys, '_MEIPASS', None),
+        os.path.dirname(__file__) if '__file__' in globals() else None,
+        os.path.dirname(sys.argv[0]),
+        os.path.dirname(sys.executable),
+    ]
+    for d in search:
+        if d:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def _translate_segments_local(segments, progress_cb=None, log_cb=None):
+    """Dịch offline qua translate_helper.py (voxcpm_env python + transformers)."""
+    model_dir = (LOCAL_TRANSLATE_MODEL_DIR or "").strip()
+    if not model_dir:
+        raise RuntimeError("Chưa chọn model offline. Vào ⚙ Cài đặt → 'Thư mục model offline'.")
+    helper = _find_translate_helper()
+    if not helper:
+        raise RuntimeError("Không tìm thấy translate_helper.py cạnh app/exe.")
+    # env: ưu tiên override, rồi đi lên từ chính thư mục model, rồi từ ckpt VoxCPM
+    py = _find_voxcpm_python(model_dir if os.path.isdir(model_dir) else os.getcwd())
+    if not py:
+        py = _find_voxcpm_python((voxcpm_ckpt_var.get() or "").strip() or os.getcwd())
+    if not py:
+        raise RuntimeError("Không tìm thấy python của voxcpm_env (cần torch+transformers). "
+                           "Đặt đường dẫn ở ⚙ Cài đặt → 'voxcpm_env python.exe'.")
+
+    import tempfile
+    tin = os.path.join(tempfile.gettempdir(), '_tr_in.json')
+    tout = os.path.join(tempfile.gettempdir(), '_tr_out.json')
+    with open(tin, 'w', encoding='utf-8') as f:
+        json.dump({'segments': segments}, f, ensure_ascii=False)
+
+    src_lang = (LOCAL_TRANSLATE_SRC_LANG or 'eng_Latn').strip() or 'eng_Latn'
+    cmd = [py, helper, '--model', model_dir, '--input', tin, '--output', tout,
+           '--src-lang', src_lang, '--tgt-lang', 'vie_Latn']
+    if log_cb:
+        log_cb(f"🖥️ Dịch offline: {os.path.basename(model_dir.rstrip(os.sep))} "
+               f"(nguồn: {src_lang}) — {len(segments)} dòng/đoạn")
+        log_cb("   (lần đầu có thể tải/nạp model, vui lòng đợi...)")
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, encoding='utf-8', errors='replace',
+                            creationflags=CREATE_NO_WINDOW)
+    last_err = ""
+    for line in proc.stdout:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('PROGRESS:'):
+            parts = line.split(':')
+            try:
+                if progress_cb:
+                    progress_cb(int(parts[1]), int(parts[2]))
+            except Exception:
+                pass
+        elif line.startswith('IMPORT_ERR') or line.startswith('BATCH_ERR'):
+            last_err = line
+            if log_cb:
+                log_cb(f"⚠️ {line}")
+        # các dòng log model khác (Loading.../tải về) bỏ qua
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(f"translate_helper lỗi (mã {proc.returncode}). {last_err}".strip())
+    with open(tout, encoding='utf-8') as f:
+        translations = json.load(f).get('translations', [])
+    for _p in (tin, tout):
+        try:
+            os.remove(_p)
+        except Exception:
+            pass
+    # đảm bảo đủ độ dài (an toàn)
+    if len(translations) < len(segments):
+        translations = list(translations) + list(segments[len(translations):])
+    return translations[:len(segments)]
+
+
+def _translate_segments(segments, context, progress_cb=None, log_cb=None):
+    """Dịch list[str] → list[str] cùng độ dài. Online (LLM) hoặc offline (local)."""
+    if (TRANSLATE_PROVIDER or "") == "Offline":
+        if context.strip() and log_cb:
+            log_cb("ℹ️ Model offline không dùng ô ngữ cảnh/xưng hô "
+                   "(chỉ áp dụng cho Claude/Gemini/OpenAI).")
+        return _translate_segments_local(segments, progress_cb, log_cb)
+    provider, api_key, model = _translate_active_key()
+    if log_cb:
+        log_cb(f"🌐 Dịch bằng {provider} ({model}) — {len(segments)} dòng/đoạn...")
+    system = _translate_system_prompt(context)
+    result = [None] * len(segments)
+    total = len(segments)
+    done = 0
+    for start in range(0, total, _TRANSLATE_BATCH):
+        batch = segments[start:start + _TRANSLATE_BATCH]
+        user = "\n".join(f"[[{j+1}]] {t}" for j, t in enumerate(batch))
+        try:
+            raw = _llm_call(provider, api_key, model, system, user)
+            parsed = _parse_marked(raw, len(batch))
+        except Exception as e:
+            if log_cb:
+                log_cb(f"⚠️ Lỗi batch {start//_TRANSLATE_BATCH+1}: {e} — thử lại từng dòng")
+            parsed = {}
+        # điền kết quả, dòng nào thiếu → dịch lẻ
+        for j, src in enumerate(batch):
+            tr = parsed.get(j)
+            if tr is None or tr == "":
+                try:
+                    one = _llm_call(provider, api_key, model, system,
+                                    f"[[1]] {src}")
+                    tr = _parse_marked(one, 1).get(0) or src
+                except Exception as e:
+                    if log_cb:
+                        log_cb(f"⚠️ Không dịch được dòng {start+j+1}: {e}")
+                    tr = src  # giữ nguyên bản gốc để không mất nội dung
+            result[start + j] = tr
+            done += 1
+            if progress_cb:
+                progress_cb(done, total)
+    return result
+
+
+def _translate_default_context():
+    """Lấy context xưng hô từ ô nhập (nếu UI đã tạo)."""
+    try:
+        return translate_context_var.get()
+    except Exception:
+        return ""
+
+
+def translate_srt():
+    """Dịch 1 file .srt sang tiếng Việt → <tên>_vi.srt (giữ timestamp)."""
+    path = filedialog.askopenfilename(
+        title="Chọn file SRT cần dịch sang tiếng Việt",
+        filetypes=[("SRT files", "*.srt")])
+    if not path:
+        return
+    context = _translate_default_context()
+    bilingual = bool(translate_bilingual_var.get())
+
+    def _worker():
+        try:
+            app.after(0, lambda: btn_translate_srt.configure(state="disabled"))
+            app.after(0, lambda: btn_translate_pdf.configure(state="disabled"))
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                subs = list(srt.parse(f.read()))
+            if not subs:
+                app.after(0, lambda: log("❌ File SRT rỗng / không đọc được."))
+                return
+            sources = [clean_text(s.content) for s in subs]
+            app.after(0, lambda: log(f"📜 Dịch SRT: {os.path.basename(path)} ({len(subs)} dòng)"))
+            translated = _translate_segments(
+                sources, context,
+                progress_cb=lambda d, t: update_progress(d, t),
+                log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
+            for s, src, tr in zip(subs, sources, translated):
+                s.content = (f"{src}\n{tr}" if bilingual else tr)
+            out_path = os.path.splitext(path)[0] + "_vi.srt"
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(srt.compose(subs))
+            app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
+            app.after(0, show_fireworks)
+        except Exception as e:
+            err = str(e)
+            app.after(0, lambda: log(f"❌ Lỗi dịch SRT: {err}"))
+        finally:
+            app.after(0, lambda: btn_translate_srt.configure(state="normal"))
+            app.after(0, lambda: btn_translate_pdf.configure(state="normal"))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def translate_pdf():
+    """Trích text PDF → dịch sang tiếng Việt → <tên>_vi.txt."""
+    path = filedialog.askopenfilename(
+        title="Chọn file PDF cần dịch sang tiếng Việt",
+        filetypes=[("PDF files", "*.pdf")])
+    if not path:
+        return
+    context = _translate_default_context()
+    bilingual = bool(translate_bilingual_var.get())
+
+    def _worker():
+        import tempfile
+        try:
+            app.after(0, lambda: btn_translate_srt.configure(state="disabled"))
+            app.after(0, lambda: btn_translate_pdf.configure(state="disabled"))
+            py = _find_pdf_python()
+            helper = _find_pdf_helper()
+            if not py:
+                app.after(0, lambda: log("❌ Không tìm thấy Python có pypdf (pip install pypdf)."))
+                return
+            if not helper:
+                app.after(0, lambda: log("❌ Không tìm thấy pdf_helper.py."))
+                return
+            tmp_json = os.path.join(tempfile.gettempdir(), "_pdf_tr_chunks.json")
+            app.after(0, lambda: log(f"📄 Trích text PDF: {os.path.basename(path)}..."))
+            r = subprocess.run([py, helper, "--input", path, "--output", tmp_json],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=180, creationflags=CREATE_NO_WINDOW)
+            if r.returncode != 0 or not r.stdout.strip().startswith("DONE:"):
+                err = (r.stderr.strip()[:300] or r.stdout.strip())
+                app.after(0, lambda: log(f"❌ Lỗi đọc PDF: {err}"))
+                return
+            with open(tmp_json, encoding="utf-8") as f:
+                chunks = json.load(f).get("chunks", [])
+            try:
+                os.remove(tmp_json)
+            except Exception:
+                pass
+            chunks = [c for c in chunks if c.strip()]
+            if not chunks:
+                app.after(0, lambda: log("❌ PDF không có text (có thể là PDF scan)."))
+                return
+            app.after(0, lambda: log(f"📄 Dịch {len(chunks)} đoạn..."))
+            translated = _translate_segments(
+                chunks, context,
+                progress_cb=lambda d, t: update_progress(d, t),
+                log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
+            out_path = os.path.splitext(path)[0] + "_vi.txt"
+            with open(out_path, "w", encoding="utf-8") as f:
+                for src, tr in zip(chunks, translated):
+                    if bilingual:
+                        f.write(src + "\n" + tr + "\n\n")
+                    else:
+                        f.write(tr + "\n\n")
+            app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
+            app.after(0, show_fireworks)
+        except Exception as e:
+            err = str(e)
+            app.after(0, lambda: log(f"❌ Lỗi dịch PDF: {err}"))
+        finally:
+            app.after(0, lambda: btn_translate_srt.configure(state="normal"))
+            app.after(0, lambda: btn_translate_pdf.configure(state="normal"))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def set_translate_provider(provider):
+    global TRANSLATE_PROVIDER
+    TRANSLATE_PROVIDER = provider
+    # lưu lựa chọn (giữ nguyên các setting khác)
+    _save_settings(
+        videocr_cli_dir=VIDEOCR_CLI_DIR, voxcpm_env_override=VOXCPM_ENV_OVERRIDE,
+        subtitle_edit_path=SUBTITLE_EDIT_PATH, voxcpm_ckpt_dir=voxcpm_ckpt_var.get(),
+        ffmpeg_dir=FFMPEG_DIR, translate_provider=provider)
+    log(f"Dịch bằng -> {provider}")
 
 
 # =========================
@@ -8809,6 +9343,35 @@ btn_mux_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 btn_mux_open = ctk.CTkButton(_brow7, text="Mở Thư Mục", command=open_mux_folder, height=36, font=("Arial", 13), state="disabled")
 btn_mux_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# ── Row 8: Dịch phụ đề / PDF sang tiếng Việt (LLM) ────────────────────────────
+# Hàng độc lập với set_mode — luôn dùng được; chỉ tự khóa 2 nút khi đang chạy.
+translate_provider_var  = ctk.StringVar(value=TRANSLATE_PROVIDER)
+translate_context_var   = ctk.StringVar(value="")
+translate_bilingual_var = ctk.BooleanVar(value=False)
+
+ctk.CTkLabel(_brow8, text="Dịch (AI):", font=("Arial", 12)).pack(side="left", padx=(4, 2))
+translate_provider_menu = ctk.CTkOptionMenu(
+    _brow8, variable=translate_provider_var,
+    values=["Claude", "Gemini", "OpenAI", "Offline"],
+    command=set_translate_provider, width=110, font=("Arial", 12))
+translate_provider_menu.pack(side="left", padx=(0, 6))
+
+ctk.CTkLabel(_brow8, text="Ngữ cảnh/xưng hô:", font=("Arial", 12)).pack(side="left", padx=(2, 2))
+translate_context_entry = ctk.CTkEntry(
+    _brow8, textvariable=translate_context_var, width=200, font=("Arial", 11),
+    placeholder_text="VD: A là sếp, B gọi A 'anh' xưng 'em'")
+translate_context_entry.pack(side="left", padx=(0, 6))
+
+translate_bilingual_check = ctk.CTkCheckBox(
+    _brow8, text="Song ngữ", variable=translate_bilingual_var, width=90, font=("Arial", 12))
+translate_bilingual_check.pack(side="left", padx=(0, 6))
+
+btn_translate_srt = ctk.CTkButton(_brow8, text="Dịch SRT → Việt", command=translate_srt, height=36, font=("Arial", 13))
+btn_translate_srt.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_translate_pdf = ctk.CTkButton(_brow8, text="Dịch PDF → Việt", command=translate_pdf, height=36, font=("Arial", 13))
+btn_translate_pdf.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 
 # =========================

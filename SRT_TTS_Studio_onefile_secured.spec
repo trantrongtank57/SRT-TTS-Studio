@@ -42,6 +42,7 @@ a = Analysis(
         ('srt_align_helper.py',        '.'),
         ('videocr_helper.py',          '.'),
         ('video_stt_helper.py',        '.'),
+        ('translate_helper.py',        '.'),
     ],
     hiddenimports=[
         'edge_tts', 'edge_tts.communicate', 'srt',

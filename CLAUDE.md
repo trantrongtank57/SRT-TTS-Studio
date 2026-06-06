@@ -43,7 +43,7 @@ Note: background shell processes do not inherit cwd — always use absolute path
 | 6A | PyInstaller onedir using `SRT_TTS_Studio_onedir.spec` |
 | 6B | Bundle ffmpeg/ffprobe |
 | 6C | `gen_integrity.py` |
-| **6G** | **FAIL-CLOSED** copy of 8 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` into `dist\SRT_TTS_Studio\`; verifies each file landed; aborts if anything missing. Must run before step 7 so WiX Heat picks them up. |
+| **6G** | **FAIL-CLOSED** copy of 9 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` into `dist\SRT_TTS_Studio\`; verifies each file landed; aborts if anything missing. Must run before step 7 so WiX Heat picks them up. |
 | 6D/E/F | 3 onefile PyInstaller builds (Portable / Secured / Trial) |
 | 7–8 | WiX Heat → candle → light → MSI (source: `product.wxs`) |
 | 9 | `output\SRT_TTS_Studio_Setup.msi` + `output\Portable\` (exes + companion files + models + rvc_env) |
@@ -69,7 +69,7 @@ output\
     SRT_TTS_Studio_Portable.exe   ← onefile
     SRT_TTS_Studio_Secured.exe    ← onefile + .integrity companion
     SRT_TTS_Studio_Trial.exe      ← onefile, 24h trial
-    8× companion .py              ← must sit next to exe (also embedded in exe via datas)
+    9× companion .py              ← must sit next to exe (also embedded in exe via datas)
     hubert_base.pt, rmvpe.pt
     rvc_env\
 ```
@@ -363,7 +363,7 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 
 ## Companion Script System
 
-8 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
+9 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
 
 | Script | Interpreter | Purpose |
 |---|---|---|
@@ -375,8 +375,9 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 | `srt_align_helper.py` | voxcpm_env python | VAD-based SRT timing alignment |
 | `videocr_helper.py` | any python | Video OCR wrapper |
 | `video_stt_helper.py` | voxcpm_env python | faster-whisper STT (stdout: `PROGRESS:N:M`, `DONE:path`) |
+| `translate_helper.py` | voxcpm_env python (torch+transformers+sentencepiece) | Offline translation → Vietnamese (NLLB/M2M/envit5/generic seq2seq auto-detect). stdin JSON `{"segments":[...]}`, stdout `PROGRESS:N:M` + `DONE:path`, JSON out `{"translations":[...]}` |
 
-**Onefile exes embed all 8 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.
+**Onefile exes embed all 9 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.
 
 ### Helper progress protocol
 All long-running helpers stream progress so the UI bar tracks them. Use `subprocess.Popen` + line-by-line stdout read (never `communicate()` which blocks). Parse `PROGRESS:N:M` → `update_progress(N, M)`.
@@ -392,6 +393,33 @@ Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Li
 | `voxcpm_ckpt_dir` | `voxcpm_ckpt_var` | VoxCPM model path; seed for `_find_voxcpm_python()` |
 | `voxcpm_env_override` | `VOXCPM_ENV_OVERRIDE` | Explicit python.exe; checked **first** in all `_find_*_python()` calls |
 | `subtitle_edit_path` | `SUBTITLE_EDIT_PATH` | Prepended to Subtitle Edit search list |
+| `anthropic_api_key` / `gemini_api_key` / `openai_api_key` | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` | LLM keys for SRT/PDF translation (masked `show="*"` in dialog) |
+| `translate_provider` | `TRANSLATE_PROVIDER` | `Claude` \| `Gemini` \| `OpenAI`; set by the row-8 dropdown (`set_translate_provider`) |
+| `translate_model` | `TRANSLATE_MODEL` | Optional model override; empty → `_TRANSLATE_DEFAULT_MODEL[provider]`. Settings dialog shows a **dropdown** of `Provider — model-id` labels (not a path — these are cloud APIs, no local files); `_resolve_model()` strips the label back to the bare id before saving |
+
+**Note:** `_save_settings()` now takes the translate params as keyword args defaulting to `None` = "keep current". `set_translate_provider()` persists only the provider (passes other paths through unchanged), so it must read `voxcpm_ckpt_var`/`FFMPEG_DIR`/etc. to avoid wiping them.
+
+## SRT / PDF Translation to Vietnamese (LLM)
+
+Row 8 (`_brow8`) — translate subtitles/PDF to natural Vietnamese via Claude / Gemini / OpenAI. **Decoupled from `set_mode()`**: the two buttons are always enabled (no entry in any disable sweep) and self-lock only during their own run (re-enabled in `finally`). They operate on a freshly file-dialog-picked file, NOT `subtitles_cache`/`PDF_CHUNKS`, so they never conflict with a running TTS job.
+
+| Piece | Detail |
+|---|---|
+| `_translate_active_key()` | Resolves `(provider, key, model)`; raises if the selected provider's key is blank |
+| `_llm_call_claude/gemini/openai()` | Plain `urllib` POST (no SDK dep). Claude `/v1/messages` + `anthropic-version: 2023-06-01`; Gemini `:generateContent?key=`; OpenAI `/v1/chat/completions` |
+| `_translate_segments(segments, context, …)` | Batches `_TRANSLATE_BATCH` (40) lines/call using `[[n]] text` markers; parses back with `_parse_marked`; **any missing/empty line → per-line fallback retry**, then keeps source text if still failing (never drops content) |
+| `translate_srt()` | Parses `.srt`, translates `clean_text(content)`, writes `<name>_vi.srt` preserving timestamps |
+| `translate_pdf()` | Extracts chunks via `pdf_helper.py` (same as `load_pdf`), writes `<name>_vi.txt` |
+
+**Bilingual mode** (`translate_bilingual_var` checkbox): SRT line becomes `original\ntranslated`; PDF writes both. **Context field** (`translate_context_var`) feeds the system prompt for consistent pronouns/xưng hô — the single biggest quality lever for VN subtitles (online providers only).
+
+### Offline (local) translation — provider `"Offline"`
+
+The Row-8 dropdown has a 4th option **`Offline`** that translates fully on-device via `translate_helper.py` (no API/network). `_translate_segments()` dispatches: `TRANSLATE_PROVIDER == "Offline"` → `_translate_segments_local()`, else the LLM path. Local mode ignores the context field (NLLB/envit5 take no instructions).
+
+- **Model**: any HuggingFace seq2seq dir (or HF id) set in ⚙ Cài đặt → `local_translate_model_dir`. Helper auto-detects: `nllb`/`m2m` → `forced_bos_token_id` for `--tgt-lang vie_Latn`; `envit5` → `en: ` prefix, EN→VI only; else generic `generate()`. Recommended: `facebook/nllb-200-distilled-600M` (multilingual) or `VietAI/envit5-translation` (EN→VI, best VN style).
+- **Source language** (`local_translate_src_lang`, NLLB only) is a friendly dropdown in settings mapping to codes (`eng_Latn`, `zho_Hans`, `jpn_Jpan`, …); envit5 ignores it.
+- **Env**: reuses `voxcpm_env` python via `_find_voxcpm_python()` — needs `torch`+`transformers`+`sentencepiece` installed there. `translate_helper.py` is the **9th companion script** (added to all 3 onefile spec `datas`, build_all.bat step-0 validation + both copy loops, step-6G fail-closed copy).
 
 ## rvc_env Compatibility Patches
 
@@ -416,6 +444,7 @@ The MSI installs everything bundled. These components are too large to bundle an
 | `voxcpm_env\` | ~6–8 GB | VoxCPM TTS, STT, audio enhance, SRT align, PDF |
 | VoxCPM model (`VoxCPM-1.5-VN/`) | ~3.5 GB | VoxCPM TTS |
 | VideOCR CLI | small | Video OCR |
+| Offline translate model (NLLB-600M / envit5) | ~1.5–2.5 GB | Offline SRT/PDF translation (only if using provider `Offline`; reuses `voxcpm_env` + needs `transformers`/`sentencepiece`) |
 
 Default paths hardcoded in source (override via ⚙ Cài đặt):
 - `VIDEOCR_CLI_DIR`: `C:\Users\os\Downloads\Compressed\VideOCR-1.5.1\...\CLI`
