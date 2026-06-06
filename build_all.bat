@@ -85,7 +85,7 @@ if errorlevel 1 ( echo   [ERROR] Python install failed. Restart cmd and retry. &
 for /f "tokens=*" %%v in ('python --version') do echo   [OK] %%v
 echo   Installing Python libraries...
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet customtkinter edge-tts srt Pillow pyinstaller cython pyarmor
+python -m pip install --quiet customtkinter edge-tts srt Pillow pyinstaller cython pyarmor fpdf2 python-docx psutil
 echo   [OK] Python libraries ready.
 echo.
 

@@ -35,6 +35,7 @@ a = Analysis(
         'customtkinter', 'PIL', 'PIL.Image', 'PIL.ImageTk',
         'speech_recognition', 'audioop', 'winreg',
         'pypdf', 'pypdf._reader', 'pypdf._writer', 'pypdf.generic',
+        'fpdf', 'docx', 'psutil',
     ],
     hookspath=[],
     hooksconfig={},

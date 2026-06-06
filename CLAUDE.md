@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, Video OCR, Speech-to-Text, video compression, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
+**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, Video OCR, Speech-to-Text, video compression, audio→video muxing, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
 
 ## Build Commands
 
@@ -174,6 +174,10 @@ The button panel uses fixed rows (`_brow0`, `_brow0b`, `_brow1`–`_brow8`) crea
 
 Current modes: `srt`, `pdf`, `pdf_tts_done`, `video`, `reset`, `tts_running`, `tts_stopped`, `tts_done`, `scanning`, `scan_done`, `scan_done_clean`, `repairing`, `repair_done`, `cleaning`, `clean_done`, `videocr`, `videocr_running`, `videocr_done`, `video_stt`, `video_stt_running`, `video_stt_done`, `compress_ready`, `compressing`, `compress_done`, `mux_idle`, `mux_ready`, `muxing`, `mux_done`.
 
+### Video OCR pause/stop/resume (process-tree control)
+
+"Tách Sub Cứng (OCR)" runs the external **VideOCR CLI** as a subprocess (`_run_videocr_thread`), which spawns its own worker children — so pause/resume can't go through stdin. Instead, row `_brow4b` has 3 buttons (`btn_videocr_pause`/`resume`/`stop`) that act on the **whole process tree** via `_proc_tree_action(proc, action)`: uses `psutil` (`Process.children(recursive=True)` → `suspend`/`resume`/`kill`) when available, else falls back to `ctypes` `NtSuspendProcess`/`NtResumeProcess` (main pid only) for pause/resume and `taskkill /T /F` for stop. The running proc is stored in `_VIDEOCR_PROC`; flags `VIDEOCR_PAUSED`/`VIDEOCR_STOP`. Buttons enabled only in `videocr_running`. On stop, `_run_videocr_thread` sees `VIDEOCR_STOP` and returns to `videocr` mode (no error log, no fireworks). Progress already streams to logbox + bar by parsing the CLI's `Step 1/3`…`Step 3/3` lines (mapped to 0–33/33–66/66–100%). `psutil` added to build_all.bat pip line + spec `hiddenimports`.
+
 ### Thread safety
 All UI mutations **must** happen on the main thread. From any worker thread:
 ```python
@@ -342,6 +346,8 @@ Branch logic inside both (matching the batch flows): `VOXCPM_ENABLED` → single
 
 **`_voxcpm_generate_one_sync(index, text, out_prefix="line_")`** — shared single-line VoxCPM helper. The `voxcpm_helper.py` always writes `line_{idx:04d}.wav` (filename driven by the JSON `index`); this fn converts it to `{out_prefix}{idx:04d}.mp3` (`"line_"` for SRT, `"pdf_line_"` for PDF).
 
+**Word/TXT TTS reuses the PDF pipeline**: `load_doc_tts()` (`btn_load_doc_tts`, row 3) extracts text (`.docx` → `python-docx` paragraphs; `.txt` → `_read_text_smart`), chunks it with `_split_text_chunks()` (~250 chars at sentence boundaries — same sizing as PDF), then sets `PDF_CHUNKS` + `set_mode("pdf")`. From there the existing "Đọc PDF (TTS)" / "Merge PDF Audio" / "Regenerate đoạn PDF" buttons all work unchanged (output `pdf_line_*.mp3`). `btn_load_doc_tts` is registered in `_pdf_btns` so `set_mode` toggles it like the other PDF buttons.
+
 When adding a new per-line/per-chunk regenerate, register its button in `_pdf_btns`/`_srt_btns` (auto-disable sweep) AND the explicit disable spots in the SRT/`tts_running` modes (those toggle PDF buttons individually, not via the list).
 
 ## Timeline Dubbing — anti voice-overlap (`merge_ffmpeg`)
@@ -352,15 +358,26 @@ When adding a new per-line/per-chunk regenerate, register its button in `_pdf_bt
 
 **Fix — time-stretch to fit the slot:** for each line, `slot = next_sub.start − this.start`; if the real duration (`_probe_duration_sec` via ffprobe) exceeds `slot − _DUB_GAP_MS`, prepend an `atempo` chain (`_atempo_chain`, capped at `_DUB_MAX_SPEED = 2.0×`) before `adelay`. Each line then ends before the next begins → no overlap, start times preserved. Lines that still overflow at max speed (or whose source subtitles already overlap) are collected and logged with their 1-based line numbers so the user can fix the SRT timing/text. `_DUB_MAX_SPEED` / `_DUB_GAP_MS` are module-level constants just above `merge_ffmpeg`.
 
+## Mux Audio → Video (`_run_mux_thread`)
+
+Row `_brow7` — "Ghép Audio Final vào Video": pick a video + a final audio track (e.g. `final.mp3` from Merge FFmpeg), adjust per-source volume, then mux into `<video>_dubbed.mp4`. Functions live just after `open_compress_folder` (`load_mux_video` @5226, `_parse_volume` @5275, `_run_mux_thread` @5289, `start_mux_video` @5406); globals `MUX_VIDEO_FILE` / `MUX_AUDIO_FILE` / `MUX_OUTPUT_DIR` next to the `COMPRESS_*` globals.
+
+- **Volume controls** (`mux_video_vol_var` / `mux_audio_vol_var`): `_parse_volume()` accepts `1.0`, `0.5`, `150%`, `0` → ffmpeg `volume=` factor.
+- **Keep-original-audio checkbox** (`mux_keep_orig_var`): when checked **and** the video has an audio track, both streams are `amix`-ed (`amix=inputs=2:duration=longest:normalize=0`); otherwise the final audio replaces the original. Falls back to replace-mode with a warning if the video has no audio.
+- ffmpeg uses `-c:v copy` (no video re-encode → fast) + AAC 192k audio; progress parsed from `time=` like the compress flow.
+- Modes: `mux_idle` (only video or only audio picked) → `mux_ready` (both picked, run enabled) → `muxing` → `mux_done`. `_mux_ready_mode()` returns `mux_ready`/`mux_idle` based on which files are loaded. Mutually exclusive with the compress flow (each disables the other's buttons while busy). Completion uses the standard `show_fireworks` + `open_mux_folder`, identical to TTS/compress.
+
 ## Edit Studio (`open_edit_studio`)
 
 A Toplevel preview/verify window (line ~7237) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
 
-Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-line `line_*.mp3`), **Load Audio File**.
+Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-line `line_*.mp3`, timeline-placed), **Load Audio File**, **Load nhiều Audio** (sequential playlist).
 
 **Load Audio File** (`_load_audio_file`) loads a single full-length track — typically `final.mp3` after Merge FFmpeg (file dialog defaults to `OUTPUT_DIR/final.mp3`). It builds a temp WAV (waveaudio = MCI master clock), sets `es['audio_wav']`/`wav_ready`, then `seek_to(0)`:
 - **With video loaded** → **keeps the original video audio** and `amix`-es the loaded track on top (`[0:a][1:a]amix=inputs=2:duration=longest:normalize=0`, video + dub → one master WAV), so you hear original music/SFX *and* the dub. Falls back to dub-only if the video has no audio track.
 - **No video** → audio-only mode: `_seek_audio_only()` plays the track as master; clicking a subtitle row seeks to its timecode; `_toggle_play` (Play/Pause) and the ticker's end-of-track reset both branch on `not es['video_path'] and es['audio_wav']`. Temp WAV is tracked in `es['_tmp_wav']` and removed in `_on_close`.
+
+**Load nhiều Audio** (`_load_audio_seq`) — sequential **playlist**, NOT concatenation and NOT timeline: pick many files, they play **one after another** (each file finishes → next starts immediately). Files are natural-sorted by name (`line_0000`, `line_0001`, …). Implemented in the MCI audio thread via a dedicated alias `_ALIAS_SEQ` + handlers `_h_seq_play/pause/resume/stop` (queue ops `seq_play/seq_pause/seq_resume/seq_stop`). **Auto-advance**: the `_audio_loop` poll watches `_mci_mode(_ALIAS_SEQ)` — once it has seen `playing`, a transition to `stopped` triggers `_h_seq_play(idx+1)` (runs on the audio thread → MCI-safe). State: `seq_files`/`seq_idx`/`seq_active`/`_seq_mode`. The ticker updates the current-file status and resets Play when the list ends. `_toggle_play` has a `_seq_mode` branch (pause/resume; restart from 0 if finished). Other loaders call `_exit_seq_mode()` to leave playlist mode. No temp files (nothing is merged). **List UI**: the side Audio tab shows the playlist — `_build_audio()` branches to `_build_seq_list()` when `_seq_mode`, rendering one row per file (name + ▶) into `_aud_rows`; ▶/row-click → `_seq_play_from(idx)` (play sequentially from that file). The ticker highlights the currently-playing row via `_hl_audio(seq_idx)`.
 
 ## Companion Script System
 
@@ -376,7 +393,7 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 | `srt_align_helper.py` | voxcpm_env python | VAD-based SRT timing alignment |
 | `videocr_helper.py` | any python | Video OCR wrapper |
 | `video_stt_helper.py` | voxcpm_env python | faster-whisper STT (stdout: `PROGRESS:N:M`, `DONE:path`) |
-| `translate_helper.py` | voxcpm_env python (torch+transformers+sentencepiece) | Offline translation → Vietnamese (NLLB/M2M/envit5/generic seq2seq auto-detect). stdin JSON `{"segments":[...]}`, stdout `PROGRESS:N:M` + `DONE:path`, JSON out `{"translations":[...]}` |
+| `translate_helper.py` | voxcpm_env python (torch+transformers+sentencepiece) | Offline translation → Vietnamese (NLLB/M2M/envit5/generic seq2seq auto-detect). Input JSON file `{"segments":[...]}`, stdout `PROGRESS:N:M` + `DONE:path` (+ `STOPPED`/`LOAD_ERR`/`BATCH_ERR`), JSON out `{"translations":[...], "stopped":bool}`. Reads `PAUSE`/`RESUME`/`STOP` control lines on **stdin** |
 
 **Onefile exes embed all 9 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.
 
@@ -393,6 +410,8 @@ Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Li
 | `videocr_cli_dir` | `VIDEOCR_CLI_DIR` | Passed as env var to `videocr_helper.py` |
 | `voxcpm_ckpt_dir` | `voxcpm_ckpt_var` | VoxCPM model path; seed for `_find_voxcpm_python()` |
 | `voxcpm_env_override` | `VOXCPM_ENV_OVERRIDE` | Explicit python.exe; checked **first** in all `_find_*_python()` calls |
+| `translate_env_override` | `TRANSLATE_ENV_OVERRIDE` | Dedicated python.exe for offline translation; checked **before** `voxcpm_env` in `_translate_segments_local()`. Needed for envit5 (see tokenizer gotcha below) |
+| `local_translate_model_dir` / `local_translate_src_lang` | `LOCAL_TRANSLATE_MODEL_DIR` / `LOCAL_TRANSLATE_SRC_LANG` | Offline model dir (or HF id) + NLLB source-lang code |
 | `subtitle_edit_path` | `SUBTITLE_EDIT_PATH` | Prepended to Subtitle Edit search list |
 | `anthropic_api_key` / `gemini_api_key` / `openai_api_key` | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` | LLM keys for SRT/PDF translation (masked `show="*"` in dialog) |
 | `translate_provider` | `TRANSLATE_PROVIDER` | `Claude` \| `Gemini` \| `OpenAI`; set by the row-8 dropdown (`set_translate_provider`) |
@@ -402,7 +421,7 @@ Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Li
 
 ## SRT / PDF Translation to Vietnamese (LLM)
 
-Row 8 (`_brow8`) — translate subtitles/PDF to natural Vietnamese via Claude / Gemini / OpenAI. **Decoupled from `set_mode()`**: the two buttons are always enabled (no entry in any disable sweep) and self-lock only during their own run (re-enabled in `finally`). They operate on a freshly file-dialog-picked file, NOT `subtitles_cache`/`PDF_CHUNKS`, so they never conflict with a running TTS job.
+Row 8 (`_brow8`) — translate SRT / PDF / **Word `.docx` / `.txt`** to natural Vietnamese via Claude / Gemini / OpenAI / Offline. Three buttons (`btn_translate_srt` / `btn_translate_pdf` / `btn_translate_doc`), toggled together by `_set_translate_buttons()`. **Decoupled from `set_mode()`**: always enabled (no entry in any disable sweep) and self-lock only during their own run (re-enabled in `finally`). They operate on a freshly file-dialog-picked file, NOT `subtitles_cache`/`PDF_CHUNKS`, so they never conflict with a running TTS job.
 
 | Piece | Detail |
 |---|---|
@@ -410,9 +429,14 @@ Row 8 (`_brow8`) — translate subtitles/PDF to natural Vietnamese via Claude / 
 | `_llm_call_claude/gemini/openai()` | Plain `urllib` POST (no SDK dep). Claude `/v1/messages` + `anthropic-version: 2023-06-01`; Gemini `:generateContent?key=`; OpenAI `/v1/chat/completions` |
 | `_translate_segments(segments, context, …)` | Batches `_TRANSLATE_BATCH` (40) lines/call using `[[n]] text` markers; parses back with `_parse_marked`; **any missing/empty line → per-line fallback retry**, then keeps source text if still failing (never drops content) |
 | `translate_srt()` | Parses `.srt`, translates `clean_text(content)`, writes `<name>_vi.srt` preserving timestamps |
-| `translate_pdf()` | Extracts chunks via `pdf_helper.py` (same as `load_pdf`), writes `<name>_vi.txt` |
+| `translate_pdf()` | Extracts chunks via `pdf_helper.py` (same as `load_pdf`), writes `<name>_vi.{txt\|pdf\|docx}` via `_write_translated_doc()` (Row-8 `translate_pdf_format_var` dropdown, label "Ra (PDF/Word/TXT)" — shared by PDF + Word/TXT). PDF output = reflowed text only (no original layout) using `fpdf2` + a Windows Unicode TTF (`_find_unicode_font`, Arial/Segoe/Times); DOCX uses `python-docx`. Missing lib → auto-fallback to `.txt`. `fpdf2`+`python-docx` added to build_all.bat pip line + spec `hiddenimports` (`fpdf`, `docx`) |
+| `translate_doc()` | Translates **Word `.docx` / `.txt`** input. `.docx` → paragraphs via `python-docx`; `.txt` → non-empty lines via `_read_text_smart` (handles UTF-16/BOM). Same translate + `_write_translated_doc` output pipeline, format dropdown, pause/stop, and `_reveal_output` as `translate_pdf`. Button `btn_translate_doc` in row `_brow8` |
 
 **Bilingual mode** (`translate_bilingual_var` checkbox): SRT line becomes `original\ntranslated`; PDF writes both. **Context field** (`translate_context_var`) feeds the system prompt for consistent pronouns/xưng hô — the single biggest quality lever for VN subtitles (online providers only).
+
+### Pause / Resume / Stop (row `_brow8b`)
+
+Three controls (`btn_tr_pause`/`btn_tr_resume`/`btn_tr_stop`) drive module flags `TRANSLATE_PAUSED` / `TRANSLATE_STOP` (enabled only while a translate job runs, toggled via `_translate_set_controls`). **Online**: `_translate_segments` checks the flags between each 40-line batch (waits while paused, breaks on stop). **Offline**: the flags can't reach the running subprocess, so the controls also send `PAUSE`/`RESUME`/`STOP` lines to `translate_helper.py` via its **stdin** (`_translate_send_proc`, using the stored `_TRANSLATE_PROC`); the helper runs a daemon stdin-reader thread (`_CTRL`) and checks it between batches. On stop, **partial output is still saved** — untranslated tail keeps the source text (both the helper and the online path back-fill `None`/missing with the original), so the file stays valid. Stop → no fireworks but still reveals the file; normal finish → fireworks + reveal. Progress shows in both the bar and the logbox (`_make_translate_progress_cb`, throttled to 10% steps); on finish the output folder opens via `_reveal_output` (`explorer /select,`).
 
 ### Offline (local) translation — provider `"Offline"`
 
@@ -420,7 +444,8 @@ The Row-8 dropdown has a 4th option **`Offline`** that translates fully on-devic
 
 - **Model**: any HuggingFace seq2seq dir (or HF id) set in ⚙ Cài đặt → `local_translate_model_dir`. Helper auto-detects: `nllb`/`m2m` → `forced_bos_token_id` for `--tgt-lang vie_Latn`; `envit5` → `en: ` prefix, EN→VI only; else generic `generate()`. Recommended: `facebook/nllb-200-distilled-600M` (multilingual) or `VietAI/envit5-translation` (EN→VI, best VN style).
 - **Source language** (`local_translate_src_lang`, NLLB only) is a friendly dropdown in settings mapping to codes (`eng_Latn`, `zho_Hans`, `jpn_Jpan`, …); envit5 ignores it.
-- **Env**: reuses `voxcpm_env` python via `_find_voxcpm_python()` — needs `torch`+`transformers`+`sentencepiece` installed there. `translate_helper.py` is the **9th companion script** (added to all 3 onefile spec `datas`, build_all.bat step-0 validation + both copy loops, step-6G fail-closed copy).
+- **Env**: `_translate_segments_local()` picks the interpreter in this order: `TRANSLATE_ENV_OVERRIDE` (settings `translate_env_override`, an explicit `python.exe`) → `_find_voxcpm_python()`. Needs `torch`+`transformers`+`sentencepiece`. `translate_helper.py` is the **9th companion script** (added to all 3 onefile spec `datas`, build_all.bat step-0 validation + both copy loops, step-6G fail-closed copy).
+- **Tokenizer-version gotcha**: `voxcpm_env` ships `transformers 5.x`/`tokenizers 0.22.x`, which **loads NLLB/Marian fine but FAILS on envit5** (T5/unigram SentencePiece) with `argument 'vocab': 'dict' object cannot be converted to 'Sequence'`. To use envit5, point `translate_env_override` at a **separate venv** with older pins (`transformers==4.41.2` + matching `tokenizers` + `sentencepiece` + CPU `torch`). The helper catches model-load failures → prints `LOAD_ERR:` (exit 3) so the app shows a clear message instead of "mã 1".
 
 ## rvc_env Compatibility Patches
 

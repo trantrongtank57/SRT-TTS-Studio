@@ -50,6 +50,7 @@ a = Analysis(
         'speech_recognition', 'audioop',
         'winreg',
         'pypdf', 'pypdf._reader', 'pypdf._writer', 'pypdf.generic',
+        'fpdf', 'docx', 'psutil',
     ],
     hookspath=[],
     hooksconfig={},

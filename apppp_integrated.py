@@ -849,6 +849,12 @@ TRANSLATE_PROVIDER = "Claude"          # Claude | Gemini | OpenAI | Offline
 TRANSLATE_MODEL    = ""                # rỗng = dùng mặc định theo provider
 LOCAL_TRANSLATE_MODEL_DIR = ""         # thư mục model offline (NLLB/envit5/...) hoặc HF id
 LOCAL_TRANSLATE_SRC_LANG  = "eng_Latn" # mã ngôn ngữ nguồn cho NLLB (envit5 luôn Anh→Việt)
+TRANSLATE_ENV_OVERRIDE    = ""         # python.exe riêng cho dịch offline (vd envit5 cần transformers cũ);
+                                       # rỗng = dùng voxcpm_env
+# ── Điều khiển tiến trình dịch (tạm dừng / dừng hẳn / tiếp tục) ──────────
+TRANSLATE_PAUSED = False
+TRANSLATE_STOP   = False
+_TRANSLATE_PROC  = None                # subprocess dịch offline đang chạy (để gửi lệnh stdin)
 # Model mặc định cho từng nhà cung cấp (override bằng TRANSLATE_MODEL trong settings)
 _TRANSLATE_DEFAULT_MODEL = {
     "Claude": "claude-sonnet-4-6",
@@ -860,6 +866,10 @@ _TRANSLATE_BATCH = 40                  # số dòng/đoạn mỗi lần gọi AP
 VIDEOCR_VIDEO = ""
 VIDEOCR_OUTPUT_SRT = ""
 VIDEOCR_OUTPUT_DIR = ""   # rỗng = dùng OUTPUT_DIR chung
+# Điều khiển Tách Sub Cứng (OCR): tạm dừng / dừng hẳn / tiếp tục
+VIDEOCR_PAUSED = False
+VIDEOCR_STOP   = False
+_VIDEOCR_PROC  = None     # tiến trình VideOCR đang chạy
 COMPRESS_VIDEO_FILE = ""
 COMPRESS_OUTPUT_DIR = ""  # rỗng = dùng cùng thư mục file gốc
 MUX_VIDEO_FILE = ""       # video nguồn để ghép audio final
@@ -885,7 +895,7 @@ def _load_settings():
     """Đọc settings.json và áp dụng vào các global path."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, FFMPEG_DIR, FFMPEG, FFPROBE
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
-    global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG
+    global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
     try:
         if os.path.isfile(_SETTINGS_FILE):
             with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -915,6 +925,8 @@ def _load_settings():
                 LOCAL_TRANSLATE_MODEL_DIR = d["local_translate_model_dir"]
             if d.get("local_translate_src_lang"):
                 LOCAL_TRANSLATE_SRC_LANG = d["local_translate_src_lang"]
+            if d.get("translate_env_override"):
+                TRANSLATE_ENV_OVERRIDE = d["translate_env_override"]
     except Exception:
         pass
 
@@ -922,12 +934,13 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
                    voxcpm_ckpt_dir, ffmpeg_dir="",
                    anthropic_api_key=None, gemini_api_key=None, openai_api_key=None,
                    translate_provider=None, translate_model=None,
-                   local_translate_model_dir=None, local_translate_src_lang=None):
+                   local_translate_model_dir=None, local_translate_src_lang=None,
+                   translate_env_override=None):
     """Lưu settings.json và áp dụng ngay vào các global path.
     Các tham số translate_*/local_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, FFMPEG_DIR, FFMPEG, FFPROBE
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
-    global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG
+    global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
     VIDEOCR_CLI_DIR     = videocr_cli_dir
     SUBTITLE_EDIT_PATH  = subtitle_edit_path
     VOXCPM_ENV_OVERRIDE = voxcpm_env_override
@@ -939,6 +952,7 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
     if translate_model    is not None: TRANSLATE_MODEL    = translate_model
     if local_translate_model_dir is not None: LOCAL_TRANSLATE_MODEL_DIR = local_translate_model_dir
     if local_translate_src_lang  is not None: LOCAL_TRANSLATE_SRC_LANG  = local_translate_src_lang
+    if translate_env_override     is not None: TRANSLATE_ENV_OVERRIDE    = translate_env_override
     # Áp dụng lại đường dẫn ffmpeg/ffprobe ngay lập tức
     FFMPEG  = get_ffmpeg()
     FFPROBE = get_ffprobe()
@@ -956,6 +970,7 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
             "translate_model":    TRANSLATE_MODEL,
             "local_translate_model_dir": LOCAL_TRANSLATE_MODEL_DIR,
             "local_translate_src_lang":  LOCAL_TRANSLATE_SRC_LANG,
+            "translate_env_override":    TRANSLATE_ENV_OVERRIDE,
         }
         with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
@@ -2701,6 +2716,8 @@ _brow3 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow3.pack(fill="x")
 _brow4 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow4.pack(fill="x")
+_brow4b = ctk.CTkFrame(button_frame, fg_color="transparent")
+_brow4b.pack(fill="x")
 _brow5 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow5.pack(fill="x")
 _brow6 = ctk.CTkFrame(button_frame, fg_color="transparent")
@@ -2709,6 +2726,8 @@ _brow7 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow7.pack(fill="x")
 _brow8 = ctk.CTkFrame(button_frame, fg_color="transparent")
 _brow8.pack(fill="x")
+_brow8b = ctk.CTkFrame(button_frame, fg_color="transparent")
+_brow8b.pack(fill="x")
 
 
 # =========================
@@ -3148,9 +3167,18 @@ def show_settings_dialog():
                                                        "Tiếng Anh (English)"))
     ctk.CTkOptionMenu(fr_src, variable=v_src, values=[l for l, _ in _SRC_LANGS],
                       width=W_ENTRY, font=("Arial", 11)).pack(side="left", padx=(0, 4))
-    ctk.CTkLabel(dlg, text="Offline cần voxcpm_env có torch+transformers+sentencepiece. "
-                           "Gợi ý model: facebook/nllb-200-distilled-600M (đa ngôn ngữ), "
-                           "VietAI/envit5-translation (Anh→Việt, văn phong VN đẹp nhất).",
+
+    # Python env riêng cho dịch (vd envit5 cần transformers cũ; để trống = dùng voxcpm_env)
+    v_trenv, _, fr_trenv = _row(dlg, "Python env dịch (riêng):")
+    v_trenv.set(TRANSLATE_ENV_OVERRIDE)
+    ctk.CTkButton(fr_trenv, text="Browse", width=72,
+        command=lambda: (lambda p: v_trenv.set(p) if p else None)(
+            filedialog.askopenfilename(title="Chọn python.exe của env dịch",
+                filetypes=[("Python", "python.exe"), ("All", "*.*")]))
+    ).pack(side="left")
+    ctk.CTkLabel(dlg, text="Để trống env dịch = dùng voxcpm_env. NLLB chạy được trên voxcpm_env; "
+                           "envit5 cần env riêng (transformers cũ). "
+                           "Model: facebook/nllb-200-distilled-600M / VietAI/envit5-translation.",
                  font=("Arial", 10), text_color="gray").pack(pady=(0, 4))
 
     def _save():
@@ -3167,6 +3195,7 @@ def show_settings_dialog():
             translate_model    = _resolve_model(),
             local_translate_model_dir = v_local_dir.get().strip(),
             local_translate_src_lang  = _src_label_to_code.get(v_src.get(), "eng_Latn"),
+            translate_env_override    = v_trenv.get().strip(),
         )
         if ckpt:
             voxcpm_ckpt_var.set(ckpt)
@@ -3292,6 +3321,27 @@ def _llm_call(provider, api_key, model, system, user):
     raise RuntimeError(f"Provider không hợp lệ: {provider}")
 
 
+def _abortable_llm_call(provider, api_key, model, system, user):
+    """Gọi LLM trong thread phụ và poll cờ TRANSLATE_STOP mỗi 0.15s.
+    Cho phép Dừng hẳn ngay giữa lúc đang chờ API (không phải đợi hết batch).
+    Trả về (raw, aborted). aborted=True nếu bị dừng → bỏ qua kết quả call này."""
+    box = {}
+    def _c():
+        try:
+            box["raw"] = _llm_call(provider, api_key, model, system, user)
+        except Exception as e:
+            box["err"] = e
+    th = threading.Thread(target=_c, daemon=True)
+    th.start()
+    while th.is_alive():
+        if TRANSLATE_STOP:
+            return None, True   # bỏ call đang chạy dở (thread daemon tự kết thúc)
+        time.sleep(0.15)
+    if "err" in box:
+        raise box["err"]
+    return box.get("raw", ""), False
+
+
 def _translate_system_prompt(context):
     sys_p = (
         "Bạn là dịch giả phụ đề phim chuyên nghiệp người Việt. "
@@ -3359,13 +3409,17 @@ def _translate_segments_local(segments, progress_cb=None, log_cb=None):
     helper = _find_translate_helper()
     if not helper:
         raise RuntimeError("Không tìm thấy translate_helper.py cạnh app/exe.")
-    # env: ưu tiên override, rồi đi lên từ chính thư mục model, rồi từ ckpt VoxCPM
-    py = _find_voxcpm_python(model_dir if os.path.isdir(model_dir) else os.getcwd())
+    # env: ưu tiên env dịch riêng (TRANSLATE_ENV_OVERRIDE) → voxcpm_env
+    py = ""
+    if TRANSLATE_ENV_OVERRIDE and os.path.isfile(TRANSLATE_ENV_OVERRIDE):
+        py = TRANSLATE_ENV_OVERRIDE
+    if not py:
+        py = _find_voxcpm_python(model_dir if os.path.isdir(model_dir) else os.getcwd())
     if not py:
         py = _find_voxcpm_python((voxcpm_ckpt_var.get() or "").strip() or os.getcwd())
     if not py:
-        raise RuntimeError("Không tìm thấy python của voxcpm_env (cần torch+transformers). "
-                           "Đặt đường dẫn ở ⚙ Cài đặt → 'voxcpm_env python.exe'.")
+        raise RuntimeError("Không tìm thấy python để dịch (cần torch+transformers). "
+                           "Đặt ở ⚙ Cài đặt → 'Python env dịch (riêng)' hoặc 'voxcpm_env python.exe'.")
 
     import tempfile
     tin = os.path.join(tempfile.gettempdir(), '_tr_in.json')
@@ -3381,29 +3435,46 @@ def _translate_segments_local(segments, progress_cb=None, log_cb=None):
                f"(nguồn: {src_lang}) — {len(segments)} dòng/đoạn")
         log_cb("   (lần đầu có thể tải/nạp model, vui lòng đợi...)")
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    global _TRANSLATE_PROC
+    # stdin=PIPE để gửi lệnh PAUSE/RESUME/STOP cho helper
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
                             text=True, encoding='utf-8', errors='replace',
                             creationflags=CREATE_NO_WINDOW)
+    _TRANSLATE_PROC = proc
+    # Nếu người dùng đã bấm Tạm dừng trước khi proc kịp khởi động → áp dụng ngay
+    if TRANSLATE_PAUSED:
+        _translate_send_proc("PAUSE")
     last_err = ""
-    for line in proc.stdout:
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith('PROGRESS:'):
-            parts = line.split(':')
-            try:
-                if progress_cb:
-                    progress_cb(int(parts[1]), int(parts[2]))
-            except Exception:
-                pass
-        elif line.startswith('IMPORT_ERR') or line.startswith('BATCH_ERR'):
-            last_err = line
-            if log_cb:
-                log_cb(f"⚠️ {line}")
-        # các dòng log model khác (Loading.../tải về) bỏ qua
-    proc.wait()
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('PROGRESS:'):
+                parts = line.split(':')
+                try:
+                    if progress_cb:
+                        progress_cb(int(parts[1]), int(parts[2]))
+                except Exception:
+                    pass
+            elif line == 'STOPPED':
+                if log_cb:
+                    log_cb("⏹ Đã dừng (offline) — giữ phần đã dịch.")
+            elif line.startswith('LOAD_ERR') or line.startswith('IMPORT_ERR') or line.startswith('BATCH_ERR'):
+                last_err = line
+                if log_cb:
+                    log_cb(f"⚠️ {line}")
+            # các dòng log model khác (Loading.../tải về) bỏ qua
+        proc.wait()
+    finally:
+        _TRANSLATE_PROC = None
     if proc.returncode != 0:
-        raise RuntimeError(f"translate_helper lỗi (mã {proc.returncode}). {last_err}".strip())
+        if last_err:
+            raise RuntimeError(last_err)
+        raise RuntimeError(f"translate_helper lỗi (mã {proc.returncode}). "
+                           f"Kiểm tra thư mục model offline có đúng là model DỊCH "
+                           f"(NLLB/envit5), KHÔNG phải VoxCPM/whisper.")
     with open(tout, encoding='utf-8') as f:
         translations = json.load(f).get('translations', [])
     for _p in (tin, tout):
@@ -3432,22 +3503,39 @@ def _translate_segments(segments, context, progress_cb=None, log_cb=None):
     total = len(segments)
     done = 0
     for start in range(0, total, _TRANSLATE_BATCH):
+        # Tạm dừng: chờ RESUME/STOP
+        while TRANSLATE_PAUSED and not TRANSLATE_STOP:
+            time.sleep(0.2)
+        # Dừng hẳn: thoát, phần chưa dịch giữ nguyên gốc
+        if TRANSLATE_STOP:
+            if log_cb:
+                log_cb(f"⏹ Đã dừng. Dịch được {done}/{total}.")
+            break
         batch = segments[start:start + _TRANSLATE_BATCH]
         user = "\n".join(f"[[{j+1}]] {t}" for j, t in enumerate(batch))
         try:
-            raw = _llm_call(provider, api_key, model, system, user)
+            raw, aborted = _abortable_llm_call(provider, api_key, model, system, user)
+            if aborted:
+                break
             parsed = _parse_marked(raw, len(batch))
         except Exception as e:
             if log_cb:
                 log_cb(f"⚠️ Lỗi batch {start//_TRANSLATE_BATCH+1}: {e} — thử lại từng dòng")
             parsed = {}
         # điền kết quả, dòng nào thiếu → dịch lẻ
+        _aborted_inner = False
         for j, src in enumerate(batch):
+            if TRANSLATE_STOP:
+                _aborted_inner = True
+                break
             tr = parsed.get(j)
             if tr is None or tr == "":
                 try:
-                    one = _llm_call(provider, api_key, model, system,
-                                    f"[[1]] {src}")
+                    one, aborted = _abortable_llm_call(provider, api_key, model, system,
+                                                       f"[[1]] {src}")
+                    if aborted:
+                        _aborted_inner = True
+                        break
                     tr = _parse_marked(one, 1).get(0) or src
                 except Exception as e:
                     if log_cb:
@@ -3457,6 +3545,14 @@ def _translate_segments(segments, context, progress_cb=None, log_cb=None):
             done += 1
             if progress_cb:
                 progress_cb(done, total)
+        if _aborted_inner or TRANSLATE_STOP:
+            if log_cb:
+                log_cb(f"⏹ Đã dừng. Dịch được {done}/{total}.")
+            break
+    # Phần chưa dịch (do dừng) → giữ nguyên bản gốc để không mất nội dung
+    for k in range(total):
+        if result[k] is None:
+            result[k] = segments[k]
     return result
 
 
@@ -3466,6 +3562,198 @@ def _translate_default_context():
         return translate_context_var.get()
     except Exception:
         return ""
+
+
+def _make_translate_progress_cb():
+    """Tạo callback tiến trình: cập nhật thanh tiến trình + log chữ trong logbox
+    (giới hạn mỗi mốc 10% để khỏi tràn log). Dùng chung cho cả AI online và offline."""
+    state = {"last": -1}
+    def _cb(d, t):
+        update_progress(d, t)
+        if not t:
+            return
+        pct = d * 100 // t
+        milestone = pct // 10
+        if d >= t or milestone > state["last"]:
+            state["last"] = milestone
+            app.after(0, lambda dd=d, tt=t, pp=pct: log(f"   ⏳ Đã dịch {dd}/{tt} ({pp}%)"))
+    return _cb
+
+
+def _reveal_output(path):
+    """Mở File Explorer và chọn file output vừa lưu."""
+    try:
+        subprocess.Popen(["explorer", "/select,", os.path.abspath(path)])
+    except Exception:
+        try:
+            os.startfile(os.path.dirname(os.path.abspath(path)))
+        except Exception:
+            pass
+
+
+def _translate_send_proc(cmd):
+    """Gửi lệnh điều khiển (PAUSE/RESUME/STOP) tới subprocess dịch offline đang chạy."""
+    p = _TRANSLATE_PROC
+    if p is not None and p.poll() is None and p.stdin:
+        try:
+            p.stdin.write(cmd + "\n")
+            p.stdin.flush()
+        except Exception:
+            pass
+
+
+def _set_translate_buttons(state):
+    """Bật/tắt cả 3 nút Dịch (SRT / PDF / Word-TXT) cùng lúc."""
+    for _bn in ("btn_translate_srt", "btn_translate_pdf", "btn_translate_doc"):
+        b = globals().get(_bn)
+        if b is not None:
+            try:
+                b.configure(state=state)
+            except Exception:
+                pass
+
+
+def _translate_set_controls(running):
+    """running=True: bật Tạm dừng + Dừng (tắt Tiếp tục). False: tắt cả 3."""
+    try:
+        if running:
+            btn_tr_pause.configure(state="normal")
+            btn_tr_resume.configure(state="disabled")
+            btn_tr_stop.configure(state="normal")
+        else:
+            btn_tr_pause.configure(state="disabled")
+            btn_tr_resume.configure(state="disabled")
+            btn_tr_stop.configure(state="disabled")
+    except Exception:
+        pass
+
+
+def _translate_pause():
+    global TRANSLATE_PAUSED
+    TRANSLATE_PAUSED = True
+    _translate_send_proc("PAUSE")
+    btn_tr_pause.configure(state="disabled")
+    btn_tr_resume.configure(state="normal")
+    log("⏸ Tạm dừng dịch.")
+
+
+def _translate_resume():
+    global TRANSLATE_PAUSED
+    TRANSLATE_PAUSED = False
+    _translate_send_proc("RESUME")
+    btn_tr_pause.configure(state="normal")
+    btn_tr_resume.configure(state="disabled")
+    log("▶ Tiếp tục dịch.")
+
+
+def _translate_stop():
+    global TRANSLATE_STOP, TRANSLATE_PAUSED
+    TRANSLATE_STOP = True
+    TRANSLATE_PAUSED = False
+    _translate_send_proc("STOP")
+    btn_tr_pause.configure(state="disabled")
+    btn_tr_resume.configure(state="disabled")
+    btn_tr_stop.configure(state="disabled")
+    log("⏹ Đang dừng dịch... (lưu phần đã dịch)")
+
+
+def _read_text_smart(path):
+    """Đọc file text, tự nhận diện encoding (UTF-16/UTF-8-BOM/UTF-8/CP1258).
+    Sửa lỗi 'srt.parse' với file SRT mã hóa UTF-16 (ký tự kèm byte \\x00)."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16")
+    if raw[:3] == b"\xef\xbb\xbf":
+        return raw.decode("utf-8-sig")
+    # không BOM nhưng có null byte → nhiều khả năng UTF-16 không dấu BOM
+    if b"\x00" in raw[:4096]:
+        for enc in ("utf-16-le", "utf-16-be"):
+            try:
+                return raw.decode(enc)
+            except Exception:
+                pass
+    for enc in ("utf-8", "cp1258", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            pass
+    return raw.decode("utf-8", errors="replace")
+
+
+def _find_unicode_font():
+    """Tìm 1 font TTF có glyph tiếng Việt trong Windows\\Fonts."""
+    fonts_dir = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+    for name in ("arial.ttf", "segoeui.ttf", "times.ttf", "tahoma.ttf", "calibri.ttf"):
+        p = os.path.join(fonts_dir, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _write_translated_doc(base, chunks, translated, bilingual, fmt, log_cb=None):
+    """Ghi kết quả dịch ra base+.{txt|pdf|docx}. Trả về đường dẫn thật.
+    Thiếu thư viện fpdf/docx → tự lùi về .txt (không mất nội dung)."""
+    def _pairs():
+        for src, tr in zip(chunks, translated):
+            yield (src, tr)
+
+    if fmt == "pdf":
+        try:
+            from fpdf import FPDF
+            font_path = _find_unicode_font()
+            if not font_path:
+                raise RuntimeError("không tìm thấy font Unicode")
+            pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.add_page()
+            pdf.add_font("uni", "", font_path)
+            for src, tr in _pairs():
+                if bilingual:
+                    pdf.set_font("uni", size=10)
+                    pdf.set_text_color(120, 120, 120)
+                    pdf.multi_cell(0, 6, src)
+                    pdf.set_text_color(0, 0, 0)
+                pdf.set_font("uni", size=12)
+                pdf.multi_cell(0, 7, tr)
+                pdf.ln(3)
+            out_path = base + ".pdf"
+            pdf.output(out_path)
+            return out_path
+        except Exception as e:
+            if log_cb:
+                log_cb(f"⚠️ Không tạo được PDF ({e}). Lưu .txt thay thế. "
+                       f"(Cài thư viện: pip install fpdf2)")
+            fmt = "txt"
+
+    if fmt == "docx":
+        try:
+            from docx import Document
+            doc = Document()
+            for src, tr in _pairs():
+                if bilingual:
+                    p = doc.add_paragraph()
+                    r = p.add_run(src)
+                    r.italic = True
+                doc.add_paragraph(tr)
+            out_path = base + ".docx"
+            doc.save(out_path)
+            return out_path
+        except Exception as e:
+            if log_cb:
+                log_cb(f"⚠️ Không tạo được DOCX ({e}). Lưu .txt thay thế. "
+                       f"(Cài thư viện: pip install python-docx)")
+            fmt = "txt"
+
+    # mặc định / fallback: .txt
+    out_path = base + ".txt"
+    with open(out_path, "w", encoding="utf-8") as f:
+        for src, tr in _pairs():
+            if bilingual:
+                f.write(src + "\n" + tr + "\n\n")
+            else:
+                f.write(tr + "\n\n")
+    return out_path
 
 
 def translate_srt():
@@ -3479,11 +3767,13 @@ def translate_srt():
     bilingual = bool(translate_bilingual_var.get())
 
     def _worker():
+        global TRANSLATE_STOP, TRANSLATE_PAUSED
+        TRANSLATE_STOP = False
+        TRANSLATE_PAUSED = False
         try:
-            app.after(0, lambda: btn_translate_srt.configure(state="disabled"))
-            app.after(0, lambda: btn_translate_pdf.configure(state="disabled"))
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                subs = list(srt.parse(f.read()))
+            app.after(0, lambda: _set_translate_buttons("disabled"))
+            app.after(0, lambda: _translate_set_controls(True))
+            subs = list(srt.parse(_read_text_smart(path)))
             if not subs:
                 app.after(0, lambda: log("❌ File SRT rỗng / không đọc được."))
                 return
@@ -3491,27 +3781,31 @@ def translate_srt():
             app.after(0, lambda: log(f"📜 Dịch SRT: {os.path.basename(path)} ({len(subs)} dòng)"))
             translated = _translate_segments(
                 sources, context,
-                progress_cb=lambda d, t: update_progress(d, t),
+                progress_cb=_make_translate_progress_cb(),
                 log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
             for s, src, tr in zip(subs, sources, translated):
                 s.content = (f"{src}\n{tr}" if bilingual else tr)
             out_path = os.path.splitext(path)[0] + "_vi.srt"
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(srt.compose(subs))
-            app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
-            app.after(0, show_fireworks)
+            if TRANSLATE_STOP:
+                app.after(0, lambda: log(f"⏹ Đã dừng. Lưu phần đã dịch (phần còn lại giữ gốc): {out_path}"))
+            else:
+                app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
+                app.after(0, show_fireworks)
+            app.after(0, lambda: _reveal_output(out_path))
         except Exception as e:
             err = str(e)
             app.after(0, lambda: log(f"❌ Lỗi dịch SRT: {err}"))
         finally:
-            app.after(0, lambda: btn_translate_srt.configure(state="normal"))
-            app.after(0, lambda: btn_translate_pdf.configure(state="normal"))
+            app.after(0, lambda: _set_translate_buttons("normal"))
+            app.after(0, lambda: _translate_set_controls(False))
 
     threading.Thread(target=_worker, daemon=True).start()
 
 
 def translate_pdf():
-    """Trích text PDF → dịch sang tiếng Việt → <tên>_vi.txt."""
+    """Trích text PDF → dịch sang tiếng Việt → <tên>_vi.{txt|pdf|docx}."""
     path = filedialog.askopenfilename(
         title="Chọn file PDF cần dịch sang tiếng Việt",
         filetypes=[("PDF files", "*.pdf")])
@@ -3519,12 +3813,16 @@ def translate_pdf():
         return
     context = _translate_default_context()
     bilingual = bool(translate_bilingual_var.get())
+    out_fmt = (translate_pdf_format_var.get() or "txt").strip().lower()
 
     def _worker():
+        global TRANSLATE_STOP, TRANSLATE_PAUSED
+        TRANSLATE_STOP = False
+        TRANSLATE_PAUSED = False
         import tempfile
         try:
-            app.after(0, lambda: btn_translate_srt.configure(state="disabled"))
-            app.after(0, lambda: btn_translate_pdf.configure(state="disabled"))
+            app.after(0, lambda: _set_translate_buttons("disabled"))
+            app.after(0, lambda: _translate_set_controls(True))
             py = _find_pdf_python()
             helper = _find_pdf_helper()
             if not py:
@@ -3555,23 +3853,80 @@ def translate_pdf():
             app.after(0, lambda: log(f"📄 Dịch {len(chunks)} đoạn..."))
             translated = _translate_segments(
                 chunks, context,
-                progress_cb=lambda d, t: update_progress(d, t),
+                progress_cb=_make_translate_progress_cb(),
                 log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
-            out_path = os.path.splitext(path)[0] + "_vi.txt"
-            with open(out_path, "w", encoding="utf-8") as f:
-                for src, tr in zip(chunks, translated):
-                    if bilingual:
-                        f.write(src + "\n" + tr + "\n\n")
-                    else:
-                        f.write(tr + "\n\n")
-            app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
-            app.after(0, show_fireworks)
+            base = os.path.splitext(path)[0] + "_vi"
+            out_path = _write_translated_doc(base, chunks, translated, bilingual, out_fmt,
+                                             log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
+            if TRANSLATE_STOP:
+                app.after(0, lambda: log(f"⏹ Đã dừng. Lưu phần đã dịch (phần còn lại giữ gốc): {out_path}"))
+            else:
+                app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
+                app.after(0, show_fireworks)
+            app.after(0, lambda: _reveal_output(out_path))
         except Exception as e:
             err = str(e)
             app.after(0, lambda: log(f"❌ Lỗi dịch PDF: {err}"))
         finally:
-            app.after(0, lambda: btn_translate_srt.configure(state="normal"))
-            app.after(0, lambda: btn_translate_pdf.configure(state="normal"))
+            app.after(0, lambda: _set_translate_buttons("normal"))
+            app.after(0, lambda: _translate_set_controls(False))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def translate_doc():
+    """Dịch file Word (.docx) hoặc TXT sang tiếng Việt → <tên>_vi.{txt|pdf|docx}."""
+    path = filedialog.askopenfilename(
+        title="Chọn file Word (.docx) hoặc TXT cần dịch sang tiếng Việt",
+        filetypes=[("Word / Text", "*.docx *.txt"), ("Word", "*.docx"),
+                   ("Text", "*.txt"), ("All", "*.*")])
+    if not path:
+        return
+    context = _translate_default_context()
+    bilingual = bool(translate_bilingual_var.get())
+    out_fmt = (translate_pdf_format_var.get() or "txt").strip().lower()
+
+    def _worker():
+        global TRANSLATE_STOP, TRANSLATE_PAUSED
+        TRANSLATE_STOP = False
+        TRANSLATE_PAUSED = False
+        try:
+            app.after(0, lambda: _set_translate_buttons("disabled"))
+            app.after(0, lambda: _translate_set_controls(True))
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".docx":
+                try:
+                    from docx import Document
+                except Exception:
+                    app.after(0, lambda: log("❌ Thiếu thư viện python-docx (pip install python-docx)."))
+                    return
+                chunks = [p.text for p in Document(path).paragraphs if p.text.strip()]
+            else:  # .txt và các file text khác
+                text = _read_text_smart(path)
+                chunks = [ln for ln in text.splitlines() if ln.strip()]
+            if not chunks:
+                app.after(0, lambda: log("❌ File không có nội dung text để dịch."))
+                return
+            app.after(0, lambda: log(f"📝 Dịch {os.path.basename(path)} ({len(chunks)} đoạn)..."))
+            translated = _translate_segments(
+                chunks, context,
+                progress_cb=_make_translate_progress_cb(),
+                log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
+            base = os.path.splitext(path)[0] + "_vi"
+            out_path = _write_translated_doc(base, chunks, translated, bilingual, out_fmt,
+                                             log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
+            if TRANSLATE_STOP:
+                app.after(0, lambda: log(f"⏹ Đã dừng. Lưu phần đã dịch (phần còn lại giữ gốc): {out_path}"))
+            else:
+                app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
+                app.after(0, show_fireworks)
+            app.after(0, lambda: _reveal_output(out_path))
+        except Exception as e:
+            err = str(e)
+            app.after(0, lambda: log(f"❌ Lỗi dịch Word/TXT: {err}"))
+        finally:
+            app.after(0, lambda: _set_translate_buttons("normal"))
+            app.after(0, lambda: _translate_set_controls(False))
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -3912,8 +4267,7 @@ def load_subtitles(force_select=True):
         msg.showerror("Error", f"Missing {SRT_FILE}")
         return
 
-    with open(SRT_FILE, "r", encoding="utf-8") as f:
-        subtitles_cache = list(srt.parse(f.read()))
+    subtitles_cache = list(srt.parse(_read_text_smart(SRT_FILE)))
 
     subtitle_list.configure(state="normal")
     subtitle_list.delete("1.0", "end")
@@ -4128,8 +4482,85 @@ def choose_videocr_output_folder():
         log(f"[VideoOCR] SRT output: {VIDEOCR_OUTPUT_SRT}")
 
 
+def _proc_tree_action(proc, action):
+    """Áp dụng action ('suspend'|'resume'|'kill') cho proc + toàn bộ tiến trình con.
+    Ưu tiên psutil; nếu không có thì fallback ctypes (suspend/resume) / taskkill (kill)."""
+    if proc is None:
+        return
+    try:
+        import psutil
+        p = psutil.Process(proc.pid)
+        targets = p.children(recursive=True) + [p]
+        # kill: con trước rồi cha; suspend/resume: thứ tự không quan trọng
+        for t in targets:
+            try:
+                getattr(t, action)()
+            except Exception:
+                pass
+        return
+    except Exception:
+        pass
+    # ── Fallback không có psutil ──
+    if action == "kill":
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           creationflags=CREATE_NO_WINDOW,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    else:
+        try:
+            import ctypes
+            PROCESS_ALL_ACCESS = 0x1F0FFF
+            h = ctypes.windll.kernel32.OpenProcess(PROCESS_ALL_ACCESS, False, proc.pid)
+            if h:
+                if action == "suspend":
+                    ctypes.windll.ntdll.NtSuspendProcess(h)
+                else:
+                    ctypes.windll.ntdll.NtResumeProcess(h)
+                ctypes.windll.kernel32.CloseHandle(h)
+        except Exception:
+            pass
+
+
+def _videocr_pause():
+    global VIDEOCR_PAUSED
+    if _VIDEOCR_PROC is None:
+        return
+    VIDEOCR_PAUSED = True
+    _proc_tree_action(_VIDEOCR_PROC, "suspend")
+    btn_videocr_pause.configure(state="disabled")
+    btn_videocr_resume.configure(state="normal")
+    log("[VideoOCR] ⏸ Tạm dừng.")
+
+
+def _videocr_resume():
+    global VIDEOCR_PAUSED
+    VIDEOCR_PAUSED = False
+    _proc_tree_action(_VIDEOCR_PROC, "resume")
+    btn_videocr_pause.configure(state="normal")
+    btn_videocr_resume.configure(state="disabled")
+    log("[VideoOCR] ▶ Tiếp tục.")
+
+
+def _videocr_stop():
+    global VIDEOCR_STOP, VIDEOCR_PAUSED
+    VIDEOCR_STOP = True
+    if VIDEOCR_PAUSED:                       # đang tạm dừng → resume trước khi kill
+        _proc_tree_action(_VIDEOCR_PROC, "resume")
+        VIDEOCR_PAUSED = False
+    _proc_tree_action(_VIDEOCR_PROC, "kill")
+    btn_videocr_pause.configure(state="disabled")
+    btn_videocr_resume.configure(state="disabled")
+    btn_videocr_stop.configure(state="disabled")
+    log("[VideoOCR] ⏹ Đang dừng...")
+
+
 def _run_videocr_thread():
-    global VIDEOCR_OUTPUT_SRT
+    global VIDEOCR_OUTPUT_SRT, _VIDEOCR_PROC, VIDEOCR_PAUSED, VIDEOCR_STOP
 
     python = _find_videocr_python()
     if not python:
@@ -4176,6 +4607,8 @@ def _run_videocr_thread():
     if _user_dir:
         env["VIDEOCR_INSTALL_DIR"] = _user_dir
 
+    VIDEOCR_PAUSED = False
+    VIDEOCR_STOP = False
     log(f"[VideoOCR] Khởi động OCR... (engine={engine}, lang={lang})")
     app.after(0, lambda: set_mode("videocr_running"))
     update_progress(2, 100)   # hiện thanh tiến trình ngay khi bắt đầu
@@ -4189,6 +4622,7 @@ def _run_videocr_thread():
             creationflags=CREATE_NO_WINDOW,
         )
         RUNNING_PROCESSES.append(proc)
+        _VIDEOCR_PROC = proc
 
         done = False
         _step1_last_pct = [-1]   # track % for Step 1 throttle
@@ -4280,8 +4714,12 @@ def _run_videocr_thread():
         proc.wait()
         if proc in RUNNING_PROCESSES:
             RUNNING_PROCESSES.remove(proc)
+        _VIDEOCR_PROC = None
 
-        if done:
+        if VIDEOCR_STOP:
+            log("[VideoOCR] ⏹ Đã dừng theo yêu cầu.")
+            app.after(0, lambda: set_mode("videocr"))
+        elif done:
             # Căn lại timing theo giọng nói thật (nếu bật)
             try:
                 if videocr_align_var.get():
@@ -4299,6 +4737,8 @@ def _run_videocr_thread():
     except Exception as exc:
         log(f"[VideoOCR] Exception: {exc}")
         app.after(0, lambda: set_mode("videocr"))
+    finally:
+        _VIDEOCR_PROC = None
 
 
 def start_videocr():
@@ -5153,6 +5593,56 @@ def load_pdf():
                 os.remove(tmp_json)
             except Exception:
                 pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def load_doc_tts():
+    """Nạp file Word (.docx) / TXT vào pipeline PDF_CHUNKS để Đọc (TTS) —
+    dùng chung toàn bộ chức năng với Đọc PDF (TTS)."""
+    global PDF_FILE
+    selected = filedialog.askopenfilename(
+        title="Chọn file Word (.docx) / TXT để đọc (TTS)",
+        filetypes=[("Word / Text", "*.docx *.txt"), ("Word", "*.docx"),
+                   ("Text", "*.txt"), ("All files", "*.*")]
+    )
+    if not selected:
+        return
+    PDF_FILE = selected
+    log(f"[DOC] Load: {os.path.basename(selected)}")
+
+    def _worker():
+        global PDF_CHUNKS
+        try:
+            ext = os.path.splitext(selected)[1].lower()
+            if ext == ".docx":
+                try:
+                    from docx import Document
+                except Exception:
+                    app.after(0, lambda: log("[DOC] Thiếu python-docx (pip install python-docx)."))
+                    return
+                text = "\n\n".join(p.text for p in Document(selected).paragraphs if p.text.strip())
+            else:  # .txt / text khác
+                text = _read_text_smart(selected)
+            chunks = _split_text_chunks(text)
+            if not chunks:
+                app.after(0, lambda: log("[DOC] File không có nội dung text để đọc."))
+                return
+
+            def _on_done():
+                global PDF_CHUNKS
+                PDF_CHUNKS = chunks
+                subtitle_list.configure(state='normal')
+                subtitle_list.delete('1.0', 'end')
+                for i, chunk in enumerate(chunks):
+                    subtitle_list.insert('end', f'[{i}] {chunk}\n\n')
+                subtitle_list.configure(state='disabled')
+                log(f"[DOC] {os.path.basename(selected)} → {len(chunks)} đoạn")
+                set_mode('pdf')
+            app.after(0, _on_done)
+        except Exception as e:
+            err = str(e)
+            app.after(0, lambda: log(f"[DOC] Lỗi: {err}"))
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -7299,6 +7789,15 @@ def open_edit_studio():
         'gen'           : 0,      # generation token — invalidates stale reader threads
         'fps'           : 25.0,
         '_tmp_wav'      : None,
+        # ── playlist phát từng file nối tiếp (Load nhiều Audio) ──
+        'seq_files'        : [],     # [(name, path), ...]
+        'seq_idx'          : -1,     # file đang phát
+        'seq_active'       : False,  # đang trong chế độ playlist
+        'seq_seen_playing' : False,  # đã thấy MCI 'playing' cho file hiện tại
+        'seq_len'          : 0,      # độ dài file hiện tại (ms)
+        '_seq_mode'        : False,  # đang ở chế độ playlist (UI)
+        '_seq_was_active'  : False,  # theo dõi để phát hiện kết thúc playlist
+        '_seq_shown_idx'   : -2,     # idx đã hiển thị status
     }
 
     # ── helpers ───────────────────────────────────────────────────────────────
@@ -7341,6 +7840,7 @@ def open_edit_studio():
     _tb("🎬 Load Video",        lambda: _load_video())
     _tb("🎵 Load Audio Folder", lambda: _load_audio_folder())
     _tb("🎧 Load Audio File",   lambda: _load_audio_file())
+    _tb("🎶 Load nhiều Audio",  lambda: _load_audio_seq())
 
     status_var = tk.StringVar(value="Chưa load file nào")
     status_lbl = tk.Label(toolbar, textvariable=status_var, bg=PANEL, fg=TEXT_DIM,
@@ -7455,6 +7955,11 @@ def open_edit_studio():
             _sub_rows.append(row)
 
     def _build_audio():
+        # Chế độ playlist (Load nhiều Audio): hiện danh sách file + nút ▶,
+        # bấm ▶ phát nối tiếp từ file đó.
+        if es.get('_seq_mode') and es.get('seq_files'):
+            _build_seq_list()
+            return
         _clear_list()
         es['aud_meta'] = []
         es['cur_aud']  = -1
@@ -7498,6 +8003,39 @@ def open_edit_studio():
                 if isinstance(child, tk.Label):
                     child.bind("<Button-1>", _row_click)
             _aud_rows.append(row)
+
+    def _build_seq_list():
+        """Danh sách playlist: mỗi dòng = tên file + nút ▶ (phát nối tiếp từ đó)."""
+        _clear_list()
+        es['aud_meta'] = []
+        for i, (fname, fpath) in enumerate(es['seq_files']):
+            bg = ROW_ODD if i % 2 else ROW_EVEN
+            row = tk.Frame(inner, bg=bg, cursor="hand2")
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=fname, bg=bg, fg=TEXT,
+                     font=("Consolas", 10), anchor="w"
+                     ).pack(side="left", fill="x", expand=True, padx=(6, 4))
+
+            def _play_btn(idx=i):
+                _seq_play_from(idx)
+
+            tk.Button(row, text="▶", command=_play_btn,
+                      bg="#21262d", fg="#2ecc71", relief="flat",
+                      padx=8, pady=2, cursor="hand2",
+                      font=("Arial", 11, "bold")
+                      ).pack(side="right", padx=4, pady=2)
+
+            def _row_click(e, idx=i):
+                _seq_play_from(idx)
+
+            row.bind("<Button-1>", _row_click)
+            for child in row.winfo_children():
+                if isinstance(child, tk.Label):
+                    child.bind("<Button-1>", _row_click)
+            _aud_rows.append(row)
+        # tô sáng file đang phát (nếu có)
+        if 0 <= es.get('seq_idx', -1) < len(_aud_rows):
+            _hl_audio(es['seq_idx'])
 
     def _hl_sub(idx):
         es['cur_sub'] = idx
@@ -7598,6 +8136,7 @@ def open_edit_studio():
     # mp3 ping-pong để preload trước (mở sẵn) → đổi dòng tức thì không trễ.
     _ALIAS_V   = "es_aud_v"
     _M_ALIASES = ["es_aud_m0", "es_aud_m1"]
+    _ALIAS_SEQ = "es_aud_seq"   # playlist: phát từng file nối tiếp
     es['audio_q']   = _queue.Queue()
     es['audio_run'] = True
 
@@ -7613,6 +8152,21 @@ def open_edit_studio():
                 return -1
         return -1
 
+    def _mci_mode(alias):
+        buf = _ct.create_unicode_buffer(128)
+        if _mci(f'status {alias} mode', buf, 128, 0) == 0:
+            return buf.value.strip().lower()
+        return ""
+
+    def _mci_len_ms(alias):
+        buf = _ct.create_unicode_buffer(128)
+        if _mci(f'status {alias} length', buf, 128, 0) == 0:
+            try:
+                return int(buf.value.strip())
+            except Exception:
+                return 0
+        return 0
+
     def _open_alias(alias, path, mtype=None):
         # mp3 cần 'type mpegvideo'; wav mở thẳng (waveaudio) — MCI không mở được mp4
         _mci_send(f'close {alias}')
@@ -7625,7 +8179,7 @@ def open_edit_studio():
 
     # ── Handlers (CHỈ chạy trong _audio_loop) ─────────────────────────────────
     def _h_stop_all():
-        for al in [_ALIAS_V] + _M_ALIASES:
+        for al in [_ALIAS_V, _ALIAS_SEQ] + _M_ALIASES:
             _mci_send(f'stop {al}')
             _mci_send(f'close {al}')
         es['m_loaded']     = {}
@@ -7681,6 +8235,56 @@ def open_edit_studio():
         es['m_active'] = target
         _mci_send(f'play {target} from 0')
 
+    def _h_seq_play(idx):
+        """Mở + phát file thứ idx trong playlist (phát từng file nối tiếp)."""
+        if not (0 <= idx < len(es['seq_files'])):
+            es['seq_active'] = False
+            es['audio_master'] = None
+            es['master_ms'] = -1
+            return
+        # đóng mọi alias khác để chỉ phát playlist
+        for al in [_ALIAS_V, _ALIAS_SEQ] + _M_ALIASES:
+            _mci_send(f'stop {al}')
+            _mci_send(f'close {al}')
+        path = es['seq_files'][idx][1]
+        ext = os.path.splitext(path)[1].lower()
+        mtype = None if ext == ".wav" else "mpegvideo"
+        if not _open_alias(_ALIAS_SEQ, path, mtype):
+            # mở lỗi → thử file kế tiếp
+            es['seq_idx'] = idx
+            if idx + 1 < len(es['seq_files']):
+                _h_seq_play(idx + 1)
+            else:
+                es['seq_active'] = False
+                es['audio_master'] = None
+            return
+        es['seq_len'] = _mci_len_ms(_ALIAS_SEQ)
+        _mci_send(f'play {_ALIAS_SEQ} from 0')
+        es['seq_idx']          = idx
+        es['seq_active']       = True
+        es['seq_seen_playing'] = False
+        es['audio_master']     = _ALIAS_SEQ
+        es['master_ms']        = 0
+        es['master_wall']      = time.time()
+        es['duration']         = es['seq_len'] / 1000.0 if es['seq_len'] else 0.0
+
+    def _h_seq_pause():
+        if es.get('seq_active'):
+            _mci_send(f'pause {_ALIAS_SEQ}')
+
+    def _h_seq_resume():
+        if es.get('seq_active'):
+            if _mci_send(f'resume {_ALIAS_SEQ}') != 0:
+                _mci_send(f'play {_ALIAS_SEQ}')
+            es['master_wall'] = time.time()
+
+    def _h_seq_stop():
+        es['seq_active'] = False
+        _mci_send(f'stop {_ALIAS_SEQ}')
+        _mci_send(f'close {_ALIAS_SEQ}')
+        es['audio_master'] = None
+        es['master_ms'] = -1
+
     def _audio_loop():
         while es['audio_run']:
             cmd = None
@@ -7695,6 +8299,10 @@ def open_edit_studio():
                     elif op == 'overlay':     _h_overlay(cmd[1])
                     elif op == 'preload':     _h_preload(cmd[1])
                     elif op == 'stop_all':    _h_stop_all()
+                    elif op == 'seq_play':    _h_seq_play(cmd[1])
+                    elif op == 'seq_pause':   _h_seq_pause()
+                    elif op == 'seq_resume':  _h_seq_resume()
+                    elif op == 'seq_stop':    _h_seq_stop()
                 except Exception:
                     pass
             am = es['audio_master']
@@ -7703,6 +8311,20 @@ def open_edit_studio():
                 if ms >= 0:
                     es['master_ms']   = ms
                     es['master_wall'] = time.time()
+                # Playlist: tự nhảy sang file kế khi file hiện tại phát xong
+                if es.get('seq_active') and am == _ALIAS_SEQ:
+                    mode = _mci_mode(am)
+                    if mode == 'playing':
+                        es['seq_seen_playing'] = True
+                    elif mode == 'stopped' and es.get('seq_seen_playing'):
+                        nxt = es['seq_idx'] + 1
+                        if nxt < len(es['seq_files']):
+                            _h_seq_play(nxt)            # phát ngay file kế
+                        else:
+                            es['seq_active'] = False    # hết playlist
+                            _mci_send(f'close {_ALIAS_SEQ}')
+                            es['audio_master'] = None
+                            es['master_ms'] = -1
         _h_stop_all()   # thread thoát → đóng mọi thiết bị (dừng tiếng ngay)
 
     threading.Thread(target=_audio_loop, daemon=True).start()
@@ -7719,6 +8341,36 @@ def open_edit_studio():
 
     def _preload_overlay(idx):
         es['audio_q'].put(('preload', idx))
+
+    def _seq_play(idx):
+        es['audio_q'].put(('seq_play', idx))
+
+    def _seq_pause():
+        es['audio_q'].put(('seq_pause',))
+
+    def _seq_resume():
+        es['audio_q'].put(('seq_resume',))
+
+    def _seq_stop():
+        es['audio_q'].put(('seq_stop',))
+
+    def _exit_seq_mode():
+        """Thoát chế độ playlist (khi chuyển sang Load Video/Audio File/Folder/SRT)."""
+        if es.get('_seq_mode') or es.get('seq_active'):
+            _seq_stop()
+        es['_seq_mode']  = False
+        es['seq_active'] = False
+
+    def _seq_play_from(idx):
+        """Phát playlist bắt đầu từ file thứ idx (bấm ▶ ở 1 dòng)."""
+        if not es.get('seq_files'):
+            return
+        es['_seq_mode']       = True
+        es['playing']         = True
+        es['_seq_was_active'] = True
+        es['_seq_shown_idx']  = -2
+        btn_pp.configure(text="⏸ Pause")
+        _seq_play(idx)
 
     def _stop_render():
         """Invalidate the current playback generation and kill ffmpeg."""
@@ -7956,6 +8608,22 @@ def open_edit_studio():
         btn_pp.configure(text="▶  Play")
 
     def _toggle_play():
+        if es.get('_seq_mode') and es.get('seq_files'):
+            # Playlist phát nối tiếp từng file
+            if es['playing']:
+                _seq_pause()
+                es['playing'] = False
+                btn_pp.configure(text="▶  Play")
+            else:
+                if es.get('seq_active'):
+                    _seq_resume()
+                else:
+                    # đã phát hết → phát lại từ đầu
+                    es['seq_idx'] = -1
+                    _seq_play(0)
+                es['playing'] = True
+                btn_pp.configure(text="⏸ Pause")
+            return
         if not es['video_path']:
             # Audio-only (file audio dài đã nạp, vd final.mp3)
             if es.get('audio_wav') and es.get('wav_ready'):
@@ -8014,8 +8682,30 @@ def open_edit_studio():
         dur = es['duration']
         time_var.set(f"{_fmt(pos)} / {_fmt(dur) if dur else '--:--'}")
 
+        # ── Playlist phát nối tiếp ──
+        if es.get('_seq_mode'):
+            # cập nhật status khi đổi file (audio thread tự nhảy file)
+            if es.get('seq_active'):
+                idx = es['seq_idx']
+                if idx != es.get('_seq_shown_idx') and 0 <= idx < len(es['seq_files']):
+                    es['_seq_shown_idx'] = idx
+                    name = es['seq_files'][idx][0]
+                    _set_status(f"🎶 {idx+1}/{len(es['seq_files'])}: {name}")
+                    # tô sáng dòng đang phát trong danh sách
+                    if es['panel_mode'] == 'audio' and 0 <= idx < len(_aud_rows):
+                        _hl_audio(idx)
+            # phát hiện playlist kết thúc (audio thread set seq_active=False)
+            if es['playing'] and es.get('_seq_was_active') and not es.get('seq_active'):
+                es['playing'] = False
+                es['seek_offset'] = 0.0
+                btn_pp.configure(text="▶  Play")
+                _set_status(f"🎶 Playlist xong ({len(es['seq_files'])} file).")
+            es['_seq_was_active'] = es.get('seq_active')
+
         # Audio-only (file audio dài) chạy hết → dừng, reset nút Play
-        if (es['playing'] and not es['video_path'] and dur and pos >= dur):
+        # (bỏ qua khi đang ở chế độ playlist — playlist tự nhảy file)
+        if (es['playing'] and not es['video_path'] and not es.get('_seq_mode')
+                and dur and pos >= dur):
             es['playing']     = False
             es['seek_offset'] = dur
             _stop_audio()
@@ -8087,6 +8777,7 @@ def open_edit_studio():
                 ])
         if not path:
             return
+        _exit_seq_mode()
         _stop_render()
         _stop_audio()
         es['video_path']  = path
@@ -8157,6 +8848,7 @@ def open_edit_studio():
                                            title="Chọn thư mục chứa audio")
         if not path:
             return
+        _exit_seq_mode()
         es['audio_dir'] = path
         files = sorted(
             f for f in os.listdir(path)
@@ -8189,6 +8881,7 @@ def open_edit_studio():
                 ])
         if not path:
             return
+        _exit_seq_mode()
         _stop_render()
         _stop_audio()
         es['playing']     = False
@@ -8284,6 +8977,41 @@ def open_edit_studio():
                 win.after(0, _after)
 
         threading.Thread(target=_prep, daemon=True).start()
+
+    def _load_audio_seq():
+        """Chọn NHIỀU file audio → phát nối tiếp TỪNG FILE (không nối, không
+        timeline): file này phát xong thì file kế phát ngay. Sắp theo tên file."""
+        paths = filedialog.askopenfilenames(
+            parent=win,
+            title="Chọn nhiều file audio (phát nối tiếp từng file)",
+            filetypes=[
+                ("Audio", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus"),
+                ("All files", "*.*"),
+            ])
+        if not paths:
+            return
+        paths = list(paths)
+        # sắp xếp tự nhiên: line_0000, line_0001, ... , line_0010
+        def _natkey(p):
+            b = os.path.basename(p)
+            return [int(t) if t.isdigit() else t.lower()
+                    for t in re.split(r'(\d+)', b)]
+        paths.sort(key=_natkey)
+
+        _stop_render()
+        _stop_audio()
+        es['seq_files']      = [(os.path.basename(p), p) for p in paths]
+        es['seq_idx']        = -1
+        es['_seq_mode']      = True
+        es['_seq_was_active'] = False
+        es['_seq_shown_idx']  = -2
+        es['playing']        = True
+        es['seek_offset']    = 0.0
+        btn_pp.configure(text="⏸ Pause")
+        no_video_lbl.place_forget()
+        _set_status(f"🎶 Playlist {len(es['seq_files'])} file — phát nối tiếp từng file")
+        _set_tab('audio')           # hiện danh sách file (tên + nút ▶)
+        _seq_play(0)
 
     # ── CLEANUP ───────────────────────────────────────────────────────────────
     def _on_close():
@@ -9242,13 +9970,16 @@ btn_clean_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_load_pdf = ctk.CTkButton(_brow3, text="Load PDF", command=load_pdf, height=36, font=("Arial", 13))
 btn_load_pdf.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_pdf_tts = ctk.CTkButton(_brow3, text="Đọc PDF (TTS)", command=start_pdf_tts, height=36, font=("Arial", 13), state="disabled")
+btn_load_doc_tts = ctk.CTkButton(_brow3, text="Load Word/TXT", command=load_doc_tts, height=36, font=("Arial", 13))
+btn_load_doc_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_pdf_tts = ctk.CTkButton(_brow3, text="Đọc (TTS)", command=start_pdf_tts, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_pdf_merge = ctk.CTkButton(_brow3, text="Merge PDF Audio", command=merge_pdf_audio, height=36, font=("Arial", 13), state="disabled")
+btn_pdf_merge = ctk.CTkButton(_brow3, text="Merge Audio", command=merge_pdf_audio, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_pdf_regen = ctk.CTkButton(_brow3, text="Regenerate đoạn PDF", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
+btn_pdf_regen = ctk.CTkButton(_brow3, text="Regenerate đoạn", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_regen.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 4: Video OCR ──────────────────────────────────────────────────────────
@@ -9263,6 +9994,22 @@ btn_videocr_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 btn_videocr_open = ctk.CTkButton(_brow4, text="Mở Thư Mục SRT", command=open_videocr_srt, height=36, font=("Arial", 13), state="disabled")
 btn_videocr_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# Hàng điều khiển Tách Sub Cứng (OCR): Tạm dừng / Tiếp tục / Dừng hẳn
+btn_videocr_pause = ctk.CTkButton(_brow4b, text="⏸ Tạm dừng OCR", command=_videocr_pause,
+                                  height=32, font=("Arial", 13), state="disabled",
+                                  fg_color="#B8860B", hover_color="#946c09")
+btn_videocr_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_videocr_resume = ctk.CTkButton(_brow4b, text="▶ Tiếp tục OCR", command=_videocr_resume,
+                                   height=32, font=("Arial", 13), state="disabled",
+                                   fg_color="#1E6B3C", hover_color="#145229")
+btn_videocr_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_videocr_stop = ctk.CTkButton(_brow4b, text="⏹ Dừng hẳn OCR", command=_videocr_stop,
+                                 height=32, font=("Arial", 13), state="disabled",
+                                 fg_color="#8B2020", hover_color="#5e1616")
+btn_videocr_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 videocr_instdir_var = ctk.StringVar(value="")  # dùng trong _run_videocr_thread
 
@@ -9349,6 +10096,7 @@ btn_mux_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 translate_provider_var  = ctk.StringVar(value=TRANSLATE_PROVIDER)
 translate_context_var   = ctk.StringVar(value="")
 translate_bilingual_var = ctk.BooleanVar(value=False)
+translate_pdf_format_var = ctk.StringVar(value="txt")
 
 ctk.CTkLabel(_brow8, text="Dịch (AI):", font=("Arial", 12)).pack(side="left", padx=(4, 2))
 translate_provider_menu = ctk.CTkOptionMenu(
@@ -9367,11 +10115,36 @@ translate_bilingual_check = ctk.CTkCheckBox(
     _brow8, text="Song ngữ", variable=translate_bilingual_var, width=90, font=("Arial", 12))
 translate_bilingual_check.pack(side="left", padx=(0, 6))
 
-btn_translate_srt = ctk.CTkButton(_brow8, text="Dịch SRT → Việt", command=translate_srt, height=36, font=("Arial", 13))
+ctk.CTkLabel(_brow8, text="Ra (PDF/Word/TXT):", font=("Arial", 12)).pack(side="left", padx=(2, 2))
+translate_pdf_format_menu = ctk.CTkOptionMenu(
+    _brow8, variable=translate_pdf_format_var, values=["txt", "pdf", "docx"],
+    width=80, font=("Arial", 12))
+translate_pdf_format_menu.pack(side="left", padx=(0, 6))
+
+btn_translate_srt = ctk.CTkButton(_brow8, text="Dịch SRT", command=translate_srt, height=36, font=("Arial", 13))
 btn_translate_srt.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
-btn_translate_pdf = ctk.CTkButton(_brow8, text="Dịch PDF → Việt", command=translate_pdf, height=36, font=("Arial", 13))
+btn_translate_pdf = ctk.CTkButton(_brow8, text="Dịch PDF", command=translate_pdf, height=36, font=("Arial", 13))
 btn_translate_pdf.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_translate_doc = ctk.CTkButton(_brow8, text="Dịch Word/TXT", command=translate_doc, height=36, font=("Arial", 13))
+btn_translate_doc.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# Hàng điều khiển dịch: Tạm dừng / Tiếp tục / Dừng hẳn (bật khi đang dịch)
+btn_tr_pause = ctk.CTkButton(_brow8b, text="⏸ Tạm dừng dịch", command=_translate_pause,
+                             height=32, font=("Arial", 13), state="disabled",
+                             fg_color="#B8860B", hover_color="#946c09")
+btn_tr_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_tr_resume = ctk.CTkButton(_brow8b, text="▶ Tiếp tục dịch", command=_translate_resume,
+                              height=32, font=("Arial", 13), state="disabled",
+                              fg_color="#1E6B3C", hover_color="#145229")
+btn_tr_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_tr_stop = ctk.CTkButton(_brow8b, text="⏹ Dừng hẳn", command=_translate_stop,
+                            height=32, font=("Arial", 13), state="disabled",
+                            fg_color="#8B2020", hover_color="#5e1616")
+btn_tr_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 
 # =========================
@@ -9393,7 +10166,7 @@ def set_mode(mode):
     _video_btns = [
         btn_choose_video, btn_scan_video, btn_repair_video, btn_clean_video
     ]
-    _pdf_btns      = [btn_load_pdf, btn_pdf_tts, btn_pdf_merge, btn_pdf_regen]
+    _pdf_btns      = [btn_load_pdf, btn_load_doc_tts, btn_pdf_tts, btn_pdf_merge, btn_pdf_regen]
     _videocr_btns  = [btn_videocr_load, btn_videocr_run, btn_videocr_open]
     _stt_btns      = [btn_stt_load, btn_stt_run, btn_stt_open]
     _compress_btns = [btn_compress_load, btn_compress_run, btn_compress_open]
@@ -9402,6 +10175,10 @@ def set_mode(mode):
     # VideoOCR + STT: run/open disabled by default; specific modes re-enable
     btn_videocr_run.configure(state="disabled")
     btn_videocr_open.configure(state="disabled")
+    # Nút điều khiển OCR: chỉ bật khi đang chạy (videocr_running)
+    btn_videocr_pause.configure(state="disabled")
+    btn_videocr_resume.configure(state="disabled")
+    btn_videocr_stop.configure(state="disabled")
     btn_stt_run.configure(state="disabled")
     btn_stt_open.configure(state="disabled")
     btn_stt_load.configure(state="disabled")
@@ -9469,6 +10246,7 @@ def set_mode(mode):
             b.configure(state="normal")
         # PDF + VideoOCR: tắt hết khi đang ở SRT mode
         btn_load_pdf.configure(state="disabled")
+        btn_load_doc_tts.configure(state="disabled")
         btn_pdf_tts.configure(state="disabled")
         btn_pdf_merge.configure(state="disabled")
         btn_pdf_regen.configure(state="disabled")
@@ -9483,6 +10261,7 @@ def set_mode(mode):
         for b in _srt_btns + _video_btns + _videocr_btns:
             b.configure(state="disabled")
         btn_load_pdf.configure(state="normal")
+        btn_load_doc_tts.configure(state="normal")
         btn_pdf_tts.configure(state="normal")
         btn_pdf_merge.configure(state="normal")
         btn_pdf_regen.configure(state="normal")
@@ -9496,6 +10275,7 @@ def set_mode(mode):
         for b in _srt_btns + _video_btns + _videocr_btns:
             b.configure(state="disabled")
         btn_load_pdf.configure(state="normal")
+        btn_load_doc_tts.configure(state="normal")
         btn_pdf_tts.configure(state="normal")
         btn_pdf_merge.configure(state="normal")
         btn_pdf_regen.configure(state="normal")
@@ -9567,6 +10347,7 @@ def set_mode(mode):
         for b in _video_btns:
             b.configure(state="disabled")
         btn_load_pdf.configure(state="disabled")
+        btn_load_doc_tts.configure(state="disabled")
         btn_pdf_tts.configure(state="disabled")
         btn_pdf_merge.configure(state="disabled")
         btn_pdf_regen.configure(state="disabled")
@@ -9632,11 +10413,14 @@ def set_mode(mode):
         btn_reset_mode.configure(state="normal")
 
     elif mode == "videocr_running":
-        # Đang xử lý OCR — tắt hết
+        # Đang xử lý OCR — tắt hết, chỉ bật 3 nút điều khiển
         for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns:
             b.configure(state="disabled")
         _disable_voice_settings()
         _disable_ocr_settings()
+        btn_videocr_pause.configure(state="normal")
+        btn_videocr_resume.configure(state="disabled")
+        btn_videocr_stop.configure(state="normal")
         btn_reset_mode.configure(state="disabled")
 
     elif mode == "videocr_done":
@@ -9783,7 +10567,7 @@ _quick_tts_dim_widgets = [
     btn_merge, btn_open_se, btn_edit,
     btn_clear, btn_reset_mode, btn_choose_video, btn_choose_output, btn_open_folder,
     btn_scan_video, btn_repair_video, btn_clean_video,
-    btn_load_pdf, btn_pdf_tts, btn_pdf_merge, btn_pdf_regen,
+    btn_load_pdf, btn_load_doc_tts, btn_pdf_tts, btn_pdf_merge, btn_pdf_regen,
     btn_videocr_load, btn_videocr_run, btn_videocr_open,
     btn_stt_load, btn_stt_run, btn_stt_open,
     stt_model_menu, stt_lang_menu,

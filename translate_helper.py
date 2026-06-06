@@ -20,10 +20,37 @@ import sys
 import os
 import json
 import argparse
+import threading
+import time
 
 
 def _err(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+# Trạng thái điều khiển nhận qua stdin từ app (PAUSE / RESUME / STOP)
+_CTRL = {'pause': False, 'stop': False}
+
+
+def _stdin_control_reader():
+    """Đọc lệnh điều khiển từ stdin (mỗi dòng 1 lệnh). Chạy ở thread nền.
+    Dùng readline() chứ KHÔNG dùng 'for line in sys.stdin' — vòng lặp đó đệm
+    đọc-trước (read-ahead) nên lệnh PAUSE/STOP tới rất trễ hoặc không tới."""
+    try:
+        while True:
+            line = sys.stdin.readline()
+            if line == '':          # EOF (app đóng stdin / thoát)
+                break
+            cmd = line.strip().upper()
+            if cmd == 'PAUSE':
+                _CTRL['pause'] = True
+            elif cmd == 'RESUME':
+                _CTRL['pause'] = False
+            elif cmd == 'STOP':
+                _CTRL['stop'] = True
+                _CTRL['pause'] = False
+    except Exception:
+        pass
 
 
 def main():
@@ -58,10 +85,23 @@ def main():
         print(f'DONE:{args.output}', flush=True)
         return
 
+    # Bật thread đọc lệnh điều khiển (PAUSE/RESUME/STOP) từ app
+    threading.Thread(target=_stdin_control_reader, daemon=True).start()
+
     _err(f'Loading model: {args.model} (device={device})')
-    tok = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model)
-    model.to(device).eval()
+    try:
+        tok = AutoTokenizer.from_pretrained(args.model)
+        model = AutoModelForSeq2SeqLM.from_pretrained(args.model)
+        model.to(device).eval()
+    except Exception as e:
+        msg = str(e).replace('\n', ' ')[:300]
+        # Báo lỗi rõ ràng ra stdout để app hiển thị (thường do trỏ nhầm loại model:
+        # vd VoxCPM/whisper là TTS/STT, KHÔNG phải model dịch seq2seq).
+        print(f'LOAD_ERR: Không nạp được model dịch "{args.model}". '
+              f'Đảm bảo đây là model DỊCH seq2seq (NLLB / envit5 / Marian...), '
+              f'KHÔNG phải model TTS như VoxCPM. Chi tiết: {msg}', flush=True)
+        _err(f'LOAD_ERR: {msg}')
+        sys.exit(3)
 
     name = os.path.basename(str(args.model).rstrip('/\\')).lower()
     arch = ''
@@ -118,8 +158,17 @@ def main():
 
     results = []
     done = 0
+    stopped = False
     bs = max(1, args.batch)
     for i in range(0, total, bs):
+        # Tạm dừng: chờ tới khi RESUME hoặc STOP
+        while _CTRL['pause'] and not _CTRL['stop']:
+            time.sleep(0.2)
+        # Dừng hẳn: thoát vòng lặp, giữ phần đã dịch
+        if _CTRL['stop']:
+            stopped = True
+            print('STOPPED', flush=True)
+            break
         chunk = segments[i:i + bs]
         safe = [c if (isinstance(c, str) and c.strip()) else ' ' for c in chunk]
         try:
@@ -141,8 +190,14 @@ def main():
         done += len(chunk)
         print(f'PROGRESS:{done}:{total}', flush=True)
 
+    # Nếu dừng giữa chừng: phần chưa dịch giữ nguyên bản gốc để file vẫn hợp lệ
+    if len(results) < total:
+        for k in range(len(results), total):
+            src = segments[k]
+            results.append(src if isinstance(src, str) else '')
+
     with open(args.output, 'w', encoding='utf-8') as f:
-        json.dump({'translations': results}, f, ensure_ascii=False)
+        json.dump({'translations': results, 'stopped': stopped}, f, ensure_ascii=False)
     print(f'DONE:{args.output}', flush=True)
 
 
