@@ -137,7 +137,7 @@ Detection uses 6 independent layers — passing one layer is enough:
 
 ## Codebase Structure
 
-`apppp_integrated.py` (~8400 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
+`apppp_integrated.py` (~10800 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
 
 `app.mainloop()` runs at **module level** (not inside `__main__`), so `import apppp_integrated` starts the full app. This is intentional for the launcher entry-point pattern.
 
@@ -146,22 +146,23 @@ Detection uses 6 independent layers — passing one layer is enough:
 | Lines (approx.) | Section |
 |---|---|
 | 1–100 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
-| 100–850 | Security checks (`_check_integrity`, DRM, trial, VM detection), global state vars |
-| 850–1100 | Settings load/save, CustomTkinter app/window creation, UI layout frames |
-| 1100–2600 | Voice/provider UI, progress bar canvas, scrollable `button_frame` + button-row (`_brow0`–`_brow7`) definitions |
-| 2600–3200 | Fireworks animation + sound, `log()`, `update_progress()`, helper utilities |
-| 3200–5600 | Feature functions: TTS (Edge, FPT, Vbee, Zalo, EverAI, MiniMax), RVC, VoxCPM, PDF |
-| 5600–8580 | Video tools (scan/repair/clean), Subtitle Edit, OCR, STT, video compress, mux, Edit Studio |
-| 8590–8810 | UI widget instantiation for all button rows |
-| 8820–10180 | `set_mode()` — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, quick-TTS dimming) |
-| 10184–end | `app.mainloop()` at module level |
+| 100–880 | Security checks (`_check_integrity` @114, DRM, trial, VM detection), global state vars (incl. translate/LLM globals @~845) |
+| 880–1150 | Settings load/save (`_load_settings` @884, `_save_settings`), CustomTkinter app/window creation, UI layout frames |
+| 1150–2690 | Voice/provider UI, progress bar canvas, scrollable `button_frame` (@2688) + button-row (`_brow0`–`_brow8`) definitions |
+| 2690–3100 | Fireworks animation + sound, `show_settings_dialog` (@2995), `log()`, helper utilities |
+| 3100–3640 | **Translation to Vietnamese** (LLM + offline) — `_translate_segments`, `_llm_call_*`, `translate_srt/pdf`, `_translate_segments_local` |
+| 3640–5900 | Feature functions: `update_progress`, TTS (Edge, FPT, Vbee, Zalo, EverAI, MiniMax), RVC, VoxCPM, PDF |
+| 5900–9080 | Video tools (scan/repair/clean), Subtitle Edit, OCR, STT, video compress, mux, `merge_ffmpeg` (@6624), Edit Studio (@7237) |
+| 9080–9385 | UI widget instantiation for all button rows |
+| 9385–10745 | `set_mode()` (@9385) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, quick-TTS dimming) |
+| 10747–end | `app.mainloop()` at module level |
 
 ## UI Architecture Patterns (apppp_integrated.py)
 
 ### Button rows
-The button panel uses fixed rows (`_brow0`, `_brow0b`, `_brow1`–`_brow7`) created once at startup (~line 2638) and populated later in the widget-instantiation block (~line 8590). When adding a new feature, add a new `_browN` at the row-definition block **and** populate it there.
+The button panel uses fixed rows (`_brow0`, `_brow0b`, `_brow1`–`_brow8`) created once at startup (~line 2690) and populated later in the widget-instantiation block (~line 9090). When adding a new feature, add a new `_browN` at the row-definition block **and** populate it there. (`_brow8` = the SRT/PDF translation row.)
 
-`button_frame` is a **`CTkScrollableFrame`** (fixed `height=340`, ~line 2634), not a plain frame — extra rows scroll instead of being clipped off the bottom of the window. Each `_browN` is a transparent `ctk.CTkFrame` packed `fill="x"`.
+`button_frame` is a **`CTkScrollableFrame`** (fixed `height=340`, ~line 2688), not a plain frame — extra rows scroll instead of being clipped off the bottom of the window. Each `_browN` is a transparent `ctk.CTkFrame` packed `fill="x"`.
 
 **Uniform-width rule:** every button packs `side="left", expand=True, fill="x"` (no fixed `width`), so within a row all buttons share the width equally. Buttons are *not* assigned a fixed pixel width — a previous attempt at uniform fixed-width caused overflow (10-button rows ran off-screen) and large gaps on 3-button rows. To keep button sizes even *across* rows, keep button counts per row similar (this is why the original 10-button SRT/TTS row was split into `_brow0` + `_brow0b`, 5 buttons each). Mixed rows (`_brow5`/`_brow6`/`_brow7`) interleave `CTkOptionMenu`/`CTkLabel`/`CTkEntry`/`CTkCheckBox` (fixed `width`, packed without `expand`) between the expanding buttons.
 
@@ -345,7 +346,7 @@ When adding a new per-line/per-chunk regenerate, register its button in `_pdf_bt
 
 ## Timeline Dubbing — anti voice-overlap (`merge_ffmpeg`)
 
-`merge_ffmpeg()` (line ~5875) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
+`merge_ffmpeg()` (line ~6624) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
 
 **Root overlap bug (fixed):** TTS audio (esp. Vietnamese / Edge TTS) is often longer than a subtitle's time slot, so `amix` overlays adjacent lines → "đè giọng / chồng giọng" (voice stacking) + timeline drift.
 
@@ -353,7 +354,7 @@ When adding a new per-line/per-chunk regenerate, register its button in `_pdf_bt
 
 ## Edit Studio (`open_edit_studio`)
 
-A Toplevel preview/verify window (line ~6487) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
+A Toplevel preview/verify window (line ~7237) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
 
 Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-line `line_*.mp3`), **Load Audio File**.
 
