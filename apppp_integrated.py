@@ -875,7 +875,43 @@ COMPRESS_OUTPUT_DIR = ""  # rỗng = dùng cùng thư mục file gốc
 MUX_VIDEO_FILE = ""       # video nguồn để ghép audio final
 MUX_AUDIO_FILE = ""       # file audio final cần ghép vào video
 MUX_OUTPUT_DIR = ""       # rỗng = dùng cùng thư mục video gốc
-VIDEOCR_CLI_DIR = r"C:\Users\os\Downloads\Compressed\VideOCR-1.5.1\VideOCR-1.5.1\CLI"
+def _install_dirs():
+    """Thư mục gốc để dò phụ thuộc external (voxcpm_env, model VoxCPM, VideOCR CLI)
+    nằm CẠNH app — ưu tiên thư mục exe (khi đã build) / thư mục script, rồi các parent.
+    Cho phép copy nguyên cụm sang máy khác mà không cần sửa Settings."""
+    bases = []
+    if getattr(sys, "frozen", False):
+        bases.append(os.path.dirname(sys.executable))
+    else:
+        bases.append(os.path.dirname(os.path.abspath(__file__)))
+    seen = set(os.path.normcase(b) for b in bases)
+    for b in list(bases):
+        p = b
+        for _ in range(3):           # leo lên tối đa 3 cấp
+            p = os.path.dirname(p)
+            if not p or os.path.normcase(p) in seen:
+                continue
+            bases.append(p)
+            seen.add(os.path.normcase(p))
+    return bases
+
+
+def _auto_find_dir(*subpaths):
+    """Tìm thư mục con khớp 1 trong các subpath (str hoặc tuple) cạnh app / parents.
+    Trả về đường dẫn tuyệt đối đầu tiên tồn tại, hoặc "" nếu không thấy."""
+    for base in _install_dirs():
+        for sp in subpaths:
+            parts = sp if isinstance(sp, (list, tuple)) else (sp,)
+            cand = os.path.join(base, *parts)
+            if os.path.isdir(cand):
+                return cand
+    return ""
+
+
+# VideOCR CLI: ưu tiên dò cạnh app → fallback path cứng (máy gốc)
+VIDEOCR_CLI_DIR = _auto_find_dir(
+    ("VideOCR", "CLI"), "VideOCR-CLI", ("VideOCR-1.5.1", "VideOCR-1.5.1", "CLI"),
+) or r"C:\Users\os\Downloads\Compressed\VideOCR-1.5.1\VideOCR-1.5.1\CLI"
 
 STT_VIDEO_FILE = ""   # video/audio đang chờ STT
 STT_OUTPUT_DIR = ""   # thư mục lưu kết quả STT
@@ -1464,6 +1500,11 @@ try:
         _voxcpm_default_ckpt = _sd["voxcpm_ckpt_dir"]
 except Exception:
     pass
+# Tự dò model VoxCPM nằm cạnh app trước → fallback path cứng (máy gốc)
+if not _voxcpm_default_ckpt:
+    _voxcpm_default_ckpt = _auto_find_dir(
+        ("VoxCPM", "pretrained", "VoxCPM-1.5-VN"), "VoxCPM-1.5-VN", "VoxCPM-model",
+    )
 if not _voxcpm_default_ckpt and os.path.isdir(_voxcpm_known):
     _voxcpm_default_ckpt = _voxcpm_known
 voxcpm_ckpt_var = ctk.StringVar(value=_voxcpm_default_ckpt)
@@ -6614,6 +6655,7 @@ def _find_voxcpm_python(ckpt_dir):
     """Tìm voxcpm_env/Scripts/python.exe bằng cách đi lên từ ckpt_dir."""
     if VOXCPM_ENV_OVERRIDE and os.path.isfile(VOXCPM_ENV_OVERRIDE):
         return VOXCPM_ENV_OVERRIDE
+    # 1) Leo lên từ thư mục model (layout E:\VoxCPM-1.5-VN\voxcpm_env + \VoxCPM\...)
     search = ckpt_dir
     for _ in range(6):
         candidate = os.path.join(search, 'voxcpm_env', 'Scripts', 'python.exe')
@@ -6623,6 +6665,11 @@ def _find_voxcpm_python(ckpt_dir):
         if parent == search:
             break
         search = parent
+    # 2) Dò voxcpm_env nằm CẠNH app / trong parents (copy nguyên cụm sang máy khác)
+    for base in _install_dirs():
+        candidate = os.path.join(base, 'voxcpm_env', 'Scripts', 'python.exe')
+        if os.path.exists(candidate):
+            return candidate
     return None
 
 
@@ -11352,7 +11399,7 @@ def _run_startup_diagnostics():
         ckpt = voxcpm_ckpt_var.get().strip()
     except Exception:
         ckpt = ""
-    vpy = _find_voxcpm_python(ckpt) if ckpt else None
+    vpy = _find_voxcpm_python(ckpt)   # dò cả cạnh exe kể cả khi chưa chọn model
     if vpy:
         log_color("✅ voxcpm_env python: OK (VoxCPM / STT / căn giọng / lọc audio)", _OK)
     else:

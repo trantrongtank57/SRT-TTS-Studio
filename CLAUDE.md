@@ -471,7 +471,23 @@ The MSI installs everything bundled. These components are too large to bundle an
 | VideOCR CLI | small | Video OCR |
 | Offline translate model (NLLB-600M / envit5) | ~1.5–2.5 GB | Offline SRT/PDF translation (only if using provider `Offline`; reuses `voxcpm_env` + needs `transformers`/`sentencepiece`) |
 
-Default paths hardcoded in source (override via ⚙ Cài đặt):
+### Relative auto-detect (added) — copy beside the exe, no Settings needed
+
+Resolution order for the 3 big external folders is now: **settings.json → relative auto-detect beside the exe → hardcoded `E:\`/`C:\Users\os\` default**. Two module-level helpers drive this (defined just above the `VIDEOCR_CLI_DIR` global):
+
+- `_install_dirs()` — returns the exe dir (frozen) / script dir plus up to 3 parent levels, as the search roots.
+- `_auto_find_dir(*subpaths)` — returns the first existing subdir under any install root (`""` if none).
+
+Wired in at three points so dropping the folders next to the `.exe` "just works":
+| Dep | Auto-detected subpaths (beside exe / parents) | Fallback |
+|---|---|---|
+| `VIDEOCR_CLI_DIR` | `VideOCR\CLI`, `VideOCR-CLI`, `VideOCR-1.5.1\VideOCR-1.5.1\CLI` | hardcoded `C:\Users\os\...` |
+| VoxCPM model (`voxcpm_ckpt_var` default) | `VoxCPM\pretrained\VoxCPM-1.5-VN`, `VoxCPM-1.5-VN`, `VoxCPM-model` | hardcoded `E:\VoxCPM-1.5-VN\...` |
+| `voxcpm_env` python (`_find_voxcpm_python`) | walks up from ckpt **then** `voxcpm_env\Scripts\python.exe` under each `_install_dirs()` root | `None` |
+
+`_run_startup_diagnostics()` calls `_find_voxcpm_python(ckpt)` unconditionally now (even with no model dir) so a beside-exe `voxcpm_env` shows ✅.
+
+Default paths hardcoded in source (final fallback; override via ⚙ Cài đặt):
 - `VIDEOCR_CLI_DIR`: `C:\Users\os\Downloads\Compressed\VideOCR-1.5.1\...\CLI`
 - VoxCPM ckpt seed: `E:\VoxCPM-1.5-VN\VoxCPM\pretrained\VoxCPM-1.5-VN`
 
