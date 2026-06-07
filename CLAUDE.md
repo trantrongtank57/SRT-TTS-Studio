@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, Video OCR, Speech-to-Text, video compression, audio→video muxing, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
+**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, VieNeu-TTS voice cloning, Video OCR, Speech-to-Text, video compression, audio→video muxing, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
 
 ## Build Commands
 
@@ -43,7 +43,7 @@ Note: background shell processes do not inherit cwd — always use absolute path
 | 6A | PyInstaller onedir using `SRT_TTS_Studio_onedir.spec` |
 | 6B | Bundle ffmpeg/ffprobe |
 | 6C | `gen_integrity.py` |
-| **6G** | **FAIL-CLOSED** copy of 9 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` into `dist\SRT_TTS_Studio\`; verifies each file landed; aborts if anything missing. Must run before step 7 so WiX Heat picks them up. |
+| **6G** | **FAIL-CLOSED** copy of 10 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` into `dist\SRT_TTS_Studio\`; verifies each file landed; aborts if anything missing. Must run before step 7 so WiX Heat picks them up. |
 | 6D/E/F | 3 onefile PyInstaller builds (Portable / Secured / Trial) |
 | 7–8 | WiX Heat → candle → light → MSI (source: `product.wxs`) |
 | 9 | `output\SRT_TTS_Studio_Setup.msi` + `output\Portable\` (exes + companion files + models + rvc_env) |
@@ -69,7 +69,7 @@ output\
     SRT_TTS_Studio_Portable.exe   ← onefile
     SRT_TTS_Studio_Secured.exe    ← onefile + .integrity companion
     SRT_TTS_Studio_Trial.exe      ← onefile, 24h trial
-    9× companion .py              ← must sit next to exe (also embedded in exe via datas)
+    10× companion .py             ← must sit next to exe (also embedded in exe via datas)
     hubert_base.pt, rmvpe.pt
     rvc_env\
 ```
@@ -246,7 +246,9 @@ Use `ctypes.windll.shell32.ShellExecuteW(None, "open", exe, args, None, 1)` inst
 
 ## Voice Clone Pre-flight Validation Pattern
 
-All TTS entry points that support RVC or VoxCPM **must** validate voice clone components **before** calling `set_mode("tts_running")`. If validation fails, log the error and `return` — the UI stays in its pre-run state (no stuck "running" mode).
+All TTS entry points that support RVC, VoxCPM, or VieNeu **must** validate voice clone components **before** calling `set_mode("tts_running")`. If validation fails, log the error and `return` — the UI stays in its pre-run state (no stuck "running" mode).
+
+**Mutual exclusivity:** the four voice paths (Provider online ↔ RVC ↔ VoxCPM ↔ VieNeu) are mutually exclusive. `_apply_voice_exclusivity()` disables the other engines' checkboxes/controls whenever one is ticked. Dispatch order in `start_tts()` / the PDF entry: `if VOXCPM_ENABLED → elif VIENEU_ENABLED → else provider(+optional RVC)`. All three local engines auto-pick device (no manual CPU/GPU UI): RVC resolves `rvc_device_var="auto"` → `cuda:0` if `DETECTED_GPU` else `cpu`; VoxCPM auto-detects in its helper; VieNeu via `--device auto` in its helper.
 
 ### RVC pre-flight — `_check_rvc_preflight()`
 
@@ -275,6 +277,12 @@ app.after(0, lambda: set_mode("tts_running"))
 3. `ref_audio` file exists (if field is non-empty)
 4. `voxcpm_env` python found via `_find_voxcpm_python()`
 5. `voxcpm_helper.py` found in the standard search list
+
+### VieNeu pre-flight — `_vieneu_preflight()`
+
+Shared helper (just before `_run_vieneu_batch`) returning `(ok, model_dir, vieneu_py, helper)`. Unlike VoxCPM, the **model dir is optional** (empty = auto-download from HF). Validates: model dir empty OR an existing dir; `ref_audio` exists if non-empty; `vieneu_env` python via `_find_vieneu_python()`; `vieneu_helper.py` found. Used by `_run_vieneu_batch` / `_run_vieneu_batch_pdf` / `_vieneu_generate_one_sync` (regen) / Quick TTS. Command built by the shared `_vieneu_build_cmd()` (model-dir optional; `--reference`+`--reference-text` for cloning, else `--voice` for a preset, else default voice; `--emotion`).
+
+**VieNeu UI panel** (in `voice_frame`, toggled by `_toggle_vieneu_panel`): Model (optional) + Audio mẫu rows; an audio-filter row (`vieneu_separate/denoise/filter_var` + "Xử lý Audio" → `_enhance_vieneu_ref_audio()`, runs `audio_enhancer.py`); a ref-text row with an **STT** button (`_vieneu_transcribe_audio()` → fills `vieneu_reftext_var`), a **preset-voice dropdown** (`_VIENEU_PRESET_VOICES`, 10 built-in voices; sentinel `(Giọng mặc định)` = no `--voice`), and an emotion menu. STT + audio-enhance reuse `whisper_stt.py` / `audio_enhancer.py` with **voxcpm_env python preferred** (whisper/demucs live there), falling back to `vieneu_env`.
 
 ### Audio quality check — `_audio_quality_check()` / `_rename_bad_audio()` / `_sanitize_tts_text()`
 
@@ -315,6 +323,7 @@ Applied to all 4 TTS flows, QC'd on the **final** file. Provider flows get the f
 | …both, when RVC enabled | Again on RVC **output** | detection + rename only |
 | `_run_voxcpm_batch()` — SRT + VoxCPM | After ffmpeg wav→mp3 | detection + rename only |
 | `_run_voxcpm_batch_pdf()` — PDF + VoxCPM | After ffmpeg wav→mp3 | detection + rename only |
+| `_run_vieneu_batch()` / `_run_vieneu_batch_pdf()` — VieNeu | After ffmpeg wav→mp3 | detection + rename only |
 
 **RVC output is QC'd twice over**: once on the provider-TTS audio feeding into RVC (full retry loop), then again on the RVC output (detection + rename, label `[RVC]`). RVC preserves duration so the second pass mainly catches `novoice` (RVC producing silence without raising).
 
@@ -357,7 +366,7 @@ Two parallel regenerate paths exist, both mirroring the **full** generation pipe
 | `regenerate_line(index, text)` | `line_{index:04d}.mp3` | `subtitles_cache` (SRT) | `ask_line_edit()` → "Regenerate Line" btn; also `open_editor` save |
 | `regenerate_pdf_line(index, text)` | `pdf_line_{index:04d}.mp3` | `PDF_CHUNKS` | `ask_pdf_chunk_edit()` → "Regenerate đoạn PDF" btn (`btn_pdf_regen`, row 3) |
 
-Branch logic inside both (matching the batch flows): `VOXCPM_ENABLED` → single-line via `_voxcpm_generate_one_sync(index, text, out_prefix)` + QC; `RVC_ENABLED` → provider TTS + QC-retry → RVC → QC again; else provider TTS + QC-retry.
+Branch logic inside both (matching the batch flows): `VOXCPM_ENABLED` → `_voxcpm_generate_one_sync(index, text, out_prefix)` + QC; `VIENEU_ENABLED` → `_vieneu_generate_one_sync(index, text, out_prefix)` + QC; `RVC_ENABLED` → provider TTS + QC-retry → RVC → QC again; else provider TTS + QC-retry.
 
 **`_voxcpm_generate_one_sync(index, text, out_prefix="line_")`** — shared single-line VoxCPM helper. The `voxcpm_helper.py` always writes `line_{idx:04d}.wav` (filename driven by the JSON `index`); this fn converts it to `{out_prefix}{idx:04d}.mp3` (`"line_"` for SRT, `"pdf_line_"` for PDF).
 
@@ -396,12 +405,13 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 
 ## Companion Script System
 
-9 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
+10 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
 
 | Script | Interpreter | Purpose |
 |---|---|---|
 | `rvc_helper.py` | `rvc_env\Scripts\python.exe` (Python 3.10) | RVC voice conversion |
 | `voxcpm_helper.py` | `voxcpm_env\Scripts\python.exe` (Python 3.11) | VoxCPM batch TTS |
+| `vieneu_helper.py` | `vieneu_env\Scripts\python.exe` | VieNeu-TTS batch TTS (v3 Turbo, 48 kHz). **Auto device** (`--device auto`): CUDA available → GPU (`backend=pytorch`); else → CPU (`backend=onnx`, torch-free). **Reconfigures stdout/stderr to UTF-8** at startup (else Vietnamese error prints crash on Windows cp1252 → silent exit 1). **Patches `huggingface_hub.utils._headers.get_token_to_send`** (`_patch_hf_anon_token()`) before model load: vieneu's v3-Turbo loader calls `hf_hub_download(..., token=True)` and huggingface_hub ≥1.18 raises `LocalTokenNotFoundError` when `token=True` with no stored token — even for the **public** VieNeu repo. The patch degrades to anonymous (token=None) so the public model downloads with **no HF account/login needed**. Also **patches `torchaudio.load` → soundfile** (`_patch_torchaudio_load()`): torch 2.11's torchaudio decodes audio via **torchcodec**, whose `libtorchcodec_core*.dll` fails to load on Windows (needs FFmpeg shared libs) → voice-cloning from a ref audio raises `TorchCodec is required for load_with_torchcodec`. The soundfile patch (same trick as voxcpm_helper) reads the ref wav/flac/ogg without torchcodec. So **do not install torchcodec**. (GPU needs a CUDA build of torch **≥2.11**, e.g. `--index-url .../whl/cu128`; cu124 tops out at torch 2.6 which is too old for vieneu's triton/transformers.) Same stdout protocol as voxcpm_helper: `DONE:{idx}`/`ERROR:{idx}:..`/`WARN:{idx}:..`/`ALL_DONE`. Writes `line_{idx:04d}.wav`. Model dir **optional** (rỗng = auto-download `pnnbao-ump/VieNeu-TTS-v3-Turbo` from HF, cached). Args: `--model-dir` `--onnx-dir` `--reference` `--reference-text` `--voice` (preset name) `--emotion` `--device`. The two `_run_vieneu_batch*` loops log any unmatched stdout line (surfaces tracebacks). |
 | `whisper_stt.py` | voxcpm_env python | STT for reference audio (stderr: `PROGRESS:done_ms:total_ms`) |
 | `audio_enhancer.py` | voxcpm_env python | Demucs/denoise/bandpass (stdout: `PCT:done:100`) |
 | `pdf_helper.py` | any python with pypdf | PDF → JSON chunks |
@@ -410,7 +420,7 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 | `video_stt_helper.py` | voxcpm_env python | faster-whisper STT (stdout: `PROGRESS:N:M`, `DONE:path`) |
 | `translate_helper.py` | voxcpm_env python (torch+transformers+sentencepiece) | Offline translation → Vietnamese (NLLB/M2M/envit5/generic seq2seq auto-detect). Input JSON file `{"segments":[...]}`, stdout `PROGRESS:N:M` + `DONE:path` (+ `STOPPED`/`LOAD_ERR`/`BATCH_ERR`), JSON out `{"translations":[...], "stopped":bool}`. Reads `PAUSE`/`RESUME`/`STOP` control lines on **stdin** |
 
-**Onefile exes embed all 9 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.
+**Onefile exes embed all 10 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.
 
 ### Helper progress protocol
 All long-running helpers stream progress so the UI bar tracks them. Use `subprocess.Popen` + line-by-line stdout read (never `communicate()` which blocks). Parse `PROGRESS:N:M` → `update_progress(N, M)`.
@@ -425,6 +435,7 @@ Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Li
 | `videocr_cli_dir` | `VIDEOCR_CLI_DIR` | Passed as env var to `videocr_helper.py` |
 | `voxcpm_ckpt_dir` | `voxcpm_ckpt_var` | VoxCPM model path; seed for `_find_voxcpm_python()` |
 | `voxcpm_env_override` | `VOXCPM_ENV_OVERRIDE` | Explicit python.exe; checked **first** in all `_find_*_python()` calls |
+| `vieneu_env_override` / `vieneu_model_dir` | `VIENEU_ENV_OVERRIDE` / `VIENEU_MODEL_DIR` | VieNeu `vieneu_env\Scripts\python.exe` override + optional local model dir (empty = auto-download from HF). `_find_vieneu_python()` resolves env. UI vars: `vieneu_model_var`/`vieneu_ref_var`/`vieneu_reftext_var`/`vieneu_voice_var`/`vieneu_emotion_var` |
 | `translate_env_override` | `TRANSLATE_ENV_OVERRIDE` | Dedicated python.exe for offline translation; checked **before** `voxcpm_env` in `_translate_segments_local()`. Needed for envit5 (see tokenizer gotcha below) |
 | `local_translate_model_dir` / `local_translate_src_lang` | `LOCAL_TRANSLATE_MODEL_DIR` / `LOCAL_TRANSLATE_SRC_LANG` | Offline model dir (or HF id) + NLLB source-lang code |
 | `subtitle_edit_path` | `SUBTITLE_EDIT_PATH` | Prepended to Subtitle Edit search list |
@@ -484,6 +495,8 @@ The MSI installs everything bundled. These components are too large to bundle an
 |---|---|---|
 | `voxcpm_env\` | ~6–8 GB | VoxCPM TTS, STT, audio enhance, SRT align, PDF |
 | VoxCPM model (`VoxCPM-1.5-VN/`) | ~3.5 GB | VoxCPM TTS |
+| `vieneu_env\` | ~2–6 GB | VieNeu-TTS. **`pip install vieneu`** (Python 3.10/3.11). Runs on **CPU (ONNX, torch-free)** out of the box; add a **CUDA build of torch** (`pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124`) to auto-use GPU. **Do NOT use the `[gpu]` extra** — it pulls `lmdeploy` (a different backend) which has no Windows/py3.14 wheel. Place beside the exe; `_find_vieneu_python()` auto-detects |
+| VieNeu model | auto-download | VieNeu-TTS — pulled from HF (`pnnbao-ump/VieNeu-TTS-v3-Turbo`) on first run + cached; only needs a manual local dir for fully-offline machines |
 | VideOCR CLI | small | Video OCR |
 | Offline translate model (NLLB-600M / envit5) | ~1.5–2.5 GB | Offline SRT/PDF translation (only if using provider `Offline`; reuses `voxcpm_env` + needs `transformers`/`sentencepiece`) |
 

@@ -919,6 +919,8 @@ STT_OUTPUT_DIR = ""   # thư mục lưu kết quả STT
 # Đường dẫn do user cấu hình — ghi đè auto-discovery
 SUBTITLE_EDIT_PATH  = ""   # path tới SubtitleEdit.exe; rỗng = tự tìm
 VOXCPM_ENV_OVERRIDE = ""   # path tới voxcpm_env\Scripts\python.exe; rỗng = tự tìm
+VIENEU_ENV_OVERRIDE = ""   # path tới vieneu_env\Scripts\python.exe; rỗng = tự tìm
+VIENEU_MODEL_DIR    = ""   # thư mục/HF repo model VieNeu; rỗng = tự tải từ HuggingFace
 
 # File lưu cài đặt (cạnh exe/script)
 _SETTINGS_FILE = os.path.join(
@@ -929,7 +931,7 @@ _SETTINGS_FILE = os.path.join(
 
 def _load_settings():
     """Đọc settings.json và áp dụng vào các global path."""
-    global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, FFMPEG_DIR, FFMPEG, FFPROBE
+    global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
     try:
@@ -942,6 +944,10 @@ def _load_settings():
                 SUBTITLE_EDIT_PATH = d["subtitle_edit_path"]
             if d.get("voxcpm_env_override"):
                 VOXCPM_ENV_OVERRIDE = d["voxcpm_env_override"]
+            if d.get("vieneu_env_override"):
+                VIENEU_ENV_OVERRIDE = d["vieneu_env_override"]
+            if d.get("vieneu_model_dir"):
+                VIENEU_MODEL_DIR = d["vieneu_model_dir"]
             if d.get("ffmpeg_dir"):
                 FFMPEG_DIR = d["ffmpeg_dir"]
                 # Áp dụng lại FFMPEG/FFPROBE ngay sau khi có FFMPEG_DIR
@@ -971,15 +977,18 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
                    anthropic_api_key=None, gemini_api_key=None, openai_api_key=None,
                    translate_provider=None, translate_model=None,
                    local_translate_model_dir=None, local_translate_src_lang=None,
-                   translate_env_override=None):
+                   translate_env_override=None,
+                   vieneu_env_override=None, vieneu_model_dir=None):
     """Lưu settings.json và áp dụng ngay vào các global path.
-    Các tham số translate_*/local_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
-    global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, FFMPEG_DIR, FFMPEG, FFPROBE
+    Các tham số translate_*/local_*/vieneu_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
+    global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
     VIDEOCR_CLI_DIR     = videocr_cli_dir
     SUBTITLE_EDIT_PATH  = subtitle_edit_path
     VOXCPM_ENV_OVERRIDE = voxcpm_env_override
+    if vieneu_env_override is not None: VIENEU_ENV_OVERRIDE = vieneu_env_override
+    if vieneu_model_dir   is not None: VIENEU_MODEL_DIR    = vieneu_model_dir
     FFMPEG_DIR          = ffmpeg_dir
     if anthropic_api_key  is not None: ANTHROPIC_API_KEY  = anthropic_api_key
     if gemini_api_key     is not None: GEMINI_API_KEY     = gemini_api_key
@@ -1007,6 +1016,8 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
             "local_translate_model_dir": LOCAL_TRANSLATE_MODEL_DIR,
             "local_translate_src_lang":  LOCAL_TRANSLATE_SRC_LANG,
             "translate_env_override":    TRANSLATE_ENV_OVERRIDE,
+            "vieneu_env_override":       VIENEU_ENV_OVERRIDE,
+            "vieneu_model_dir":          VIENEU_MODEL_DIR,
         }
         with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
@@ -1360,16 +1371,9 @@ rvc_enable_check = ctk.CTkCheckBox(
 )
 rvc_enable_check.pack(side="left", padx=(10, 16))
 
-ctk.CTkLabel(rvc_row_toggle, text="Device:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
-rvc_device_var = ctk.StringVar(value="cpu")
-rvc_device_menu = ctk.CTkOptionMenu(
-    rvc_row_toggle,
-    values=["cpu", "cuda:0"],
-    variable=rvc_device_var,
-    width=100,
-    command=lambda v: _reset_rvc_instance(),
-)
-rvc_device_menu.pack(side="left")
+# RVC Device luôn TỰ ĐỘNG: có GPU NVIDIA → cuda:0, không thì cpu (xem _apply_rvc_sync).
+# Không còn ô chọn tay — giữ biến "auto" để code resolve dùng chung.
+rvc_device_var = ctk.StringVar(value="auto")
 
 # Row 4: RVC settings (ẩn mặc định, hiện khi bật checkbox)
 rvc_row_settings = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -1659,6 +1663,221 @@ ctk.CTkLabel(voxcpm_row_settings2, text="CFG:", font=("Arial", 12)).pack(side="l
 voxcpm_cfg_var = ctk.StringVar(value="2.0")
 ctk.CTkEntry(voxcpm_row_settings2, textvariable=voxcpm_cfg_var, width=45, justify="center").pack(side="left")
 
+# ── VieNeu-TTS (nhân bản giọng / giọng Việt) ─────────────────────────────────
+VIENEU_ENABLED = False
+
+vieneu_row_toggle = ctk.CTkFrame(voice_frame, fg_color="transparent")
+vieneu_row_toggle.pack(fill="x", padx=2, pady=(0, 2))
+
+vieneu_enable_var = ctk.BooleanVar(value=False)
+
+def _toggle_vieneu_panel():
+    global VIENEU_ENABLED
+    VIENEU_ENABLED = vieneu_enable_var.get()
+    if VIENEU_ENABLED:
+        vieneu_row_settings.pack(fill="x", padx=2, pady=(0, 4))
+        vieneu_row_audio_proc.pack(fill="x", padx=2, pady=(0, 4))
+        vieneu_row_settings2.pack(fill="x", padx=2, pady=(0, 4))
+    else:
+        vieneu_row_settings.pack_forget()
+        vieneu_row_audio_proc.pack_forget()
+        vieneu_row_settings2.pack_forget()
+    app.update_idletasks()
+    req = voice_frame.winfo_reqheight()
+    try:
+        if len(_vpane.panes()) > 1:
+            _vpane.sash_place(0, 0, req)
+    except Exception:
+        pass
+    _apply_voice_exclusivity()
+
+vieneu_enable_check = ctk.CTkCheckBox(
+    vieneu_row_toggle,
+    text="VieNeu-TTS (nhân bản giọng / giọng Việt)",
+    variable=vieneu_enable_var,
+    command=_toggle_vieneu_panel,
+    font=("Arial", 13),
+)
+vieneu_enable_check.pack(side="left", padx=(10, 16))
+
+# Row settings 1: model dir (tùy chọn) + audio mẫu
+vieneu_row_settings = ctk.CTkFrame(voice_frame, fg_color="transparent")
+
+ctk.CTkLabel(vieneu_row_settings, text="Model:", font=("Arial", 12)).pack(side="left", padx=(10, 4))
+vieneu_model_var = ctk.StringVar(value=VIENEU_MODEL_DIR)
+vieneu_model_entry = ctk.CTkEntry(
+    vieneu_row_settings, textvariable=vieneu_model_var,
+    placeholder_text="(rỗng = tự tải từ HuggingFace)...", width=240,
+)
+vieneu_model_entry.pack(side="left", padx=(0, 4))
+
+def _browse_vieneu_model():
+    path = filedialog.askdirectory(title="Chọn thư mục model VieNeu (rỗng = tự tải)")
+    if path:
+        vieneu_model_var.set(path)
+vieneu_model_btn = ctk.CTkButton(vieneu_row_settings, text="Browse", width=72, command=_browse_vieneu_model)
+vieneu_model_btn.pack(side="left", padx=(0, 14))
+
+ctk.CTkLabel(vieneu_row_settings, text="Audio mẫu:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
+vieneu_ref_var = ctk.StringVar(value="")
+vieneu_ref_entry = ctk.CTkEntry(
+    vieneu_row_settings, textvariable=vieneu_ref_var,
+    placeholder_text="File WAV/MP3 giọng mẫu (3-5s, tuỳ chọn)...", width=240,
+)
+vieneu_ref_entry.pack(side="left", padx=(0, 4))
+
+def _browse_vieneu_ref():
+    path = filedialog.askopenfilename(
+        title="Chọn audio mẫu giọng nói",
+        filetypes=[("Audio", "*.wav *.mp3 *.flac *.m4a"), ("All files", "*.*")],
+    )
+    if path:
+        vieneu_ref_var.set(path)
+vieneu_ref_btn = ctk.CTkButton(vieneu_row_settings, text="Browse", width=72, command=_browse_vieneu_ref)
+vieneu_ref_btn.pack(side="left")
+
+# Row audio proc: lọc audio mẫu (tách nhạc / giảm ồn / lọc giọng) — như VoxCPM
+vieneu_row_audio_proc = ctk.CTkFrame(voice_frame, fg_color="transparent")
+ctk.CTkLabel(vieneu_row_audio_proc, text="Lọc audio mẫu:", font=("Arial", 12)).pack(side="left", padx=(10, 8))
+vieneu_separate_var = ctk.BooleanVar(value=False)
+vieneu_denoise_var  = ctk.BooleanVar(value=False)
+vieneu_filter_var   = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(vieneu_row_audio_proc, text="Tách nhạc",       variable=vieneu_separate_var, width=110).pack(side="left", padx=(0, 4))
+ctk.CTkCheckBox(vieneu_row_audio_proc, text="Giảm tiếng ồn",   variable=vieneu_denoise_var,  width=130).pack(side="left", padx=(0, 4))
+ctk.CTkCheckBox(vieneu_row_audio_proc, text="Lọc tần số giọng", variable=vieneu_filter_var,  width=145).pack(side="left", padx=(0, 10))
+
+def _enhance_vieneu_ref_audio():
+    """Chạy audio_enhancer.py trên audio mẫu VieNeu, cập nhật ref_var sau khi xong.
+    audio_enhancer (demucs/denoise) cần torch → ưu tiên voxcpm_env, fallback vieneu_env."""
+    ref_path = vieneu_ref_var.get().strip()
+    if not ref_path or not os.path.exists(ref_path):
+        log("Lọc audio: Chưa chọn file Audio mẫu (VieNeu)")
+        return
+    do_sep  = vieneu_separate_var.get()
+    do_den  = vieneu_denoise_var.get()
+    do_filt = vieneu_filter_var.get()
+    if not do_sep and not do_den and not do_filt:
+        log("Lọc audio: Chọn ít nhất 1 bước xử lý")
+        return
+    enh_py = _find_voxcpm_python((voxcpm_ckpt_var.get() or "").strip() or os.getcwd())
+    if not enh_py:
+        enh_py = _find_vieneu_python(vieneu_model_var.get().strip())
+    if not enh_py:
+        log("Lọc audio: Không tìm thấy python có torch (voxcpm_env/vieneu_env)")
+        return
+    enhancer = None
+    for _d in ([sys._MEIPASS] if hasattr(sys, '_MEIPASS') else []) + [
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(os.path.abspath(sys.argv[0])),
+        os.path.dirname(sys.executable),
+    ]:
+        _c = os.path.join(_d, 'audio_enhancer.py')
+        if os.path.exists(_c):
+            enhancer = _c
+            break
+    if not enhancer:
+        log("Lọc audio: Không tìm thấy audio_enhancer.py")
+        return
+
+    base, _ext = os.path.splitext(ref_path)
+    out_path = base + "_enhanced.wav"
+    cmd = [enh_py, enhancer, "--input", ref_path, "--output", out_path]
+    if do_sep:  cmd.append("--separate")
+    if do_den:  cmd.append("--denoise")
+    if do_filt: cmd.append("--filter")
+
+    def _run():
+        steps = ", ".join(filter(None, [
+            "Tách nhạc"     if do_sep  else "",
+            "Giảm tiếng ồn" if do_den  else "",
+            "Lọc tần số"    if do_filt else "",
+        ]))
+        log(f"Lọc audio (VieNeu): {steps}...")
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            RUNNING_PROCESSES.append(proc)
+            update_progress(2, 100)
+            result_path = [None]
+            for raw in proc.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.startswith("PCT:"):
+                    try:
+                        _, n, m = line.split(":")
+                        update_progress(int(n), int(m))
+                    except Exception:
+                        pass
+                elif line.startswith("DONE:"):
+                    result_path[0] = line[5:]
+                elif line.startswith("ERROR:"):
+                    log(f"Lọc audio lỗi: {line[6:]}")
+            proc.wait(timeout=300)
+            stderr = proc.stderr.read()
+            if proc in RUNNING_PROCESSES:
+                RUNNING_PROCESSES.remove(proc)
+            if result_path[0] and os.path.exists(result_path[0]):
+                update_progress(100, 100)
+                app.after(0, lambda p=result_path[0]: vieneu_ref_var.set(p))
+                log(f"Lọc audio OK → {os.path.basename(result_path[0])}")
+            elif proc.returncode != 0:
+                err = stderr.strip().splitlines()[-1] if stderr.strip() else "không có output"
+                log(f"Lọc audio lỗi: {err}")
+        except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+            log("Lọc audio: Timeout sau 300s")
+        except Exception as e:
+            log(f"Lọc audio lỗi: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+ctk.CTkButton(
+    vieneu_row_audio_proc, text="Xử lý Audio", width=110,
+    command=_enhance_vieneu_ref_audio,
+    fg_color="#5A3E8C", hover_color="#432E6B",
+).pack(side="left")
+
+# Row settings 2: ref text + giọng có sẵn (preset) + cảm xúc
+vieneu_row_settings2 = ctk.CTkFrame(voice_frame, fg_color="transparent")
+
+ctk.CTkLabel(vieneu_row_settings2, text="Nội dung mẫu:", font=("Arial", 12)).pack(side="left", padx=(10, 4))
+vieneu_reftext_var = ctk.StringVar(value="")
+ctk.CTkEntry(
+    vieneu_row_settings2, textvariable=vieneu_reftext_var,
+    placeholder_text="Lời thoại audio mẫu (tuỳ chọn)...", width=240,
+).pack(side="left", padx=(0, 4))
+ctk.CTkButton(
+    vieneu_row_settings2, text="STT", width=54,
+    command=lambda: _vieneu_transcribe_audio(),
+    fg_color="#1E6B3C", hover_color="#145229",
+).pack(side="left", padx=(0, 10))
+
+# Giọng có sẵn (preset) của VieNeu v3 Turbo — chọn từ dropdown thay vì gõ tay.
+# Nhãn sentinel = dùng giọng mặc định của model (không truyền --voice).
+_VIENEU_DEFAULT_VOICE_LABEL = "(Giọng mặc định)"
+_VIENEU_PRESET_VOICES = [
+    "Ngọc Lan", "Gia Bảo", "Thái Sơn", "Đức Trí", "Mỹ Duyên",
+    "Trúc Ly", "Xuân Vĩnh", "Trọng Hữu", "Bình An", "Ngọc Linh",
+]
+ctk.CTkLabel(vieneu_row_settings2, text="Giọng có sẵn:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
+vieneu_voice_var = ctk.StringVar(value=_VIENEU_DEFAULT_VOICE_LABEL)
+ctk.CTkOptionMenu(
+    vieneu_row_settings2, variable=vieneu_voice_var,
+    values=[_VIENEU_DEFAULT_VOICE_LABEL] + _VIENEU_PRESET_VOICES,
+    width=160,
+).pack(side="left", padx=(0, 10))
+
+ctk.CTkLabel(vieneu_row_settings2, text="Cảm xúc:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
+vieneu_emotion_var = ctk.StringVar(value="natural")
+ctk.CTkOptionMenu(vieneu_row_settings2, variable=vieneu_emotion_var,
+                  values=["natural", "storytelling"], width=120).pack(side="left")
+
 # ── Loại trừ lẫn nhau: Provider voice ↔ RVC ↔ VoxCPM ─────────────────────────
 # Tick RVC  → làm mờ Provider voice (provider/voice/delay/api key) + VoxCPM
 # Tick VoxCPM → làm mờ Provider voice + RVC (gồm cả Device)
@@ -1669,7 +1888,7 @@ _voice_block_ctrls = [
     api_key_entry, _show_key_check,
 ]
 _rvc_all_ctrls = [
-    rvc_enable_check, rvc_device_menu,
+    rvc_enable_check,
     rvc_model_entry, rvc_model_btn,
     rvc_index_entry, rvc_index_btn,
     rvc_pitch_entry, rvc_algo_menu,
@@ -1677,6 +1896,11 @@ _rvc_all_ctrls = [
 _voxcpm_all_ctrls = [
     voxcpm_enable_check,
     voxcpm_ckpt_entry, voxcpm_ref_entry,
+]
+_vieneu_all_ctrls = [
+    vieneu_enable_check,
+    vieneu_model_entry, vieneu_model_btn,
+    vieneu_ref_entry, vieneu_ref_btn,
 ]
 
 def _set_state(widgets, state):
@@ -1687,20 +1911,30 @@ def _set_state(widgets, state):
             pass
 
 def _apply_voice_exclusivity():
+    # Loại trừ lẫn nhau: chỉ 1 trong {Provider voice, RVC, VoxCPM, VieNeu} hoạt động.
     rvc_on = rvc_enable_var.get()
     vox_on = voxcpm_enable_var.get()
+    vie_on = vieneu_enable_var.get()
     if rvc_on:
         _set_state(_voice_block_ctrls, "disabled")
         _set_state(_voxcpm_all_ctrls, "disabled")
+        _set_state(_vieneu_all_ctrls, "disabled")
         _set_state(_rvc_all_ctrls, "normal")
     elif vox_on:
         _set_state(_voice_block_ctrls, "disabled")
         _set_state(_rvc_all_ctrls, "disabled")
+        _set_state(_vieneu_all_ctrls, "disabled")
         _set_state(_voxcpm_all_ctrls, "normal")
+    elif vie_on:
+        _set_state(_voice_block_ctrls, "disabled")
+        _set_state(_rvc_all_ctrls, "disabled")
+        _set_state(_voxcpm_all_ctrls, "disabled")
+        _set_state(_vieneu_all_ctrls, "normal")
     else:
         _set_state(_voice_block_ctrls, "normal")
         _set_state(_rvc_all_ctrls, "normal")
         _set_state(_voxcpm_all_ctrls, "normal")
+        _set_state(_vieneu_all_ctrls, "normal")
 
 # ── Quick TTS row ─────────────────────────────────────────────────────────────
 # Quick TTS: widget UI duoc tao o workspace "Text -> Audio" (xem phia duoi)
@@ -1755,12 +1989,23 @@ def _quick_tts_run():
                 log(f"[Quick TTS] ❌ VoxCPM Clone: Không tìm thấy file Audio mẫu: {_qt_ref}")
                 log("  • Browse lại để chọn đúng file, hoặc để trống nếu không dùng")
                 return
+        elif VIENEU_ENABLED:
+            _qt_model = vieneu_model_var.get().strip()
+            if _qt_model and not os.path.isdir(_qt_model):
+                log(f"[Quick TTS] ❌ VieNeu-TTS: Đường dẫn Model không tồn tại: {_qt_model}")
+                log("  • Để trống ô Model để tự tải, hoặc Browse lại thư mục đúng")
+                return
+            _qt_ref = vieneu_ref_var.get().strip()
+            if _qt_ref and not os.path.isfile(_qt_ref):
+                log(f"[Quick TTS] ❌ VieNeu-TTS: Không tìm thấy file Audio mẫu: {_qt_ref}")
+                log("  • Browse lại để chọn đúng file, hoặc để trống nếu dùng giọng có sẵn")
+                return
         elif RVC_ENABLED:
             if not _check_rvc_preflight():
                 return
 
-        # VoxCPM chạy local; còn lại cần internet
-        if not VOXCPM_ENABLED and not _require_internet("Quick TTS"):
+        # VoxCPM / VieNeu chạy local; còn lại cần internet
+        if not VOXCPM_ENABLED and not VIENEU_ENABLED and not _require_internet("Quick TTS"):
             return
         log("[Quick TTS] Đang tạo audio...")
         update_progress(5, 100)
@@ -1810,6 +2055,35 @@ def _quick_tts_run():
                 gen_wav = os.path.join(out_dir, "line_0000.wav")
                 if not os.path.isfile(gen_wav):
                     log(f"[Quick TTS] ❌ VoxCPM không tạo được file. stderr: {proc.stderr[-300:]}")
+                    return
+                update_progress(70, 100)
+                ffmpeg = get_ffmpeg()
+                subprocess.run(
+                    [ffmpeg, "-y", "-i", gen_wav, "-q:a", "2", out],
+                    creationflags=CREATE_NO_WINDOW, capture_output=True,
+                )
+                if os.path.isfile(gen_wav): os.remove(gen_wav)
+                if os.path.isfile(tmp_json): os.remove(tmp_json)
+            elif VIENEU_ENABLED:
+                # VieNeu: gọi helper subprocess cho 1 dòng text
+                import json as _json
+                _ok, _model_dir, _vieneu_py, _helper = _vieneu_preflight()
+                if not _ok:
+                    return
+                out_dir  = os.path.dirname(os.path.abspath(out))
+                tmp_json = os.path.join(out_dir, "_quick_tts_vieneu.json")
+                with open(tmp_json, "w", encoding="utf-8") as f:
+                    _json.dump([{"index": 0, "text": text}], f, ensure_ascii=False)
+                cmd = _vieneu_build_cmd(_vieneu_py, _helper, tmp_json, out_dir, _model_dir)
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                gen_wav = os.path.join(out_dir, "line_0000.wav")
+                if not os.path.isfile(gen_wav):
+                    log(f"[Quick TTS] ❌ VieNeu không tạo được file. stderr: {proc.stderr[-300:]}")
+                    if os.path.isfile(tmp_json): os.remove(tmp_json)
                     return
                 update_progress(70, 100)
                 ffmpeg = get_ffmpeg()
@@ -3289,6 +3563,23 @@ def show_settings_dialog():
                 filetypes=[("Python", "python.exe"), ("All", "*.*")]))
     ).pack(side="left")
 
+    # 3b. VieNeu model dir (tùy chọn — rỗng = tự tải từ HuggingFace)
+    v_vieneu_model, _, fr3b = _row(dlg, "VieNeu model folder:")
+    v_vieneu_model.set(VIENEU_MODEL_DIR)
+    ctk.CTkButton(fr3b, text="Browse", width=72,
+        command=lambda: (lambda p: v_vieneu_model.set(p) if p else None)(
+            filedialog.askdirectory(title="Chọn thư mục model VieNeu (rỗng = tự tải)"))
+    ).pack(side="left")
+
+    # 3c. vieneu_env python.exe override
+    v_vieneu_env, _, fr3c = _row(dlg, "vieneu_env python.exe:")
+    v_vieneu_env.set(VIENEU_ENV_OVERRIDE)
+    ctk.CTkButton(fr3c, text="Browse", width=72,
+        command=lambda: (lambda p: v_vieneu_env.set(p) if p else None)(
+            filedialog.askopenfilename(title="Chọn python.exe của vieneu_env",
+                filetypes=[("Python", "python.exe"), ("All", "*.*")]))
+    ).pack(side="left")
+
     # 4. Subtitle Edit exe
     v_se, _, fr4 = _row(dlg, "SubtitleEdit.exe:")
     v_se.set(SUBTITLE_EDIT_PATH)
@@ -3424,9 +3715,15 @@ def show_settings_dialog():
             local_translate_model_dir = v_local_dir.get().strip(),
             local_translate_src_lang  = _src_label_to_code.get(v_src.get(), "eng_Latn"),
             translate_env_override    = v_trenv.get().strip(),
+            vieneu_env_override       = v_vieneu_env.get().strip(),
+            vieneu_model_dir          = v_vieneu_model.get().strip(),
         )
         if ckpt:
             voxcpm_ckpt_var.set(ckpt)
+        try:
+            vieneu_model_var.set(v_vieneu_model.get().strip())
+        except Exception:
+            pass
         log("✅ Đã lưu cài đặt đường dẫn.")
         dlg.destroy()
 
@@ -6020,6 +6317,11 @@ def start_pdf_tts():
         threading.Thread(target=_run_voxcpm_batch_pdf, daemon=True).start()
         return
 
+    if VIENEU_ENABLED:
+        # VieNeu chạy local (lần đầu cần internet để tải model)
+        threading.Thread(target=_run_vieneu_batch_pdf, daemon=True).start()
+        return
+
     # Edge TTS / các provider online → cần internet
     if not _require_internet("PDF TTS"):
         return
@@ -6502,6 +6804,11 @@ def _apply_rvc_sync(filename):
         pitch = 0
 
     device = rvc_device_var.get()
+    # "auto": có GPU NVIDIA → cuda:0, không thì cpu (giống cơ chế tự dò của VoxCPM/VieNeu)
+    if device == "auto":
+        device = "cuda:0" if DETECTED_GPU else "cpu"
+        log(f"RVC: Device tự động → {device}"
+            + (f" ({DETECTED_GPU})" if DETECTED_GPU else " (không thấy GPU NVIDIA)"))
 
     # Tìm rvc_helper.py cạnh script hoặc exe
     _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
@@ -6838,6 +7145,92 @@ def _voxcpm_transcribe_audio():
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _vieneu_transcribe_audio():
+    """STT audio mẫu VieNeu → điền vào Nội dung mẫu (dùng Whisper local).
+    Whisper cài trong voxcpm_env → ưu tiên python đó; fallback vieneu_env."""
+    ref_path = vieneu_ref_var.get().strip()
+    if not ref_path or not os.path.exists(ref_path):
+        log("STT: Chưa chọn file Audio mẫu (VieNeu)")
+        return
+
+    # Python có Whisper: voxcpm_env trước (nơi cài whisper_stt), rồi vieneu_env
+    stt_py = _find_voxcpm_python((voxcpm_ckpt_var.get() or "").strip() or os.getcwd())
+    if not stt_py:
+        stt_py = _find_vieneu_python(vieneu_model_var.get().strip())
+    if not stt_py:
+        log("STT: Không tìm thấy python có Whisper (voxcpm_env/vieneu_env)")
+        return
+
+    # Tìm whisper_stt.py
+    stt_helper = None
+    for _d in ([sys._MEIPASS] if hasattr(sys, '_MEIPASS') else []) + [
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(os.path.abspath(sys.argv[0])),
+        os.path.dirname(sys.executable),
+    ]:
+        _c = os.path.join(_d, 'whisper_stt.py')
+        if os.path.exists(_c):
+            stt_helper = _c
+            break
+    if not stt_helper:
+        log("STT: Không tìm thấy whisper_stt.py")
+        return
+
+    def _run():
+        log("STT (VieNeu): Đang nhận dạng audio mẫu (Whisper large-v3)...")
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                [stt_py, stt_helper, "--audio", ref_path, "--model", "large-v3", "--lang", "vi"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            RUNNING_PROCESSES.append(proc)
+            update_progress(2, 100)
+
+            _err_lines = []
+            def _read_err():
+                for ln in proc.stderr:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    if ln.startswith("PROGRESS:"):
+                        try:
+                            _, n, m = ln.split(":")
+                            pct = 5 + int(90 * int(n) / max(int(m), 1))
+                            update_progress(pct, 100)
+                        except Exception:
+                            pass
+                    else:
+                        _err_lines.append(ln)
+            _terr = threading.Thread(target=_read_err, daemon=True)
+            _terr.start()
+
+            stdout = proc.stdout.read()
+            proc.wait(timeout=120)
+            _terr.join(timeout=2)
+            if proc in RUNNING_PROCESSES:
+                RUNNING_PROCESSES.remove(proc)
+
+            transcript = (stdout or "").strip()
+            if proc.returncode != 0 or not transcript:
+                err = _err_lines[-1] if _err_lines else "không có output"
+                log(f"STT lỗi: {err}")
+                return
+            update_progress(100, 100)
+            app.after(0, lambda t=transcript: vieneu_reftext_var.set(t))
+            log(f"STT OK (VieNeu): {transcript}")
+        except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+            log("STT: Timeout sau 120s")
+        except Exception as e:
+            log(f"STT lỗi: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _find_voxcpm_python(ckpt_dir):
     """Tìm voxcpm_env/Scripts/python.exe bằng cách đi lên từ ckpt_dir."""
     if VOXCPM_ENV_OVERRIDE and os.path.isfile(VOXCPM_ENV_OVERRIDE):
@@ -6855,6 +7248,30 @@ def _find_voxcpm_python(ckpt_dir):
     # 2) Dò voxcpm_env nằm CẠNH app / trong parents (copy nguyên cụm sang máy khác)
     for base in _install_dirs():
         candidate = os.path.join(base, 'voxcpm_env', 'Scripts', 'python.exe')
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _find_vieneu_python(model_dir=""):
+    """Tìm vieneu_env/Scripts/python.exe (override → cạnh model → cạnh app/parents)."""
+    if VIENEU_ENV_OVERRIDE and os.path.isfile(VIENEU_ENV_OVERRIDE):
+        return VIENEU_ENV_OVERRIDE
+    # 1) Leo lên từ thư mục model (nếu có model local)
+    search = model_dir
+    for _ in range(6):
+        if not search:
+            break
+        candidate = os.path.join(search, 'vieneu_env', 'Scripts', 'python.exe')
+        if os.path.exists(candidate):
+            return candidate
+        parent = os.path.dirname(search)
+        if parent == search:
+            break
+        search = parent
+    # 2) Dò vieneu_env nằm CẠNH app / trong parents
+    for base in _install_dirs():
+        candidate = os.path.join(base, 'vieneu_env', 'Scripts', 'python.exe')
         if os.path.exists(candidate):
             return candidate
     return None
@@ -7277,6 +7694,360 @@ def _run_voxcpm_batch_pdf():
     app.after(200, open_output_folder)
 
 
+# =========================
+# VieNeu-TTS batch generation
+# =========================
+
+def _vieneu_find_helper():
+    """Tìm vieneu_helper.py — sys._MEIPASS → exe dir → script dir."""
+    _dirs = []
+    if hasattr(sys, '_MEIPASS'):
+        _dirs.append(sys._MEIPASS)
+    try:
+        _dirs.append(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        pass
+    try:
+        _dirs.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+    except Exception:
+        pass
+    _dirs.append(os.path.dirname(sys.executable))
+    for _d in _dirs:
+        _c = os.path.join(_d, 'vieneu_helper.py')
+        if os.path.exists(_c):
+            return _c
+    return None
+
+
+def _vieneu_preflight():
+    """Kiểm tra VieNeu trước khi chạy. Trả về (ok, model_dir, vieneu_py, helper).
+    Model dir là TÙY CHỌN (rỗng = tự tải từ HuggingFace)."""
+    model_dir = vieneu_model_var.get().strip()
+    if model_dir and not os.path.isdir(model_dir):
+        log(f"❌ VieNeu-TTS: Đường dẫn Model không tồn tại: {model_dir}")
+        log("  • Để trống ô Model để tự tải từ HuggingFace, hoặc Browse lại thư mục đúng")
+        return False, "", None, None
+
+    ref_audio = vieneu_ref_var.get().strip()
+    if ref_audio and not os.path.isfile(ref_audio):
+        log(f"❌ VieNeu-TTS: Không tìm thấy file Audio mẫu: {ref_audio}")
+        log("  • Browse lại để chọn đúng file, hoặc để trống nếu dùng giọng có sẵn")
+        return False, "", None, None
+
+    vieneu_py = _find_vieneu_python(model_dir)
+    if not vieneu_py:
+        log("❌ VieNeu-TTS: Không tìm thấy vieneu_env\\Scripts\\python.exe — tiến trình bị hủy")
+        log("  • Đảm bảo thư mục vieneu_env\\ nằm cạnh app/exe")
+        log("  • Có thể cấu hình python tùy chỉnh trong ⚙ Cài đặt → vieneu_env python.exe")
+        return False, "", None, None
+
+    helper = _vieneu_find_helper()
+    if not helper:
+        log("❌ VieNeu-TTS: Không tìm thấy vieneu_helper.py — tiến trình bị hủy")
+        log("  • Đảm bảo vieneu_helper.py nằm cùng thư mục với app hoặc exe")
+        return False, "", None, None
+    return True, model_dir, vieneu_py, helper
+
+
+def _vieneu_build_cmd(vieneu_py, helper, texts_file, out_dir, model_dir):
+    """Dựng lệnh gọi vieneu_helper.py với các tham số UI hiện tại."""
+    cmd = [vieneu_py, helper,
+           '--texts-json', texts_file,
+           '--output-dir', out_dir,
+           '--emotion', vieneu_emotion_var.get().strip() or "natural"]
+    if model_dir:
+        cmd += ['--model-dir', model_dir]
+    ref_audio = vieneu_ref_var.get().strip()
+    if ref_audio and os.path.exists(ref_audio):
+        cmd += ['--reference', ref_audio]
+        ref_text = vieneu_reftext_var.get().strip()
+        if ref_text:
+            cmd += ['--reference-text', ref_text]
+    else:
+        voice = vieneu_voice_var.get().strip()
+        if voice and voice != _VIENEU_DEFAULT_VOICE_LABEL:
+            cmd += ['--voice', voice]
+    return cmd
+
+
+def _run_vieneu_batch():
+    """Chạy VieNeu-TTS batch generation cho SRT trong daemon thread."""
+    global current_index, stop_requested, FAIL_COUNT
+
+    load_subtitles(force_select=False)
+    if not subtitles_cache:
+        return
+
+    FAIL_COUNT = 0
+
+    ok, model_dir, vieneu_py, helper = _vieneu_preflight()
+    if not ok:
+        return
+
+    app.after(0, lambda: set_mode("tts_running"))
+
+    items = []
+    for i, sub in enumerate(subtitles_cache):
+        text = clean_text(sub.content)
+        if text:
+            items.append({"index": i, "text": text})
+    _text_by_idx = {it["index"]: it["text"] for it in items}
+
+    texts_file = os.path.join(OUTPUT_DIR, "_vieneu_texts.json")
+    try:
+        with open(texts_file, 'w', encoding='utf-8') as f:
+            import json as _json
+            _json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"VieNeu: Lỗi ghi texts file: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    total = len(subtitles_cache)
+    log(f"VieNeu: bắt đầu generate {len(items)}/{total} dòng...")
+
+    cmd = _vieneu_build_cmd(vieneu_py, helper, texts_file, OUTPUT_DIR, model_dir)
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace',
+            creationflags=CREATE_NO_WINDOW,
+        )
+        RUNNING_PROCESSES.append(proc)
+    except Exception as e:
+        log(f"VieNeu: Lỗi khởi chạy subprocess: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    done_count = 0
+    try:
+        for line in proc.stdout:
+            if stop_requested:
+                proc.terminate()
+                log("VieNeu STOPPED")
+                app.after(0, lambda: set_mode("tts_stopped"))
+                return
+
+            line = line.rstrip()
+            if line.startswith("DONE:"):
+                try:
+                    idx = int(line.split(":")[1])
+                except (IndexError, ValueError):
+                    continue
+                wav_path = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.wav")
+                mp3_path = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.mp3")
+                if os.path.exists(wav_path):
+                    r = subprocess.run(
+                        [FFMPEG, "-y", "-i", wav_path, "-q:a", "2", mp3_path],
+                        capture_output=True, creationflags=CREATE_NO_WINDOW,
+                    )
+                    try:
+                        os.remove(wav_path)
+                    except Exception:
+                        pass
+                    if r.returncode == 0:
+                        _bad, _reason, _detail = _audio_quality_check(
+                            mp3_path, _text_by_idx.get(idx, ""))
+                        if _bad:
+                            _rename_bad_audio(mp3_path, idx, _reason, _detail)
+                            FAIL_COUNT += 1
+                        else:
+                            log(f"OK {idx}")
+                    else:
+                        log(f"❌ VieNeu FFMPEG lỗi line {idx}")
+                        log(f"FAIL {idx}")
+                        FAIL_COUNT += 1
+                else:
+                    log(f"❌ VieNeu không tạo được audio dòng {idx}")
+                    log(f"FAIL {idx}")
+                    FAIL_COUNT += 1
+                done_count += 1
+                app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+            elif line.startswith("WARN:"):
+                log(f"⚠ VieNeu {line}")
+            elif line.startswith("["):
+                log(f"  {line}")
+            elif line == "ALL_DONE":
+                break
+            elif line.startswith("ERROR:"):
+                try:
+                    _parts = line.split(":", 2)
+                    _fail_idx = int(_parts[1])
+                    log(f"❌ VieNeu {line}")
+                    log(f"FAIL {_fail_idx}")
+                    FAIL_COUNT += 1
+                    done_count += 1
+                    app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+                except (IndexError, ValueError):
+                    log(f"VieNeu {line}")
+            elif line.strip():
+                # Dòng lạ (traceback / cảnh báo) — log để chẩn đoán, không nuốt im lặng
+                log(f"  VieNeu: {line}")
+    except Exception as e:
+        log(f"VieNeu stream error: {e}")
+
+    proc.wait()
+    try:
+        RUNNING_PROCESSES.remove(proc)
+    except ValueError:
+        pass
+    try:
+        os.remove(texts_file)
+    except Exception:
+        pass
+
+    if proc.returncode != 0 and not stop_requested:
+        log(f"VieNeu kết thúc với lỗi (code={proc.returncode})")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    log("VieNeu DONE")
+    app.after(0, show_fireworks)
+    update_progress(total, total)
+    current_index = 0
+    app.after(0, lambda: set_mode("tts_done"))
+    app.after(200, open_output_folder)
+
+
+def _run_vieneu_batch_pdf():
+    """VieNeu-TTS batch cho PDF chunks — giống _run_vieneu_batch nhưng dùng PDF_CHUNKS."""
+    global current_index, stop_requested, FAIL_COUNT
+
+    if not PDF_CHUNKS:
+        log("[PDF] Chưa load file PDF")
+        return
+
+    FAIL_COUNT = 0
+
+    ok, model_dir, vieneu_py, helper = _vieneu_preflight()
+    if not ok:
+        return
+
+    app.after(0, lambda: set_mode("tts_running"))
+
+    items = [{"index": i, "text": chunk}
+             for i, chunk in enumerate(PDF_CHUNKS) if chunk.strip()]
+    _text_by_idx = {it["index"]: it["text"] for it in items}
+
+    texts_file = os.path.join(OUTPUT_DIR, "_vieneu_pdf_texts.json")
+    try:
+        import json as _json
+        with open(texts_file, 'w', encoding='utf-8') as f:
+            _json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"VieNeu PDF: Lỗi ghi texts file: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    total = len(PDF_CHUNKS)
+    log(f"VieNeu PDF: bắt đầu generate {len(items)}/{total} đoạn...")
+
+    cmd = _vieneu_build_cmd(vieneu_py, helper, texts_file, OUTPUT_DIR, model_dir)
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace',
+            creationflags=CREATE_NO_WINDOW,
+        )
+        RUNNING_PROCESSES.append(proc)
+    except Exception as e:
+        log(f"VieNeu PDF: Lỗi khởi chạy subprocess: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    done_count = 0
+    try:
+        for line in proc.stdout:
+            if stop_requested:
+                proc.terminate()
+                log("VieNeu PDF STOPPED")
+                app.after(0, lambda: set_mode("tts_stopped"))
+                return
+
+            line = line.rstrip()
+            if line.startswith("DONE:"):
+                try:
+                    idx = int(line.split(":")[1])
+                except (IndexError, ValueError):
+                    continue
+                wav_src  = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.wav")
+                mp3_path = os.path.join(OUTPUT_DIR, f"pdf_line_{idx:04d}.mp3")
+                if os.path.exists(wav_src):
+                    r = subprocess.run(
+                        [FFMPEG, "-y", "-i", wav_src, "-q:a", "2", mp3_path],
+                        capture_output=True, creationflags=CREATE_NO_WINDOW,
+                    )
+                    try:
+                        os.remove(wav_src)
+                    except Exception:
+                        pass
+                    if r.returncode == 0:
+                        _bad, _reason, _detail = _audio_quality_check(
+                            mp3_path, _text_by_idx.get(idx, ""))
+                        if _bad:
+                            _rename_bad_audio(mp3_path, idx, _reason, _detail, "PDF")
+                            FAIL_COUNT += 1
+                        else:
+                            log(f"[PDF] VieNeu OK {idx}")
+                    else:
+                        log(f"❌ VieNeu PDF FFMPEG lỗi line {idx}")
+                        log(f"[PDF] FAIL {idx}")
+                        FAIL_COUNT += 1
+                else:
+                    log(f"❌ VieNeu PDF không tạo được audio đoạn {idx}")
+                    log(f"[PDF] FAIL {idx}")
+                    FAIL_COUNT += 1
+                done_count += 1
+                app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+            elif line.startswith("WARN:"):
+                log(f"⚠ VieNeu PDF {line}")
+            elif line.startswith("["):
+                log(f"  {line}")
+            elif line == "ALL_DONE":
+                break
+            elif line.startswith("ERROR:"):
+                try:
+                    _parts = line.split(":", 2)
+                    _fail_idx = int(_parts[1])
+                    log(f"❌ VieNeu PDF {line}")
+                    log(f"[PDF] FAIL {_fail_idx}")
+                    FAIL_COUNT += 1
+                    done_count += 1
+                    app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+                except (IndexError, ValueError):
+                    log(f"VieNeu PDF {line}")
+            elif line.strip():
+                log(f"  VieNeu PDF: {line}")
+    except Exception as e:
+        log(f"VieNeu PDF stream error: {e}")
+
+    proc.wait()
+    try:
+        RUNNING_PROCESSES.remove(proc)
+    except ValueError:
+        pass
+    try:
+        os.remove(texts_file)
+    except Exception:
+        pass
+
+    if proc.returncode != 0 and not stop_requested:
+        log(f"VieNeu PDF kết thúc lỗi (code={proc.returncode})")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    log("[PDF] VieNeu DONE")
+    app.after(0, show_fireworks)
+    update_progress(total, total)
+    current_index = 0
+    app.after(0, lambda: set_mode("pdf_tts_done"))
+    app.after(200, open_output_folder)
+
+
 def start_tts():
 
     global paused
@@ -7288,6 +8059,11 @@ def start_tts():
     if VOXCPM_ENABLED:
         # VoxCPM chạy local — không cần internet
         threading.Thread(target=_run_voxcpm_batch, daemon=True).start()
+        return
+
+    if VIENEU_ENABLED:
+        # VieNeu chạy local (lần đầu cần internet để tải model)
+        threading.Thread(target=_run_vieneu_batch, daemon=True).start()
         return
 
     # Edge TTS / các provider online → cần internet
@@ -7622,6 +8398,43 @@ def _voxcpm_generate_one_sync(index, text, out_prefix="line_"):
     return True, ""
 
 
+def _vieneu_generate_one_sync(index, text, out_prefix="line_"):
+    """Tạo 1 dòng bằng VieNeu-TTS → {out_prefix}{index:04d}.mp3 trong OUTPUT_DIR.
+    Trả về (ok: bool, err: str)."""
+    import json as _json
+    ok, model_dir, vieneu_py, helper = _vieneu_preflight()
+    if not ok:
+        return False, "VieNeu pre-flight thất bại (xem log)"
+
+    tmp_json = os.path.join(OUTPUT_DIR, f"_regen_vieneu_{index}.json")
+    try:
+        with open(tmp_json, "w", encoding="utf-8") as f:
+            _json.dump([{"index": index, "text": text}], f, ensure_ascii=False)
+        cmd = _vieneu_build_cmd(vieneu_py, helper, tmp_json, OUTPUT_DIR, model_dir)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              creationflags=CREATE_NO_WINDOW)
+    finally:
+        try:
+            os.remove(tmp_json)
+        except Exception:
+            pass
+
+    gen_wav = os.path.join(OUTPUT_DIR, f"line_{index:04d}.wav")
+    if not os.path.isfile(gen_wav):
+        return False, f"VieNeu không tạo được wav. {(proc.stderr or '')[-200:]}"
+    mp3_path = os.path.join(OUTPUT_DIR, f"{out_prefix}{index:04d}.mp3")
+    r = subprocess.run([FFMPEG, "-y", "-i", gen_wav, "-q:a", "2", mp3_path],
+                       capture_output=True, creationflags=CREATE_NO_WINDOW)
+    try:
+        os.remove(gen_wav)
+    except Exception:
+        pass
+    if r.returncode != 0 or not os.path.isfile(mp3_path):
+        return False, "ffmpeg wav→mp3 lỗi"
+    return True, ""
+
+
 async def regenerate_line(index, text):
     """Tạo lại 1 dòng — áp dụng đầy đủ VoxCPM / RVC + kiểm tra chất lượng (QC)
     + retry giống các luồng generate chính, để dòng regen nhất quán với batch.
@@ -7652,6 +8465,23 @@ async def regenerate_line(index, text):
             None, _audio_quality_check, filename, text)
         if _bad:
             _rename_bad_audio(filename, index, _reason, _detail, "VoxCPM")
+            log(f"FAILED {index}")
+        else:
+            log(f"DONE {index}")
+        return
+
+    # ── VieNeu-TTS ─────────────────────────────────────────────────────────────
+    if VIENEU_ENABLED:
+        _vok, _verr = await _loop.run_in_executor(
+            None, _vieneu_generate_one_sync, index, text)
+        if not _vok:
+            log(f"❌ VieNeu regen lỗi: {_verr}")
+            log(f"FAILED {index}")
+            return
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if _bad:
+            _rename_bad_audio(filename, index, _reason, _detail, "VieNeu")
             log(f"FAILED {index}")
         else:
             log(f"DONE {index}")
@@ -7737,6 +8567,23 @@ async def regenerate_pdf_line(index, text):
             None, _voxcpm_generate_one_sync, index, text, "pdf_line_")
         if not _vok:
             log(f"❌ VoxCPM regen lỗi: {_verr}")
+            log(f"[PDF] FAILED {index}")
+            return
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if _bad:
+            _rename_bad_audio(filename, index, _reason, _detail, "PDF")
+            log(f"[PDF] FAILED {index}")
+        else:
+            log(f"[PDF] DONE {index}")
+        return
+
+    # ── VieNeu-TTS ─────────────────────────────────────────────────────────────
+    if VIENEU_ENABLED:
+        _vok, _verr = await _loop.run_in_executor(
+            None, _vieneu_generate_one_sync, index, text, "pdf_line_")
+        if not _vok:
+            log(f"❌ VieNeu regen lỗi: {_verr}")
             log(f"[PDF] FAILED {index}")
             return
         _bad, _reason, _detail = await _loop.run_in_executor(
@@ -10432,10 +11279,12 @@ def set_mode(mode):
 
     # Helpers
     _rvc_voxcpm_ctrls = [
-        rvc_enable_check, rvc_device_menu,
+        rvc_enable_check,
         rvc_model_entry, rvc_model_btn,
         rvc_index_entry, rvc_index_btn, rvc_pitch_entry,
         voxcpm_enable_check,
+        vieneu_enable_check, vieneu_model_entry, vieneu_model_btn,
+        vieneu_ref_entry, vieneu_ref_btn,
     ]
     _basic_voice_ctrls = [voice_menu, provider_menu, api_key_entry,
                           delay_min_entry, delay_max_entry]
