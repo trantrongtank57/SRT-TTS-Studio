@@ -1,7 +1,7 @@
 ==========================================================================
  SRT TTS STUDIO — CHECKLIST CHUYỂN SANG MÁY MỚI
 ==========================================================================
- Cập nhật: 2026-05-30
+ Cập nhật: 2026-06-08
  Mục đích: Đảm bảo đầy đủ mô hình & phụ thuộc khi cài app sang máy khác.
 ==========================================================================
 
@@ -48,28 +48,46 @@
  Chạy: SRT_TTS_Studio_Setup.msi
  → Đã có sẵn sau khi cài:
      - App chính + ffmpeg.exe / ffprobe.exe
-     - 8 companion script (rvc_helper, voxcpm_helper, whisper_stt,
-       audio_enhancer, pdf_helper, srt_align_helper, videocr_helper,
-       video_stt_helper)
+     - 11 companion script (rvc_helper, voxcpm_helper, vieneu_helper,
+       f5tts_helper, whisper_stt, audio_enhancer, pdf_helper,
+       srt_align_helper, videocr_helper, video_stt_helper, translate_helper)
      - hubert_base.pt, rmvpe.pt, và toàn bộ rvc_env\
  → Chạy được NGAY:
      Edge TTS, các provider TTS (FPT/Vbee/Zalo/EverAI/MiniMax),
-     video repair/scan/clean, Load SRT, Merge FFmpeg, PDF, RVC.
+     video repair/scan/clean, Load SRT, Merge FFmpeg, PDF, RVC,
+     dịch SRT/PDF/Word online (cần API key + internet).
 
 
 [2] PHẢI COPY THỦ CÔNG  (quá lớn, MSI không gói)
 --------------------------------------------------------------------------
  [ ] voxcpm_env\          ~6-8 GB   nguồn: E:\VoxCPM-1.5-VN\voxcpm_env\
                                     cần cho: VoxCPM, STT, audio enhance,
-                                             SRT align
+                                             SRT align, dịch offline, video-STT
  [ ] VoxCPM model         ~3.5 GB   nguồn: E:\VoxCPM-1.5-VN\VoxCPM\
                                            pretrained\VoxCPM-1.5-VN\
                                     cần cho: VoxCPM TTS
+ [ ] vieneu_env\          ~2-6 GB   nguồn: E:\vieneu_env\
+                                    cần cho: VieNeu-TTS
+                                    (model VieNeu tự tải HF lần đầu — cần net)
+ [ ] f5tts_env\           ~6-8 GB   nguồn: E:\f5tts_env\
+                                    cần cho: F5-TTS-Vietnamese
+                                    (đã cài non-editable → copy là đủ, KHÔNG
+                                     cần copy thư mục source F5-TTS-Vietnamese)
+ [ ] F5-TTS model         ~5 GB     nguồn: <dự án>\F5-TTS-Vietnamese-ViVoice\
+                                           (model_last.pt + vocab.txt)
+                                    cần cho: F5-TTS TTS
+                                    (vocos vocoder tự tải HF lần đầu — cần net)
  [ ] VideOCR CLI          nhỏ       nguồn: C:\Users\os\Downloads\
                                            Compressed\VideOCR-1.5.1\
                                     cần cho: Tách sub cứng (OCR)
+ [ ] Model dịch offline   ~1.5-2.5GB tùy chọn: NLLB-600M / envit5
+                                    cần cho: dịch provider "Offline"
  [ ] Subtitle Edit        nhỏ       cài bình thường
                                     cần cho: nút Open Subtitle Edit
+
+ ⚠ TORCH GPU theo TỪNG ENV: mỗi *_env dùng GPU chỉ khi env đó cài torch bản
+   CUDA. Hiện tại (máy gốc): voxcpm_env=cu126, vieneu_env=cu128, f5tts_env=cu126
+   (torch 2.7.1) → GPU; rvc_env=CPU. Copy nguyên env là giữ nguyên CPU/GPU.
 
 
 [3] CÁCH NHANH NHẤT (KHUYẾN NGHỊ) — COPY CẠNH FILE .EXE → KHỎI CẦN SETTINGS
@@ -82,6 +100,10 @@
        voxcpm_env\                      ← tự nhận
        VoxCPM\pretrained\VoxCPM-1.5-VN\ ← tự nhận (hoặc đặt folder tên
          (hoặc)  VoxCPM-1.5-VN\           "VoxCPM-1.5-VN" ngay cạnh exe)
+       vieneu_env\                      ← tự nhận
+       f5tts_env\                       ← tự nhận
+       F5-TTS-Vietnamese-ViVoice\       ← tự nhận (model F5-TTS: model_last.pt
+                                          + vocab.txt) — hoặc "F5-TTS-model\"
        VideOCR\CLI\                     ← tự nhận (hoặc "VideOCR-CLI\")
 
  → Mở app, xem dòng "KIỂM TRA HỆ THỐNG" trong logbox: tất cả phải ✅.
@@ -95,23 +117,53 @@
  [ ] VideOCR CLI folder    →  ...\VideOCR-1.5.1\...\CLI  (ở máy mới)
  [ ] VoxCPM model folder   →  thư mục VoxCPM-1.5-VN model (ở máy mới)
  [ ] voxcpm_env python.exe →  ...\voxcpm_env\Scripts\python.exe (máy mới)
+ [ ] VieNeu model folder   →  (để trống = tự tải HF) hoặc thư mục model local
+ [ ] vieneu_env python.exe →  ...\vieneu_env\Scripts\python.exe (máy mới)
+ [ ] F5-TTS model folder   →  ...\F5-TTS-Vietnamese-ViVoice (model_last.pt+vocab)
+ [ ] f5tts_env python.exe  →  ...\f5tts_env\Scripts\python.exe (máy mới)
  [ ] Subtitle Edit path    →  SubtitleEdit.exe (nếu không ở Program Files)
+ [ ] (tùy chọn) API key dịch + model dịch offline + env dịch riêng
 
 
-[4] MÔ HÌNH TỰ TẢI VỀ  (cần internet lần đầu — KHÔNG cần copy)
+[4] MÔ HÌNH TỰ TẢI VỀ TỪ HUGGINGFACE / TORCH.HUB
 --------------------------------------------------------------------------
-     - faster-whisper (tiny→large-v3)  → cache HuggingFace
-     - Silero VAD                      → torch.hub
-     - Demucs / noisereduce            → đã có trong voxcpm_env
+ Các model này KHÔNG nằm trong env hay thư mục model bạn copy — chúng nằm ở
+ CACHE:  %USERPROFILE%\.cache\huggingface\   (≈ 6-7 GB trên máy gốc)
+
+     - OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano  → ⚠ BẮT BUỘC cho VoxCPM
+     - charactr/vocos-mel-24khz                 → ⚠ BẮT BUỘC cho F5-TTS (vocoder)
+     - VieNeu model (pnnbao-ump/...)            → cho VieNeu-TTS
+     - Systran/faster-whisper-* (small→large-v3)→ cho STT / video-STT
+     - facebook/nllb-200-distilled-600M,
+       VietAI/envit5-translation, opus-mt-en-vi → cho dịch offline
+     - Silero VAD                               → torch.hub (SRT align)
+     - Demucs / noisereduce                     → đã có trong voxcpm_env
+
+ ┌────────────────────────────────────────────────────────────────────┐
+ │ MÁY MỚI CÓ INTERNET   → tự tải lần đầu mỗi model (chờ tải). KHÔNG    │
+ │                         cần copy gì ở mục [4].                       │
+ │ MÁY MỚI KHÔNG INTERNET → PHẢI copy cả thư mục                       │
+ │     C:\Users\<user_máy_gốc>\.cache\huggingface\                     │
+ │   sang                                                               │
+ │     C:\Users\<user_máy_mới>\.cache\huggingface\                     │
+ │   Nếu KHÔNG: VoxCPM lỗi (thiếu MOSS tokenizer) & F5-TTS lỗi (thiếu  │
+ │   vocos) DÙ đã copy đủ env + model. Đây là lỗi HAY GẶP & KHÓ ĐOÁN.  │
+ └────────────────────────────────────────────────────────────────────┘
+ (App sẽ tự kiểm tra & cảnh báo các model HF còn thiếu ở dòng
+  "KIỂM TRA HỆ THỐNG" trong logbox khi khởi động.)
 
 
 ==========================================================================
  ⚠ CẢNH BÁO QUAN TRỌNG
 ==========================================================================
- - Ổ đĩa máy mới có thể KHÔNG phải E:\. App giờ TỰ DÒ voxcpm_env / model
-   VoxCPM / VideOCR nếu đặt cạnh .exe (xem [3]). Chỉ khi đặt ở ổ/thư mục
-   KHÁC mới cần vào ⚙ Cài đặt trỏ lại — nếu không VoxCPM/STT báo "không
-   tìm thấy voxcpm_env python".
+ - Ổ đĩa máy mới có thể KHÔNG phải E:\. App giờ TỰ DÒ voxcpm_env / vieneu_env
+   / f5tts_env / model VoxCPM / model F5-TTS / VideOCR nếu đặt cạnh .exe
+   (xem [3]). Chỉ khi đặt ở ổ/thư mục KHÁC mới cần vào ⚙ Cài đặt trỏ lại.
+
+ - F5-TTS: env phải cài DẠNG NON-EDITABLE (pip install <path>, KHÔNG -e).
+   Nếu lỡ cài -e thì f5_tts trỏ về thư mục source gốc → copy env sang máy
+   khác sẽ lỗi "ModuleNotFoundError: f5_tts". (Máy gốc đã sửa thành
+   non-editable ngày 2026-06-08.)
 
  - Nếu BUILD LẠI từ đầu: hubert_base.pt và rmvpe.pt PHẢI có ở thư mục gốc
    dự án (đã copy về root ngày 2026-05-30). Thiếu → build_all.bat abort
