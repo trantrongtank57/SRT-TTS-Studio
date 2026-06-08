@@ -923,6 +923,8 @@ VIENEU_ENV_OVERRIDE = ""   # path tới vieneu_env\Scripts\python.exe; rỗng = 
 VIENEU_MODEL_DIR    = ""   # thư mục/HF repo model VieNeu; rỗng = tự tải từ HuggingFace
 F5TTS_ENV_OVERRIDE  = ""   # path tới f5tts_env\Scripts\python.exe; rỗng = tự tìm
 F5TTS_MODEL_DIR     = ""   # thư mục model F5-TTS-Vietnamese (chứa checkpoint .pt + vocab.txt)
+OMNIVOICE_ENV_OVERRIDE = ""   # path tới omnivoice_env\Scripts\python.exe; rỗng = tự tìm
+OMNIVOICE_MODEL_DIR    = ""   # thư mục/HF repo model OmniVoice; rỗng = tự tải từ HuggingFace
 
 # File lưu cài đặt (cạnh exe/script)
 _SETTINGS_FILE = os.path.join(
@@ -935,6 +937,7 @@ def _load_settings():
     """Đọc settings.json và áp dụng vào các global path."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global F5TTS_ENV_OVERRIDE, F5TTS_MODEL_DIR
+    global OMNIVOICE_ENV_OVERRIDE, OMNIVOICE_MODEL_DIR
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
     try:
@@ -955,6 +958,10 @@ def _load_settings():
                 F5TTS_ENV_OVERRIDE = d["f5tts_env_override"]
             if d.get("f5tts_model_dir"):
                 F5TTS_MODEL_DIR = d["f5tts_model_dir"]
+            if d.get("omnivoice_env_override"):
+                OMNIVOICE_ENV_OVERRIDE = d["omnivoice_env_override"]
+            if d.get("omnivoice_model_dir"):
+                OMNIVOICE_MODEL_DIR = d["omnivoice_model_dir"]
             if d.get("ffmpeg_dir"):
                 FFMPEG_DIR = d["ffmpeg_dir"]
                 # Áp dụng lại FFMPEG/FFPROBE ngay sau khi có FFMPEG_DIR
@@ -986,11 +993,13 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
                    local_translate_model_dir=None, local_translate_src_lang=None,
                    translate_env_override=None,
                    vieneu_env_override=None, vieneu_model_dir=None,
-                   f5tts_env_override=None, f5tts_model_dir=None):
+                   f5tts_env_override=None, f5tts_model_dir=None,
+                   omnivoice_env_override=None, omnivoice_model_dir=None):
     """Lưu settings.json và áp dụng ngay vào các global path.
-    Các tham số translate_*/local_*/vieneu_*/f5tts_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
+    Các tham số translate_*/local_*/vieneu_*/f5tts_*/omnivoice_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global F5TTS_ENV_OVERRIDE, F5TTS_MODEL_DIR
+    global OMNIVOICE_ENV_OVERRIDE, OMNIVOICE_MODEL_DIR
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
     VIDEOCR_CLI_DIR     = videocr_cli_dir
@@ -1000,6 +1009,8 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
     if vieneu_model_dir   is not None: VIENEU_MODEL_DIR    = vieneu_model_dir
     if f5tts_env_override is not None: F5TTS_ENV_OVERRIDE = f5tts_env_override
     if f5tts_model_dir    is not None: F5TTS_MODEL_DIR    = f5tts_model_dir
+    if omnivoice_env_override is not None: OMNIVOICE_ENV_OVERRIDE = omnivoice_env_override
+    if omnivoice_model_dir    is not None: OMNIVOICE_MODEL_DIR    = omnivoice_model_dir
     FFMPEG_DIR          = ffmpeg_dir
     if anthropic_api_key  is not None: ANTHROPIC_API_KEY  = anthropic_api_key
     if gemini_api_key     is not None: GEMINI_API_KEY     = gemini_api_key
@@ -1031,6 +1042,8 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
             "vieneu_model_dir":          VIENEU_MODEL_DIR,
             "f5tts_env_override":        F5TTS_ENV_OVERRIDE,
             "f5tts_model_dir":           F5TTS_MODEL_DIR,
+            "omnivoice_env_override":    OMNIVOICE_ENV_OVERRIDE,
+            "omnivoice_model_dir":       OMNIVOICE_MODEL_DIR,
         }
         with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
@@ -2095,6 +2108,206 @@ ctk.CTkLabel(f5tts_row_settings2, text="Tốc độ:", font=("Arial", 12)).pack(
 f5tts_speed_var = ctk.StringVar(value="1.0")
 ctk.CTkEntry(f5tts_row_settings2, textvariable=f5tts_speed_var, width=55, justify="center").pack(side="left")
 
+# ── OmniVoice Vietnamese (nhân bản giọng từ audio mẫu) ───────────────────────
+OMNIVOICE_ENABLED = False
+
+omnivoice_row_toggle = ctk.CTkFrame(voice_frame, fg_color="transparent")
+omnivoice_row_toggle.pack(fill="x", padx=2, pady=(0, 2))
+
+omnivoice_enable_var = ctk.BooleanVar(value=False)
+
+def _toggle_omnivoice_panel():
+    global OMNIVOICE_ENABLED
+    OMNIVOICE_ENABLED = omnivoice_enable_var.get()
+    if OMNIVOICE_ENABLED:
+        omnivoice_row_settings.pack(fill="x", padx=2, pady=(0, 4))
+        omnivoice_row_audio_proc.pack(fill="x", padx=2, pady=(0, 4))
+        omnivoice_row_settings2.pack(fill="x", padx=2, pady=(0, 4))
+    else:
+        omnivoice_row_settings.pack_forget()
+        omnivoice_row_audio_proc.pack_forget()
+        omnivoice_row_settings2.pack_forget()
+    app.update_idletasks()
+    req = voice_frame.winfo_reqheight()
+    try:
+        if len(_vpane.panes()) > 1:
+            _vpane.sash_place(0, 0, req)
+    except Exception:
+        pass
+    _apply_voice_exclusivity()
+
+omnivoice_enable_check = ctk.CTkCheckBox(
+    omnivoice_row_toggle,
+    text="OmniVoice Vietnamese (nhân bản giọng từ audio mẫu)",
+    variable=omnivoice_enable_var,
+    command=_toggle_omnivoice_panel,
+    font=("Arial", 13),
+)
+omnivoice_enable_check.pack(side="left", padx=(10, 16))
+
+# Row settings 1: model dir (tùy chọn — rỗng = tự tải từ HF) + audio mẫu
+omnivoice_row_settings = ctk.CTkFrame(voice_frame, fg_color="transparent")
+
+ctk.CTkLabel(omnivoice_row_settings, text="Model:", font=("Arial", 12)).pack(side="left", padx=(10, 4))
+# Tự dò model OmniVoice đặt CẠNH app/exe; settings.json (OMNIVOICE_MODEL_DIR) ưu tiên trước.
+# Rỗng = tự tải splendor1811/omnivoice-vietnamese từ HuggingFace.
+_omnivoice_default_model = OMNIVOICE_MODEL_DIR or _auto_find_dir(
+    "omnivoice-vietnamese", "OmniVoice-Vietnamese", "OmniVoice-model",
+)
+omnivoice_model_var = ctk.StringVar(value=_omnivoice_default_model)
+omnivoice_model_entry = ctk.CTkEntry(
+    omnivoice_row_settings, textvariable=omnivoice_model_var,
+    placeholder_text="Rỗng = tự tải từ HuggingFace...", width=240,
+)
+omnivoice_model_entry.pack(side="left", padx=(0, 4))
+
+def _browse_omnivoice_model():
+    path = filedialog.askdirectory(title="Chọn thư mục model OmniVoice (rỗng = tự tải từ HF)")
+    if path:
+        omnivoice_model_var.set(path)
+omnivoice_model_btn = ctk.CTkButton(omnivoice_row_settings, text="Browse", width=72, command=_browse_omnivoice_model)
+omnivoice_model_btn.pack(side="left", padx=(0, 14))
+
+ctk.CTkLabel(omnivoice_row_settings, text="Audio mẫu:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
+omnivoice_ref_var = ctk.StringVar(value="")
+omnivoice_ref_entry = ctk.CTkEntry(
+    omnivoice_row_settings, textvariable=omnivoice_ref_var,
+    placeholder_text="File WAV/MP3 giọng mẫu (5-15s)...", width=240,
+)
+omnivoice_ref_entry.pack(side="left", padx=(0, 4))
+
+def _browse_omnivoice_ref():
+    path = filedialog.askopenfilename(
+        title="Chọn audio mẫu giọng nói",
+        filetypes=[("Audio", "*.wav *.mp3 *.flac *.m4a"), ("All files", "*.*")],
+    )
+    if path:
+        omnivoice_ref_var.set(path)
+omnivoice_ref_btn = ctk.CTkButton(omnivoice_row_settings, text="Browse", width=72, command=_browse_omnivoice_ref)
+omnivoice_ref_btn.pack(side="left")
+
+# Row audio proc: lọc audio mẫu (tách nhạc / giảm ồn / lọc giọng) — như F5-TTS
+omnivoice_row_audio_proc = ctk.CTkFrame(voice_frame, fg_color="transparent")
+ctk.CTkLabel(omnivoice_row_audio_proc, text="Lọc audio mẫu:", font=("Arial", 12)).pack(side="left", padx=(10, 8))
+omnivoice_separate_var = ctk.BooleanVar(value=False)
+omnivoice_denoise_var  = ctk.BooleanVar(value=False)
+omnivoice_filter_var   = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(omnivoice_row_audio_proc, text="Tách nhạc",       variable=omnivoice_separate_var, width=110).pack(side="left", padx=(0, 4))
+ctk.CTkCheckBox(omnivoice_row_audio_proc, text="Giảm tiếng ồn",   variable=omnivoice_denoise_var,  width=130).pack(side="left", padx=(0, 4))
+ctk.CTkCheckBox(omnivoice_row_audio_proc, text="Lọc tần số giọng", variable=omnivoice_filter_var,  width=145).pack(side="left", padx=(0, 10))
+
+def _enhance_omnivoice_ref_audio():
+    """Chạy audio_enhancer.py trên audio mẫu OmniVoice, cập nhật ref_var sau khi xong.
+    audio_enhancer (demucs/denoise) cần torch → ưu tiên voxcpm_env, fallback omnivoice_env."""
+    ref_path = omnivoice_ref_var.get().strip()
+    if not ref_path or not os.path.exists(ref_path):
+        log("Lọc audio: Chưa chọn file Audio mẫu (OmniVoice)")
+        return
+    do_sep  = omnivoice_separate_var.get()
+    do_den  = omnivoice_denoise_var.get()
+    do_filt = omnivoice_filter_var.get()
+    if not do_sep and not do_den and not do_filt:
+        log("Lọc audio: Chọn ít nhất 1 bước xử lý")
+        return
+    enh_py = _find_voxcpm_python((voxcpm_ckpt_var.get() or "").strip() or os.getcwd())
+    if not enh_py:
+        enh_py = _find_omnivoice_python(omnivoice_model_var.get().strip())
+    if not enh_py:
+        log("Lọc audio: Không tìm thấy python có torch (voxcpm_env/omnivoice_env)")
+        return
+    enhancer = None
+    for _d in ([sys._MEIPASS] if hasattr(sys, '_MEIPASS') else []) + [
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(os.path.abspath(sys.argv[0])),
+        os.path.dirname(sys.executable),
+    ]:
+        _c = os.path.join(_d, 'audio_enhancer.py')
+        if os.path.exists(_c):
+            enhancer = _c
+            break
+    if not enhancer:
+        log("Lọc audio: Không tìm thấy audio_enhancer.py")
+        return
+
+    base, _ext = os.path.splitext(ref_path)
+    out_path = base + "_enhanced.wav"
+    cmd = [enh_py, enhancer, "--input", ref_path, "--output", out_path]
+    if do_sep:  cmd.append("--separate")
+    if do_den:  cmd.append("--denoise")
+    if do_filt: cmd.append("--filter")
+
+    def _run():
+        steps = ", ".join(filter(None, [
+            "Tách nhạc"     if do_sep  else "",
+            "Giảm tiếng ồn" if do_den  else "",
+            "Lọc tần số"    if do_filt else "",
+        ]))
+        log(f"Lọc audio (OmniVoice): {steps}...")
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            RUNNING_PROCESSES.append(proc)
+            update_progress(2, 100)
+            result_path = [None]
+            for raw in proc.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.startswith("PCT:"):
+                    try:
+                        _, n, m = line.split(":")
+                        update_progress(int(n), int(m))
+                    except Exception:
+                        pass
+                elif line.startswith("DONE:"):
+                    result_path[0] = line[5:]
+                elif line.startswith("ERROR:"):
+                    log(f"Lọc audio lỗi: {line[6:]}")
+            proc.wait(timeout=300)
+            stderr = proc.stderr.read()
+            if proc in RUNNING_PROCESSES:
+                RUNNING_PROCESSES.remove(proc)
+            if result_path[0] and os.path.exists(result_path[0]):
+                update_progress(100, 100)
+                app.after(0, lambda p=result_path[0]: omnivoice_ref_var.set(p))
+                log(f"Lọc audio OK → {os.path.basename(result_path[0])}")
+            elif proc.returncode != 0:
+                err = stderr.strip().splitlines()[-1] if stderr.strip() else "không có output"
+                log(f"Lọc audio lỗi: {err}")
+        except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+            log("Lọc audio: Timeout sau 300s")
+        except Exception as e:
+            log(f"Lọc audio lỗi: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+ctk.CTkButton(
+    omnivoice_row_audio_proc, text="Xử lý Audio", width=110,
+    command=_enhance_omnivoice_ref_audio,
+    fg_color="#5A3E8C", hover_color="#432E6B",
+).pack(side="left")
+
+# Row settings 2: ref text (lời thoại audio mẫu) + STT
+omnivoice_row_settings2 = ctk.CTkFrame(voice_frame, fg_color="transparent")
+
+ctk.CTkLabel(omnivoice_row_settings2, text="Nội dung mẫu:", font=("Arial", 12)).pack(side="left", padx=(10, 4))
+omnivoice_reftext_var = ctk.StringVar(value="")
+ctk.CTkEntry(
+    omnivoice_row_settings2, textvariable=omnivoice_reftext_var,
+    placeholder_text="Lời thoại đúng nội dung audio mẫu...", width=360,
+).pack(side="left", padx=(0, 4))
+ctk.CTkButton(
+    omnivoice_row_settings2, text="STT", width=54,
+    command=lambda: _omnivoice_transcribe_audio(),
+    fg_color="#1E6B3C", hover_color="#145229",
+).pack(side="left", padx=(0, 10))
+
 # ── Loại trừ lẫn nhau: Provider voice ↔ RVC ↔ VoxCPM ─────────────────────────
 # Tick RVC  → làm mờ Provider voice (provider/voice/delay/api key) + VoxCPM
 # Tick VoxCPM → làm mờ Provider voice + RVC (gồm cả Device)
@@ -2124,6 +2337,11 @@ _f5tts_all_ctrls = [
     f5tts_model_entry, f5tts_model_btn,
     f5tts_ref_entry, f5tts_ref_btn,
 ]
+_omnivoice_all_ctrls = [
+    omnivoice_enable_check,
+    omnivoice_model_entry, omnivoice_model_btn,
+    omnivoice_ref_entry, omnivoice_ref_btn,
+]
 
 def _set_state(widgets, state):
     for w in widgets:
@@ -2133,41 +2351,54 @@ def _set_state(widgets, state):
             pass
 
 def _apply_voice_exclusivity():
-    # Loại trừ lẫn nhau: chỉ 1 trong {Provider voice, RVC, VoxCPM, VieNeu, F5-TTS} hoạt động.
+    # Loại trừ lẫn nhau: chỉ 1 trong {Provider voice, RVC, VoxCPM, VieNeu, F5-TTS, OmniVoice} hoạt động.
     rvc_on = rvc_enable_var.get()
     vox_on = voxcpm_enable_var.get()
     vie_on = vieneu_enable_var.get()
     f5_on  = f5tts_enable_var.get()
+    omni_on = omnivoice_enable_var.get()
     if rvc_on:
         _set_state(_voice_block_ctrls, "disabled")
         _set_state(_voxcpm_all_ctrls, "disabled")
         _set_state(_vieneu_all_ctrls, "disabled")
         _set_state(_f5tts_all_ctrls, "disabled")
+        _set_state(_omnivoice_all_ctrls, "disabled")
         _set_state(_rvc_all_ctrls, "normal")
     elif vox_on:
         _set_state(_voice_block_ctrls, "disabled")
         _set_state(_rvc_all_ctrls, "disabled")
         _set_state(_vieneu_all_ctrls, "disabled")
         _set_state(_f5tts_all_ctrls, "disabled")
+        _set_state(_omnivoice_all_ctrls, "disabled")
         _set_state(_voxcpm_all_ctrls, "normal")
     elif vie_on:
         _set_state(_voice_block_ctrls, "disabled")
         _set_state(_rvc_all_ctrls, "disabled")
         _set_state(_voxcpm_all_ctrls, "disabled")
         _set_state(_f5tts_all_ctrls, "disabled")
+        _set_state(_omnivoice_all_ctrls, "disabled")
         _set_state(_vieneu_all_ctrls, "normal")
     elif f5_on:
         _set_state(_voice_block_ctrls, "disabled")
         _set_state(_rvc_all_ctrls, "disabled")
         _set_state(_voxcpm_all_ctrls, "disabled")
         _set_state(_vieneu_all_ctrls, "disabled")
+        _set_state(_omnivoice_all_ctrls, "disabled")
         _set_state(_f5tts_all_ctrls, "normal")
+    elif omni_on:
+        _set_state(_voice_block_ctrls, "disabled")
+        _set_state(_rvc_all_ctrls, "disabled")
+        _set_state(_voxcpm_all_ctrls, "disabled")
+        _set_state(_vieneu_all_ctrls, "disabled")
+        _set_state(_f5tts_all_ctrls, "disabled")
+        _set_state(_omnivoice_all_ctrls, "normal")
     else:
         _set_state(_voice_block_ctrls, "normal")
         _set_state(_rvc_all_ctrls, "normal")
         _set_state(_voxcpm_all_ctrls, "normal")
         _set_state(_vieneu_all_ctrls, "normal")
         _set_state(_f5tts_all_ctrls, "normal")
+        _set_state(_omnivoice_all_ctrls, "normal")
 
 # ── Quick TTS row ─────────────────────────────────────────────────────────────
 # Quick TTS: widget UI duoc tao o workspace "Text -> Audio" (xem phia duoi)
@@ -2244,13 +2475,24 @@ def _quick_tts_run():
                 log(f"[Quick TTS] ❌ F5-TTS: Chưa chọn/không tìm thấy file Audio mẫu: {_qt_ref}")
                 log("  • F5-TTS bắt buộc cần audio mẫu để nhân bản giọng")
                 return
+        elif OMNIVOICE_ENABLED:
+            _qt_model = omnivoice_model_var.get().strip()
+            if _qt_model and not os.path.isdir(_qt_model):
+                log(f"[Quick TTS] ❌ OmniVoice: Đường dẫn Model không tồn tại: {_qt_model}")
+                log("  • Để trống ô Model để tự tải, hoặc Browse lại thư mục đúng")
+                return
+            _qt_ref = omnivoice_ref_var.get().strip()
+            if not _qt_ref or not os.path.isfile(_qt_ref):
+                log(f"[Quick TTS] ❌ OmniVoice: Chưa chọn/không tìm thấy file Audio mẫu: {_qt_ref}")
+                log("  • OmniVoice bắt buộc cần audio mẫu để nhân bản giọng")
+                return
         elif RVC_ENABLED:
             if not _check_rvc_preflight():
                 return
 
-        # VoxCPM / VieNeu / F5-TTS chạy local; còn lại cần internet
+        # VoxCPM / VieNeu / F5-TTS / OmniVoice chạy local; còn lại cần internet
         if (not VOXCPM_ENABLED and not VIENEU_ENABLED and not F5TTS_ENABLED
-                and not _require_internet("Quick TTS")):
+                and not OMNIVOICE_ENABLED and not _require_internet("Quick TTS")):
             return
         log("[Quick TTS] Đang tạo audio...")
         update_progress(5, 100)
@@ -2357,6 +2599,35 @@ def _quick_tts_run():
                 gen_wav = os.path.join(out_dir, "line_0000.wav")
                 if not os.path.isfile(gen_wav):
                     log(f"[Quick TTS] ❌ F5-TTS không tạo được file. stderr: {proc.stderr[-300:]}")
+                    if os.path.isfile(tmp_json): os.remove(tmp_json)
+                    return
+                update_progress(70, 100)
+                ffmpeg = get_ffmpeg()
+                subprocess.run(
+                    [ffmpeg, "-y", "-i", gen_wav, "-q:a", "2", out],
+                    creationflags=CREATE_NO_WINDOW, capture_output=True,
+                )
+                if os.path.isfile(gen_wav): os.remove(gen_wav)
+                if os.path.isfile(tmp_json): os.remove(tmp_json)
+            elif OMNIVOICE_ENABLED:
+                # OmniVoice: gọi helper subprocess cho 1 dòng text
+                import json as _json
+                _ok, _model_dir, _omni_py, _helper = _omnivoice_preflight()
+                if not _ok:
+                    return
+                out_dir  = os.path.dirname(os.path.abspath(out))
+                tmp_json = os.path.join(out_dir, "_quick_tts_omnivoice.json")
+                with open(tmp_json, "w", encoding="utf-8") as f:
+                    _json.dump([{"index": 0, "text": text}], f, ensure_ascii=False)
+                cmd = _omnivoice_build_cmd(_omni_py, _helper, tmp_json, out_dir, _model_dir)
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                gen_wav = os.path.join(out_dir, "line_0000.wav")
+                if not os.path.isfile(gen_wav):
+                    log(f"[Quick TTS] ❌ OmniVoice không tạo được file. stderr: {proc.stderr[-300:]}")
                     if os.path.isfile(tmp_json): os.remove(tmp_json)
                     return
                 update_progress(70, 100)
@@ -3876,6 +4147,23 @@ def show_settings_dialog():
                 filetypes=[("Python", "python.exe"), ("All", "*.*")]))
     ).pack(side="left")
 
+    # 3f. OmniVoice model dir (tùy chọn — rỗng = tự tải từ HuggingFace)
+    v_omni_model, _, fr3f = _row(body, "OmniVoice model folder:")
+    v_omni_model.set(OMNIVOICE_MODEL_DIR)
+    ctk.CTkButton(fr3f, text="Browse", width=72,
+        command=lambda: (lambda p: v_omni_model.set(p) if p else None)(
+            filedialog.askdirectory(title="Chọn thư mục model OmniVoice (rỗng = tự tải)"))
+    ).pack(side="left")
+
+    # 3g. omnivoice_env python.exe override
+    v_omni_env, _, fr3g = _row(body, "omnivoice_env python.exe:")
+    v_omni_env.set(OMNIVOICE_ENV_OVERRIDE)
+    ctk.CTkButton(fr3g, text="Browse", width=72,
+        command=lambda: (lambda p: v_omni_env.set(p) if p else None)(
+            filedialog.askopenfilename(title="Chọn python.exe của omnivoice_env",
+                filetypes=[("Python", "python.exe"), ("All", "*.*")]))
+    ).pack(side="left")
+
     # 4. Subtitle Edit exe
     v_se, _, fr4 = _row(body, "SubtitleEdit.exe:")
     v_se.set(SUBTITLE_EDIT_PATH)
@@ -4015,6 +4303,8 @@ def show_settings_dialog():
             vieneu_model_dir          = v_vieneu_model.get().strip(),
             f5tts_env_override        = v_f5_env.get().strip(),
             f5tts_model_dir           = v_f5_model.get().strip(),
+            omnivoice_env_override    = v_omni_env.get().strip(),
+            omnivoice_model_dir       = v_omni_model.get().strip(),
         )
         if ckpt:
             voxcpm_ckpt_var.set(ckpt)
@@ -4024,6 +4314,10 @@ def show_settings_dialog():
             pass
         try:
             f5tts_model_var.set(v_f5_model.get().strip())
+        except Exception:
+            pass
+        try:
+            omnivoice_model_var.set(v_omni_model.get().strip())
         except Exception:
             pass
         log("✅ Đã lưu cài đặt đường dẫn.")
@@ -6633,6 +6927,11 @@ def start_pdf_tts():
         threading.Thread(target=_run_f5tts_batch_pdf, daemon=True).start()
         return
 
+    if OMNIVOICE_ENABLED:
+        # OmniVoice chạy local (lần đầu cần internet để tải model)
+        threading.Thread(target=_run_omnivoice_batch_pdf, daemon=True).start()
+        return
+
     # Edge TTS / các provider online → cần internet
     if not _require_internet("PDF TTS"):
         return
@@ -7628,6 +7927,92 @@ def _f5tts_transcribe_audio():
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _omnivoice_transcribe_audio():
+    """STT audio mẫu OmniVoice → điền vào Nội dung mẫu (dùng Whisper local).
+    Whisper cài trong voxcpm_env → ưu tiên python đó; fallback omnivoice_env."""
+    ref_path = omnivoice_ref_var.get().strip()
+    if not ref_path or not os.path.exists(ref_path):
+        log("STT: Chưa chọn file Audio mẫu (OmniVoice)")
+        return
+
+    # Python có Whisper: voxcpm_env trước (nơi cài whisper_stt), rồi omnivoice_env
+    stt_py = _find_voxcpm_python((voxcpm_ckpt_var.get() or "").strip() or os.getcwd())
+    if not stt_py:
+        stt_py = _find_omnivoice_python(omnivoice_model_var.get().strip())
+    if not stt_py:
+        log("STT: Không tìm thấy python có Whisper (voxcpm_env/omnivoice_env)")
+        return
+
+    # Tìm whisper_stt.py
+    stt_helper = None
+    for _d in ([sys._MEIPASS] if hasattr(sys, '_MEIPASS') else []) + [
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(os.path.abspath(sys.argv[0])),
+        os.path.dirname(sys.executable),
+    ]:
+        _c = os.path.join(_d, 'whisper_stt.py')
+        if os.path.exists(_c):
+            stt_helper = _c
+            break
+    if not stt_helper:
+        log("STT: Không tìm thấy whisper_stt.py")
+        return
+
+    def _run():
+        log("STT (OmniVoice): Đang nhận dạng audio mẫu (Whisper large-v3)...")
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                [stt_py, stt_helper, "--audio", ref_path, "--model", "large-v3", "--lang", "vi"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            RUNNING_PROCESSES.append(proc)
+            update_progress(2, 100)
+
+            _err_lines = []
+            def _read_err():
+                for ln in proc.stderr:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    if ln.startswith("PROGRESS:"):
+                        try:
+                            _, n, m = ln.split(":")
+                            pct = 5 + int(90 * int(n) / max(int(m), 1))
+                            update_progress(pct, 100)
+                        except Exception:
+                            pass
+                    else:
+                        _err_lines.append(ln)
+            _terr = threading.Thread(target=_read_err, daemon=True)
+            _terr.start()
+
+            stdout = proc.stdout.read()
+            proc.wait(timeout=120)
+            _terr.join(timeout=2)
+            if proc in RUNNING_PROCESSES:
+                RUNNING_PROCESSES.remove(proc)
+
+            transcript = (stdout or "").strip()
+            if proc.returncode != 0 or not transcript:
+                err = _err_lines[-1] if _err_lines else "không có output"
+                log(f"STT lỗi: {err}")
+                return
+            update_progress(100, 100)
+            app.after(0, lambda t=transcript: omnivoice_reftext_var.set(t))
+            log(f"STT OK (OmniVoice): {transcript}")
+        except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+            log("STT: Timeout sau 120s")
+        except Exception as e:
+            log(f"STT lỗi: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _find_voxcpm_python(ckpt_dir):
     """Tìm voxcpm_env/Scripts/python.exe bằng cách đi lên từ ckpt_dir."""
     if VOXCPM_ENV_OVERRIDE and os.path.isfile(VOXCPM_ENV_OVERRIDE):
@@ -7693,6 +8078,30 @@ def _find_f5tts_python(model_dir=""):
     # 2) Dò f5tts_env nằm CẠNH app / trong parents
     for base in _install_dirs():
         candidate = os.path.join(base, 'f5tts_env', 'Scripts', 'python.exe')
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _find_omnivoice_python(model_dir=""):
+    """Tìm omnivoice_env/Scripts/python.exe (override → cạnh model → cạnh app/parents)."""
+    if OMNIVOICE_ENV_OVERRIDE and os.path.isfile(OMNIVOICE_ENV_OVERRIDE):
+        return OMNIVOICE_ENV_OVERRIDE
+    # 1) Leo lên từ thư mục model (nếu có model local)
+    search = model_dir
+    for _ in range(6):
+        if not search:
+            break
+        candidate = os.path.join(search, 'omnivoice_env', 'Scripts', 'python.exe')
+        if os.path.exists(candidate):
+            return candidate
+        parent = os.path.dirname(search)
+        if parent == search:
+            break
+        search = parent
+    # 2) Dò omnivoice_env nằm CẠNH app / trong parents
+    for base in _install_dirs():
+        candidate = os.path.join(base, 'omnivoice_env', 'Scripts', 'python.exe')
         if os.path.exists(candidate):
             return candidate
     return None
@@ -8826,6 +9235,354 @@ def _run_f5tts_batch_pdf():
     app.after(200, open_output_folder)
 
 
+# ── OmniVoice Vietnamese backend ─────────────────────────────────────────────
+def _omnivoice_find_helper():
+    """Tìm omnivoice_helper.py — sys._MEIPASS → exe dir → script dir."""
+    _dirs = []
+    if hasattr(sys, '_MEIPASS'):
+        _dirs.append(sys._MEIPASS)
+    try:
+        _dirs.append(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        pass
+    try:
+        _dirs.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+    except Exception:
+        pass
+    _dirs.append(os.path.dirname(sys.executable))
+    for _d in _dirs:
+        _c = os.path.join(_d, 'omnivoice_helper.py')
+        if os.path.exists(_c):
+            return _c
+    return None
+
+
+def _omnivoice_preflight():
+    """Kiểm tra OmniVoice trước khi chạy. Trả về (ok, model_dir, omni_py, helper).
+    Model dir TÙY CHỌN (rỗng = tự tải từ HuggingFace); audio mẫu BẮT BUỘC."""
+    model_dir = omnivoice_model_var.get().strip()
+    if model_dir and not os.path.isdir(model_dir):
+        log(f"❌ OmniVoice: Đường dẫn Model không tồn tại: {model_dir}")
+        log("  • Để trống ô Model để tự tải từ HuggingFace, hoặc Browse lại thư mục đúng")
+        return False, "", None, None
+
+    ref_audio = omnivoice_ref_var.get().strip()
+    if not ref_audio:
+        log("❌ OmniVoice: Chưa chọn file Audio mẫu — OmniVoice bắt buộc cần audio mẫu để nhân bản giọng")
+        log("  • Browse ô Audio mẫu để chọn file WAV/MP3 giọng cần nhân bản (5-15s)")
+        return False, "", None, None
+    if not os.path.isfile(ref_audio):
+        log(f"❌ OmniVoice: Không tìm thấy file Audio mẫu: {ref_audio}")
+        log("  • Browse lại để chọn đúng file audio mẫu")
+        return False, "", None, None
+
+    omni_py = _find_omnivoice_python(model_dir)
+    if not omni_py:
+        log("❌ OmniVoice: Không tìm thấy omnivoice_env\\Scripts\\python.exe — tiến trình bị hủy")
+        log("  • Đảm bảo thư mục omnivoice_env\\ nằm cạnh app/exe")
+        log("  • Có thể cấu hình python tùy chỉnh trong ⚙ Cài đặt → omnivoice_env python.exe")
+        return False, "", None, None
+
+    helper = _omnivoice_find_helper()
+    if not helper:
+        log("❌ OmniVoice: Không tìm thấy omnivoice_helper.py — tiến trình bị hủy")
+        log("  • Đảm bảo omnivoice_helper.py nằm cùng thư mục với app hoặc exe")
+        return False, "", None, None
+    return True, model_dir, omni_py, helper
+
+
+def _omnivoice_build_cmd(omni_py, helper, texts_file, out_dir, model_dir):
+    """Dựng lệnh gọi omnivoice_helper.py với các tham số UI hiện tại."""
+    cmd = [omni_py, helper,
+           '--texts-json', texts_file,
+           '--output-dir', out_dir,
+           '--reference', omnivoice_ref_var.get().strip(),
+           '--device', 'auto']
+    if model_dir:
+        cmd += ['--model-dir', model_dir]
+    ref_text = omnivoice_reftext_var.get().strip()
+    if ref_text:
+        cmd += ['--reference-text', ref_text]
+    return cmd
+
+
+def _run_omnivoice_batch():
+    """Chạy OmniVoice batch generation cho SRT trong daemon thread."""
+    global current_index, stop_requested, FAIL_COUNT
+
+    load_subtitles(force_select=False)
+    if not subtitles_cache:
+        return
+
+    FAIL_COUNT = 0
+
+    ok, model_dir, omni_py, helper = _omnivoice_preflight()
+    if not ok:
+        return
+
+    app.after(0, lambda: set_mode("tts_running"))
+
+    items = []
+    for i, sub in enumerate(subtitles_cache):
+        text = clean_text(sub.content)
+        if text:
+            items.append({"index": i, "text": text})
+    _text_by_idx = {it["index"]: it["text"] for it in items}
+
+    texts_file = os.path.join(OUTPUT_DIR, "_omnivoice_texts.json")
+    try:
+        with open(texts_file, 'w', encoding='utf-8') as f:
+            import json as _json
+            _json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"OmniVoice: Lỗi ghi texts file: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    total = len(subtitles_cache)
+    log(f"OmniVoice: bắt đầu generate {len(items)}/{total} dòng...")
+
+    cmd = _omnivoice_build_cmd(omni_py, helper, texts_file, OUTPUT_DIR, model_dir)
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace',
+            creationflags=CREATE_NO_WINDOW,
+        )
+        RUNNING_PROCESSES.append(proc)
+    except Exception as e:
+        log(f"OmniVoice: Lỗi khởi chạy subprocess: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    done_count = 0
+    try:
+        for line in proc.stdout:
+            if stop_requested:
+                proc.terminate()
+                log("OmniVoice STOPPED")
+                app.after(0, lambda: set_mode("tts_stopped"))
+                return
+
+            line = line.rstrip()
+            if line.startswith("DONE:"):
+                try:
+                    idx = int(line.split(":")[1])
+                except (IndexError, ValueError):
+                    continue
+                wav_path = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.wav")
+                mp3_path = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.mp3")
+                if os.path.exists(wav_path):
+                    r = subprocess.run(
+                        [FFMPEG, "-y", "-i", wav_path, "-q:a", "2", mp3_path],
+                        capture_output=True, creationflags=CREATE_NO_WINDOW,
+                    )
+                    try:
+                        os.remove(wav_path)
+                    except Exception:
+                        pass
+                    if r.returncode == 0:
+                        _bad, _reason, _detail = _audio_quality_check(
+                            mp3_path, _text_by_idx.get(idx, ""))
+                        if _bad:
+                            _rename_bad_audio(mp3_path, idx, _reason, _detail)
+                            FAIL_COUNT += 1
+                        else:
+                            log(f"OK {idx}")
+                    else:
+                        log(f"❌ OmniVoice FFMPEG lỗi line {idx}")
+                        log(f"FAIL {idx}")
+                        FAIL_COUNT += 1
+                else:
+                    log(f"❌ OmniVoice không tạo được audio dòng {idx}")
+                    log(f"FAIL {idx}")
+                    FAIL_COUNT += 1
+                done_count += 1
+                app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+            elif line.startswith("WARN:"):
+                log(f"⚠ OmniVoice {line}")
+            elif line.startswith("["):
+                log(f"  {line}")
+            elif line == "ALL_DONE":
+                break
+            elif line.startswith("ERROR:"):
+                try:
+                    _parts = line.split(":", 2)
+                    _fail_idx = int(_parts[1])
+                    log(f"❌ OmniVoice {line}")
+                    log(f"FAIL {_fail_idx}")
+                    FAIL_COUNT += 1
+                    done_count += 1
+                    app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+                except (IndexError, ValueError):
+                    log(f"OmniVoice {line}")
+            elif line.strip():
+                log(f"  OmniVoice: {line}")
+    except Exception as e:
+        log(f"OmniVoice stream error: {e}")
+
+    proc.wait()
+    try:
+        RUNNING_PROCESSES.remove(proc)
+    except ValueError:
+        pass
+    try:
+        os.remove(texts_file)
+    except Exception:
+        pass
+
+    if proc.returncode != 0 and not stop_requested:
+        log(f"OmniVoice kết thúc với lỗi (code={proc.returncode})")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    log("OmniVoice DONE")
+    app.after(0, show_fireworks)
+    update_progress(total, total)
+    current_index = 0
+    app.after(0, lambda: set_mode("tts_done"))
+    app.after(200, open_output_folder)
+
+
+def _run_omnivoice_batch_pdf():
+    """OmniVoice batch cho PDF chunks — giống _run_omnivoice_batch nhưng dùng PDF_CHUNKS."""
+    global current_index, stop_requested, FAIL_COUNT
+
+    if not PDF_CHUNKS:
+        log("[PDF] Chưa load file PDF")
+        return
+
+    FAIL_COUNT = 0
+
+    ok, model_dir, omni_py, helper = _omnivoice_preflight()
+    if not ok:
+        return
+
+    app.after(0, lambda: set_mode("tts_running"))
+
+    items = [{"index": i, "text": chunk}
+             for i, chunk in enumerate(PDF_CHUNKS) if chunk.strip()]
+    _text_by_idx = {it["index"]: it["text"] for it in items}
+
+    texts_file = os.path.join(OUTPUT_DIR, "_omnivoice_pdf_texts.json")
+    try:
+        import json as _json
+        with open(texts_file, 'w', encoding='utf-8') as f:
+            _json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"OmniVoice PDF: Lỗi ghi texts file: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    total = len(PDF_CHUNKS)
+    log(f"OmniVoice PDF: bắt đầu generate {len(items)}/{total} đoạn...")
+
+    cmd = _omnivoice_build_cmd(omni_py, helper, texts_file, OUTPUT_DIR, model_dir)
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace',
+            creationflags=CREATE_NO_WINDOW,
+        )
+        RUNNING_PROCESSES.append(proc)
+    except Exception as e:
+        log(f"OmniVoice PDF: Lỗi khởi chạy subprocess: {e}")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    done_count = 0
+    try:
+        for line in proc.stdout:
+            if stop_requested:
+                proc.terminate()
+                log("OmniVoice PDF STOPPED")
+                app.after(0, lambda: set_mode("tts_stopped"))
+                return
+
+            line = line.rstrip()
+            if line.startswith("DONE:"):
+                try:
+                    idx = int(line.split(":")[1])
+                except (IndexError, ValueError):
+                    continue
+                wav_src  = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.wav")
+                mp3_path = os.path.join(OUTPUT_DIR, f"pdf_line_{idx:04d}.mp3")
+                if os.path.exists(wav_src):
+                    r = subprocess.run(
+                        [FFMPEG, "-y", "-i", wav_src, "-q:a", "2", mp3_path],
+                        capture_output=True, creationflags=CREATE_NO_WINDOW,
+                    )
+                    try:
+                        os.remove(wav_src)
+                    except Exception:
+                        pass
+                    if r.returncode == 0:
+                        _bad, _reason, _detail = _audio_quality_check(
+                            mp3_path, _text_by_idx.get(idx, ""))
+                        if _bad:
+                            _rename_bad_audio(mp3_path, idx, _reason, _detail, "PDF")
+                            FAIL_COUNT += 1
+                        else:
+                            log(f"[PDF] OmniVoice OK {idx}")
+                    else:
+                        log(f"❌ OmniVoice PDF FFMPEG lỗi line {idx}")
+                        log(f"[PDF] FAIL {idx}")
+                        FAIL_COUNT += 1
+                else:
+                    log(f"❌ OmniVoice PDF không tạo được audio đoạn {idx}")
+                    log(f"[PDF] FAIL {idx}")
+                    FAIL_COUNT += 1
+                done_count += 1
+                app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+            elif line.startswith("WARN:"):
+                log(f"⚠ OmniVoice PDF {line}")
+            elif line.startswith("["):
+                log(f"  {line}")
+            elif line == "ALL_DONE":
+                break
+            elif line.startswith("ERROR:"):
+                try:
+                    _parts = line.split(":", 2)
+                    _fail_idx = int(_parts[1])
+                    log(f"❌ OmniVoice PDF {line}")
+                    log(f"[PDF] FAIL {_fail_idx}")
+                    FAIL_COUNT += 1
+                    done_count += 1
+                    app.after(0, lambda i=done_count, t=len(items): update_progress(i, t))
+                except (IndexError, ValueError):
+                    log(f"OmniVoice PDF {line}")
+            elif line.strip():
+                log(f"  OmniVoice PDF: {line}")
+    except Exception as e:
+        log(f"OmniVoice PDF stream error: {e}")
+
+    proc.wait()
+    try:
+        RUNNING_PROCESSES.remove(proc)
+    except ValueError:
+        pass
+    try:
+        os.remove(texts_file)
+    except Exception:
+        pass
+
+    if proc.returncode != 0 and not stop_requested:
+        log(f"OmniVoice PDF kết thúc lỗi (code={proc.returncode})")
+        app.after(0, lambda: set_mode("tts_stopped"))
+        return
+
+    log("[PDF] OmniVoice DONE")
+    app.after(0, show_fireworks)
+    update_progress(total, total)
+    current_index = 0
+    app.after(0, lambda: set_mode("pdf_tts_done"))
+    app.after(200, open_output_folder)
+
+
 def start_tts():
 
     global paused
@@ -8847,6 +9604,11 @@ def start_tts():
     if F5TTS_ENABLED:
         # F5-TTS chạy local — không cần internet
         threading.Thread(target=_run_f5tts_batch, daemon=True).start()
+        return
+
+    if OMNIVOICE_ENABLED:
+        # OmniVoice chạy local (lần đầu cần internet để tải model)
+        threading.Thread(target=_run_omnivoice_batch, daemon=True).start()
         return
 
     # Edge TTS / các provider online → cần internet
@@ -9255,6 +10017,43 @@ def _f5tts_generate_one_sync(index, text, out_prefix="line_"):
     return True, ""
 
 
+def _omnivoice_generate_one_sync(index, text, out_prefix="line_"):
+    """Tạo 1 dòng bằng OmniVoice → {out_prefix}{index:04d}.mp3 trong OUTPUT_DIR.
+    Trả về (ok: bool, err: str)."""
+    import json as _json
+    ok, model_dir, omni_py, helper = _omnivoice_preflight()
+    if not ok:
+        return False, "OmniVoice pre-flight thất bại (xem log)"
+
+    tmp_json = os.path.join(OUTPUT_DIR, f"_regen_omnivoice_{index}.json")
+    try:
+        with open(tmp_json, "w", encoding="utf-8") as f:
+            _json.dump([{"index": index, "text": text}], f, ensure_ascii=False)
+        cmd = _omnivoice_build_cmd(omni_py, helper, tmp_json, OUTPUT_DIR, model_dir)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              creationflags=CREATE_NO_WINDOW)
+    finally:
+        try:
+            os.remove(tmp_json)
+        except Exception:
+            pass
+
+    gen_wav = os.path.join(OUTPUT_DIR, f"line_{index:04d}.wav")
+    if not os.path.isfile(gen_wav):
+        return False, f"OmniVoice không tạo được wav. {(proc.stderr or '')[-200:]}"
+    mp3_path = os.path.join(OUTPUT_DIR, f"{out_prefix}{index:04d}.mp3")
+    r = subprocess.run([FFMPEG, "-y", "-i", gen_wav, "-q:a", "2", mp3_path],
+                       capture_output=True, creationflags=CREATE_NO_WINDOW)
+    try:
+        os.remove(gen_wav)
+    except Exception:
+        pass
+    if r.returncode != 0 or not os.path.isfile(mp3_path):
+        return False, "ffmpeg wav→mp3 lỗi"
+    return True, ""
+
+
 async def regenerate_line(index, text):
     """Tạo lại 1 dòng — áp dụng đầy đủ VoxCPM / RVC + kiểm tra chất lượng (QC)
     + retry giống các luồng generate chính, để dòng regen nhất quán với batch.
@@ -9319,6 +10118,23 @@ async def regenerate_line(index, text):
             None, _audio_quality_check, filename, text)
         if _bad:
             _rename_bad_audio(filename, index, _reason, _detail, "F5-TTS")
+            log(f"FAILED {index}")
+        else:
+            log(f"DONE {index}")
+        return
+
+    # ── OmniVoice Vietnamese ────────────────────────────────────────────────────
+    if OMNIVOICE_ENABLED:
+        _vok, _verr = await _loop.run_in_executor(
+            None, _omnivoice_generate_one_sync, index, text)
+        if not _vok:
+            log(f"❌ OmniVoice regen lỗi: {_verr}")
+            log(f"FAILED {index}")
+            return
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if _bad:
+            _rename_bad_audio(filename, index, _reason, _detail, "OmniVoice")
             log(f"FAILED {index}")
         else:
             log(f"DONE {index}")
@@ -9438,6 +10254,23 @@ async def regenerate_pdf_line(index, text):
             None, _f5tts_generate_one_sync, index, text, "pdf_line_")
         if not _vok:
             log(f"❌ F5-TTS regen lỗi: {_verr}")
+            log(f"[PDF] FAILED {index}")
+            return
+        _bad, _reason, _detail = await _loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if _bad:
+            _rename_bad_audio(filename, index, _reason, _detail, "PDF")
+            log(f"[PDF] FAILED {index}")
+        else:
+            log(f"[PDF] DONE {index}")
+        return
+
+    # ── OmniVoice Vietnamese ────────────────────────────────────────────────────
+    if OMNIVOICE_ENABLED:
+        _vok, _verr = await _loop.run_in_executor(
+            None, _omnivoice_generate_one_sync, index, text, "pdf_line_")
+        if not _vok:
+            log(f"❌ OmniVoice regen lỗi: {_verr}")
             log(f"[PDF] FAILED {index}")
             return
         _bad, _reason, _detail = await _loop.run_in_executor(
@@ -12141,6 +12974,8 @@ def set_mode(mode):
         vieneu_ref_entry, vieneu_ref_btn,
         f5tts_enable_check, f5tts_model_entry, f5tts_model_btn,
         f5tts_ref_entry, f5tts_ref_btn,
+        omnivoice_enable_check, omnivoice_model_entry, omnivoice_model_btn,
+        omnivoice_ref_entry, omnivoice_ref_btn,
     ]
     _basic_voice_ctrls = [voice_menu, provider_menu, api_key_entry,
                           delay_min_entry, delay_max_entry]
@@ -13362,18 +14197,33 @@ def _run_startup_diagnostics():
         log_color("⚠ F5-TTS model: chưa có (cần model_last.pt + vocab.txt) — đặt cạnh exe hoặc trỏ ⚙ Cài đặt",
                   _YEL, force_color=True)
 
+    # 11b. OmniVoice env (model tự tải từ HF — không cần thư mục local)
+    try:
+        _omni_model = omnivoice_model_var.get().strip()
+    except Exception:
+        _omni_model = OMNIVOICE_MODEL_DIR
+    if _find_omnivoice_python(_omni_model):
+        log_color("✅ omnivoice_env python: OK (OmniVoice Vietnamese)", _OK)
+    else:
+        log_color("⚠ omnivoice_env python: chưa tìm thấy — OmniVoice tắt. Đặt omnivoice_env cạnh exe hoặc trỏ ⚙ Cài đặt",
+                  _YEL, force_color=True)
+
     # 12. Model HuggingFace tải-runtime (KHÔNG nằm trong thư mục model copy tay).
     #     Trên máy CÓ net sẽ tự tải lần đầu; máy KHÔNG net phải copy %USERPROFILE%\.cache\huggingface.
     #     Hai cái dưới đây là phụ thuộc ẩn hay bị quên:
     #       - MOSS-Audio-Tokenizer-Nano: BẮT BUỘC cho VoxCPM
     #       - vocos-mel-24khz:           BẮT BUỘC cho F5-TTS (vocoder)
+    #       - VieNeu-TTS-v3-Turbo:       model VieNeu (tự tải nếu không trỏ thư mục local)
+    #       - omnivoice-vietnamese:      model OmniVoice (tự tải nếu không trỏ thư mục local)
     _hf_checks = [
         ("OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano", "VoxCPM (audio tokenizer)"),
         ("charactr/vocos-mel-24khz",                 "F5-TTS (vocoder)"),
+        ("pnnbao-ump/VieNeu-TTS-v3-Turbo",           "VieNeu-TTS (model)"),
+        ("splendor1811/omnivoice-vietnamese",        "OmniVoice (model)"),
     ]
     _hf_missing = [(rid, feat) for rid, feat in _hf_checks if not _hf_cache_has(rid)]
     if not _hf_missing:
-        log_color("✅ Model HF cache (MOSS tokenizer, vocos): OK", _OK)
+        log_color("✅ Model HF cache (MOSS, vocos, VieNeu, OmniVoice): OK", _OK)
     else:
         for rid, feat in _hf_missing:
             log_color(f"⚠ Model HF chưa có cache: {rid} — cần cho {feat}",

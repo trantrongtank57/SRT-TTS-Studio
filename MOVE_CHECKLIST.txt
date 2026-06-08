@@ -48,8 +48,8 @@
  Chạy: SRT_TTS_Studio_Setup.msi
  → Đã có sẵn sau khi cài:
      - App chính + ffmpeg.exe / ffprobe.exe
-     - 11 companion script (rvc_helper, voxcpm_helper, vieneu_helper,
-       f5tts_helper, whisper_stt, audio_enhancer, pdf_helper,
+     - 12 companion script (rvc_helper, voxcpm_helper, vieneu_helper,
+       f5tts_helper, omnivoice_helper, whisper_stt, audio_enhancer, pdf_helper,
        srt_align_helper, videocr_helper, video_stt_helper, translate_helper)
      - hubert_base.pt, rmvpe.pt, và toàn bộ rvc_env\
  → Chạy được NGAY:
@@ -77,6 +77,10 @@
                                            (model_last.pt + vocab.txt)
                                     cần cho: F5-TTS TTS
                                     (vocos vocoder tự tải HF lần đầu — cần net)
+ [ ] omnivoice_env\       ~6-8 GB   nguồn: E:\omnivoice_env\
+                                    cần cho: OmniVoice Vietnamese
+                                    (model OmniVoice tự tải HF lần đầu — cần net;
+                                     pip install omnivoice + torch CUDA)
  [ ] VideOCR CLI          nhỏ       nguồn: C:\Users\os\Downloads\
                                            Compressed\VideOCR-1.5.1\
                                     cần cho: Tách sub cứng (OCR)
@@ -104,6 +108,7 @@
        f5tts_env\                       ← tự nhận
        F5-TTS-Vietnamese-ViVoice\       ← tự nhận (model F5-TTS: model_last.pt
                                           + vocab.txt) — hoặc "F5-TTS-model\"
+       omnivoice_env\                   ← tự nhận (model OmniVoice tự tải HF)
        VideOCR\CLI\                     ← tự nhận (hoặc "VideOCR-CLI\")
 
  → Mở app, xem dòng "KIỂM TRA HỆ THỐNG" trong logbox: tất cả phải ✅.
@@ -121,6 +126,8 @@
  [ ] vieneu_env python.exe →  ...\vieneu_env\Scripts\python.exe (máy mới)
  [ ] F5-TTS model folder   →  ...\F5-TTS-Vietnamese-ViVoice (model_last.pt+vocab)
  [ ] f5tts_env python.exe  →  ...\f5tts_env\Scripts\python.exe (máy mới)
+ [ ] OmniVoice model folder→  (để trống = tự tải HF) hoặc thư mục model local
+ [ ] omnivoice_env python  →  ...\omnivoice_env\Scripts\python.exe (máy mới)
  [ ] Subtitle Edit path    →  SubtitleEdit.exe (nếu không ở Program Files)
  [ ] (tùy chọn) API key dịch + model dịch offline + env dịch riêng
 

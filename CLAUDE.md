@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, VieNeu-TTS voice cloning, F5-TTS-Vietnamese voice cloning, Video OCR, Speech-to-Text, video compression, audio→video muxing, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
+**SRT TTS Studio** — Windows desktop app (CustomTkinter) that converts SRT subtitle files and PDFs to TTS audio (MP3) via Microsoft Edge TTS and Vietnamese TTS APIs (FPT.AI, Vbee, Zalo AI, EverAI, MiniMax). Also includes RVC voice cloning, VoxCPM voice cloning, VieNeu-TTS voice cloning, F5-TTS-Vietnamese voice cloning, OmniVoice Vietnamese voice cloning, Video OCR, Speech-to-Text, video compression, audio→video muxing, and video repair utilities. Distributed as `.msi` installer and standalone `.exe` files via PyInstaller + WiX Toolset.
 
 ## Build Commands
 
@@ -31,6 +31,19 @@ MSYS_NO_PATHCONV=1 cmd.exe /c "E:\path\to\run_build.bat"
 # where run_build.bat contains: cd /d <project_dir> && call "<abs_path>\build_all.bat"
 ```
 Note: background shell processes do not inherit cwd — always use absolute path in `call`.
+
+**Build interpreter:** the app is built with **Python 3.14** (system `C:\Python314\python.exe`), so Cython emits `apppp_integrated.cp314-win_amd64.pyd` and PyInstaller embeds a matching 3.14 runtime. The `.pyd` ABI tag (`cp314`) must match the bundled Python — if you rebuild with a different Python, the integrity hash, the embedded interpreter, and the `.pyd` all change together. This is **independent** of the companion-script venvs, which are separate external Pythons (`rvc_env`=3.10, `voxcpm_env`=3.11, `f5tts_env`/`omnivoice_env`=3.10, etc.) invoked as subprocesses.
+
+**Verifying the build / security after `build_all.bat`** (the standalone onefile exes are what gets distributed, so check those — not just onedir):
+```python
+from PyInstaller.archive.readers import CArchiveReader
+for exe in ("output/Portable/SRT_TTS_Studio_Portable.exe",
+            "output/Portable/SRT_TTS_Studio_Secured.exe",
+            "output/Portable/SRT_TTS_Studio_Trial.exe"):
+    names = list(CArchiveReader(exe).toc.keys())
+    hits = [n for n in names if "apppp_integrated" in n]
+    assert hits == ["apppp_integrated.cp314-win_amd64.pyd"], (exe, hits)  # ONLY the .pyd, no .pyc
+```
 
 ## Build Pipeline (build_all.bat, steps 0–9)
 
@@ -166,7 +179,7 @@ Two ways to leave the running app — both live near the bottom of the file:
 | 1–110 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
 | ~110–1040 | Security checks (`_check_integrity` @114, DRM, trial, VM detection), global state vars (incl. translate / OCR-control / Edit-Studio globals), settings load/save (`_load_settings`/`_save_settings`), `_load_settings()` call @1040 |
 | ~1040–1200 | CustomTkinter app/window creation, UI layout frames |
-| ~1200–2130 | Voice/provider UI + the four local-engine panels (RVC, VoxCPM, VieNeu, F5-TTS) + `_apply_voice_exclusivity`, Quick TTS |
+| ~1200–2130 | Voice/provider UI + the five local-engine panels (RVC, VoxCPM, VieNeu, F5-TTS, OmniVoice) + `_apply_voice_exclusivity`, Quick TTS |
 | ~2130–3780 | Workspace layout, progress-bar canvas, scrollable `button_frame` + button rows, `show_fireworks` (@3533) |
 | ~3785–4060 | `show_settings_dialog` (@3785) — scrollable settings dialog |
 | ~4060–4980 | **Translation to Vietnamese** (LLM online + offline) — `_translate_active_key` (@4072), `_translate_segments` (@4230), `translate_srt/pdf/doc` (@4585), `_write_translated_doc`, `_read_text_smart` |
@@ -252,7 +265,7 @@ Use `ctypes.windll.shell32.ShellExecuteW(None, "open", exe, args, None, 1)` inst
 
 All TTS entry points that support RVC, VoxCPM, VieNeu, or F5-TTS **must** validate voice clone components **before** calling `set_mode("tts_running")`. If validation fails, log the error and `return` — the UI stays in its pre-run state (no stuck "running" mode).
 
-**Mutual exclusivity:** the five voice paths (Provider online ↔ RVC ↔ VoxCPM ↔ VieNeu ↔ F5-TTS) are mutually exclusive. `_apply_voice_exclusivity()` disables the other engines' checkboxes/controls whenever one is ticked. Dispatch order in `start_tts()` / the PDF entry: `if VOXCPM_ENABLED → elif VIENEU_ENABLED → elif F5TTS_ENABLED → else provider(+optional RVC)`. All four local engines auto-pick device (no manual CPU/GPU UI): RVC resolves `rvc_device_var="auto"` → `cuda:0` if `DETECTED_GPU` else `cpu`; VoxCPM auto-detects in its helper; VieNeu and F5-TTS via `--device auto` in their helpers.
+**Mutual exclusivity:** the six voice paths (Provider online ↔ RVC ↔ VoxCPM ↔ VieNeu ↔ F5-TTS ↔ OmniVoice) are mutually exclusive. `_apply_voice_exclusivity()` disables the other engines' checkboxes/controls whenever one is ticked. Dispatch order in `start_tts()` / the PDF entry: `if VOXCPM_ENABLED → elif VIENEU_ENABLED → elif F5TTS_ENABLED → elif OMNIVOICE_ENABLED → else provider(+optional RVC)`. All five local engines auto-pick device (no manual CPU/GPU UI): RVC resolves `rvc_device_var="auto"` → `cuda:0` if `DETECTED_GPU` else `cpu`; VoxCPM auto-detects in its helper; VieNeu, F5-TTS, and OmniVoice via `--device auto` in their helpers.
 
 ### RVC pre-flight — `_check_rvc_preflight()`
 
@@ -293,6 +306,12 @@ Shared helper (just before `_run_vieneu_batch`) returning `(ok, model_dir, viene
 Shared helper (just before `_f5tts_find_helper`/`_run_f5tts_batch`) returning `(ok, model_dir, f5tts_py, helper)`. F5-TTS is a **pure voice-cloning** engine: unlike VieNeu, **both the model dir AND the ref audio are required** (no preset voices, no auto-download). Validates: model dir non-empty + existing dir; `ref_audio` non-empty + existing file; `f5tts_env` python via `_find_f5tts_python()`; `f5tts_helper.py` found. Used by `_run_f5tts_batch` / `_run_f5tts_batch_pdf` / `_f5tts_generate_one_sync` (regen) / Quick TTS. Command built by the shared `_f5tts_build_cmd()` (`--model-dir`, `--reference` always; `--reference-text` if non-empty — **empty = F5-TTS auto-transcribes the ref audio via its own ASR**; `--speed`; `--device auto`).
 
 **F5-TTS UI panel** (in `voice_frame`, toggled by `_toggle_f5tts_panel`): Model (required, folder with `model_last.pt` + `vocab.txt`) + Audio mẫu rows; an audio-filter row (`f5tts_separate/denoise/filter_var` + "Xử lý Audio" → `_enhance_f5tts_ref_audio()`); a ref-text row with an **STT** button (`_f5tts_transcribe_audio()` → fills `f5tts_reftext_var`) and a **speed** entry (`f5tts_speed_var`). STT + audio-enhance reuse `whisper_stt.py` / `audio_enhancer.py` with **voxcpm_env python preferred**, falling back to `f5tts_env`. Source: [nguyenthienhy/F5-TTS-Vietnamese](https://github.com/nguyenthienhy/F5-TTS-Vietnamese), checkpoint [hynt/F5-TTS-Vietnamese-ViVoice](https://huggingface.co/hynt/F5-TTS-Vietnamese-ViVoice). The helper uses `f5_tts.api.F5TTS` (model arch `F5TTS_Base`) and applies optional `vinorm.TTSnorm` Vietnamese text normalization if installed.
+
+### OmniVoice Vietnamese pre-flight — `_omnivoice_preflight()`
+
+Shared helper (just before `_omnivoice_find_helper`/`_run_omnivoice_batch`) returning `(ok, model_dir, omni_py, helper)`. OmniVoice is a **voice-cloning** engine like F5-TTS, but the **model dir is OPTIONAL** (like VieNeu — empty = auto-download `splendor1811/omnivoice-vietnamese` from HF, cached); the **ref audio is required**. Validates: model dir empty OR an existing dir; `ref_audio` non-empty + existing file; `omnivoice_env` python via `_find_omnivoice_python()`; `omnivoice_helper.py` found. Used by `_run_omnivoice_batch` / `_run_omnivoice_batch_pdf` / `_omnivoice_generate_one_sync` (regen) / Quick TTS. Command built by the shared `_omnivoice_build_cmd()` (`--reference` always, `--device auto`; `--model-dir` only if non-empty; `--reference-text` if non-empty). No speed/emotion controls.
+
+**OmniVoice UI panel** (in `voice_frame`, toggled by `_toggle_omnivoice_panel`): Model (optional, empty = auto-download) + Audio mẫu rows; an audio-filter row (`omnivoice_separate/denoise/filter_var` + "Xử lý Audio" → `_enhance_omnivoice_ref_audio()`); a ref-text row with an **STT** button (`_omnivoice_transcribe_audio()` → fills `omnivoice_reftext_var`). STT + audio-enhance reuse `whisper_stt.py` / `audio_enhancer.py` with **voxcpm_env python preferred**, falling back to `omnivoice_env`. Source/checkpoint: [splendor1811/omnivoice-vietnamese](https://huggingface.co/splendor1811/omnivoice-vietnamese). The helper uses `omnivoice.OmniVoice.from_pretrained(...).generate(text=, language="vietnamese", ref_audio=, ref_text=)` (caching a `create_voice_clone_prompt` when available), float16 on CUDA / float32 on CPU, 24 kHz output.
 
 ### Audio quality check — `_audio_quality_check()` / `_rename_bad_audio()` / `_sanitize_tts_text()`
 
@@ -416,7 +435,7 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 
 ## Companion Script System
 
-11 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
+12 scripts in the project root are invoked as **subprocesses** (not imported). Each `_find_*_helper()` function searches in this order: `sys._MEIPASS` → exe dir → script dir → PATH.
 
 | Script | Interpreter | Purpose |
 |---|---|---|
@@ -424,6 +443,7 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 | `voxcpm_helper.py` | `voxcpm_env\Scripts\python.exe` (Python 3.11) | VoxCPM batch TTS |
 | `vieneu_helper.py` | `vieneu_env\Scripts\python.exe` | VieNeu-TTS batch TTS (v3 Turbo, 48 kHz). **Auto device** (`--device auto`): CUDA available → GPU (`backend=pytorch`); else → CPU (`backend=onnx`, torch-free). **Reconfigures stdout/stderr to UTF-8** at startup (else Vietnamese error prints crash on Windows cp1252 → silent exit 1). **Patches `huggingface_hub.utils._headers.get_token_to_send`** (`_patch_hf_anon_token()`) before model load: vieneu's v3-Turbo loader calls `hf_hub_download(..., token=True)` and huggingface_hub ≥1.18 raises `LocalTokenNotFoundError` when `token=True` with no stored token — even for the **public** VieNeu repo. The patch degrades to anonymous (token=None) so the public model downloads with **no HF account/login needed**. Also **patches `torchaudio.load` → soundfile** (`_patch_torchaudio_load()`): torch 2.11's torchaudio decodes audio via **torchcodec**, whose `libtorchcodec_core*.dll` fails to load on Windows (needs FFmpeg shared libs) → voice-cloning from a ref audio raises `TorchCodec is required for load_with_torchcodec`. The soundfile patch (same trick as voxcpm_helper) reads the ref wav/flac/ogg without torchcodec. So **do not install torchcodec**. (GPU needs a CUDA build of torch **≥2.11**, e.g. `--index-url .../whl/cu128`; cu124 tops out at torch 2.6 which is too old for vieneu's triton/transformers.) Same stdout protocol as voxcpm_helper: `DONE:{idx}`/`ERROR:{idx}:..`/`WARN:{idx}:..`/`ALL_DONE`. Writes `line_{idx:04d}.wav`. Model dir **optional** (rỗng = auto-download `pnnbao-ump/VieNeu-TTS-v3-Turbo` from HF, cached). Args: `--model-dir` `--onnx-dir` `--reference` `--reference-text` `--voice` (preset name) `--emotion` `--device`. The two `_run_vieneu_batch*` loops log any unmatched stdout line (surfaces tracebacks). |
 | `f5tts_helper.py` | `f5tts_env\Scripts\python.exe` (Python 3.10) | F5-TTS-Vietnamese batch voice clone. Uses `f5_tts.api.F5TTS` (arch `F5TTS_Base`) from the [nguyenthienhy/F5-TTS-Vietnamese](https://github.com/nguyenthienhy/F5-TTS-Vietnamese) fork; checkpoint [hynt/F5-TTS-Vietnamese-ViVoice](https://huggingface.co/hynt/F5-TTS-Vietnamese-ViVoice). **Auto device** (`--device auto`): CUDA → GPU, else CPU. **Reconfigures stdout/stderr to UTF-8** at startup. Model dir **required** — auto-finds `model_last.pt` (or any `.pt`/`.safetensors`) + `vocab.txt` inside (the ViVoice repo ships the vocab as `config.json` — rename it to `vocab.txt`). Ref audio **required** (pure cloning); `--reference-text` optional (empty = F5-TTS auto-ASR of the ref). Applies optional `vinorm.TTSnorm` VN text normalization if installed. **Patches `torchaudio.load`+`torchaudio.save` → soundfile** (`_patch_torchaudio()`, same trick as voxcpm/vieneu) before importing `f5_tts`: the fork pulls torchaudio ≥2.9 which routes load/save through **torchcodec** (`ModuleNotFoundError: torchcodec` / `TorchCodec is required` on Windows), and F5-TTS calls `torchaudio.load` on the ref audio — so **do not install torchcodec**, the patch handles it. **torch/GPU pinning gotcha:** the fork's `pip install -e .` pulls **torch 2.12 + transformers 5.10**, and transformers 5.10 needs `torch.float8_e8m0fnu` (**torch ≥ 2.7**), so you can't downgrade below 2.7 (torch 2.6 → `AttributeError: float8_e8m0fnu` at `from f5_tts.api import F5TTS`). torch 2.12 has no Windows CUDA wheel on the cu124 index → default install is **CPU** (~5 min/short line). For GPU, install a matched ≥2.7 CUDA pair: **`pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126`** (verified on an RTX 4060 → ~10 s/short line, ≈30× faster; torchaudio 2.7 still loads natively, and the helper's soundfile patch covers it regardless). Same stdout protocol: `DONE:{idx}`/`ERROR:{idx}:..`/`WARN:{idx}:..`/`ALL_DONE`. Writes `line_{idx:04d}.wav`. Args: `--model-dir` `--ckpt-file` `--vocab-file` `--model` `--reference` `--reference-text` `--speed` `--nfe-step` `--device`. The two `_run_f5tts_batch*` loops log any unmatched stdout line. |
+| `omnivoice_helper.py` | `omnivoice_env\Scripts\python.exe` (Python 3.10/3.11) | OmniVoice Vietnamese batch voice clone. Uses `omnivoice.OmniVoice` (`pip install omnivoice`); checkpoint [splendor1811/omnivoice-vietnamese](https://huggingface.co/splendor1811/omnivoice-vietnamese). **Auto device** (`--device auto`): CUDA → GPU (dtype float16), else CPU (float32). **Reconfigures stdout/stderr to UTF-8** at startup. Model dir **optional** (rỗng = auto-download `splendor1811/omnivoice-vietnamese` from HF, cached); ref audio **required**, `--reference-text` recommended (matches the ref audio). Loads via `OmniVoice.from_pretrained(model_ref, device_map=, dtype=)`, then per line `model.generate(text=, language="vietnamese", ref_audio=, ref_text=)` — caches a `create_voice_clone_prompt(ref_audio, ref_text)` once when the API exposes it (then passes `voice_clone_prompt=`). **Patches `torchaudio.load`+`torchaudio.save` → soundfile** (`_patch_torchaudio()`, same trick as voxcpm/vieneu/f5tts) before importing `omnivoice` — so **do not install torchcodec**. Output 24 kHz. Same stdout protocol: `DONE:{idx}`/`ERROR:{idx}:..`/`WARN:{idx}:..`/`ALL_DONE`. Writes `line_{idx:04d}.wav`. Args: `--texts-json` `--output-dir` `--model-dir` `--reference` `--reference-text` `--language` `--device` `--selftest`. **`--selftest`** verifies the env without generating audio (prints python/numpy/soundfile/torch+CUDA, resolves the model class, and dumps the `from_pretrained`/`generate`/`create_voice_clone_prompt` signatures) — run `omnivoice_env\Scripts\python.exe omnivoice_helper.py --selftest` to confirm a machine before a real batch. The helper is **API-defensive**: it auto-discovers the `OmniVoice` class across module/name variants, tries multiple `from_pretrained` + `generate` signatures (remembering the first that works), parses `audio` / `(audio, sr)` / `dict` returns, and re-raises non-signature errors with a traceback rather than silently retrying. The two `_run_omnivoice_batch*` loops log any unmatched stdout line. |
 | `whisper_stt.py` | voxcpm_env python | STT for reference audio (stderr: `PROGRESS:done_ms:total_ms`) |
 | `audio_enhancer.py` | voxcpm_env python | Demucs/denoise/bandpass (stdout: `PCT:done:100`) |
 | `pdf_helper.py` | any python with pypdf | PDF → JSON chunks |
@@ -432,7 +452,7 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 | `video_stt_helper.py` | voxcpm_env python | faster-whisper STT (stdout: `PROGRESS:N:M`, `DONE:path`) |
 | `translate_helper.py` | voxcpm_env python (torch+transformers+sentencepiece) | Offline translation → Vietnamese (NLLB/M2M/envit5/generic seq2seq auto-detect). Input JSON file `{"segments":[...]}`, stdout `PROGRESS:N:M` + `DONE:path` (+ `STOPPED`/`LOAD_ERR`/`BATCH_ERR`), JSON out `{"translations":[...], "stopped":bool}`. Reads `PAUSE`/`RESUME`/`STOP` control lines on **stdin** |
 
-**Onefile exes embed all 11 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.
+**Onefile exes embed all 12 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.
 
 ### Helper progress protocol
 All long-running helpers stream progress so the UI bar tracks them. Use `subprocess.Popen` + line-by-line stdout read (never `communicate()` which blocks). Parse `PROGRESS:N:M` → `update_progress(N, M)`.
@@ -449,6 +469,7 @@ Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Li
 | `voxcpm_env_override` | `VOXCPM_ENV_OVERRIDE` | Explicit python.exe; checked **first** in all `_find_*_python()` calls |
 | `vieneu_env_override` / `vieneu_model_dir` | `VIENEU_ENV_OVERRIDE` / `VIENEU_MODEL_DIR` | VieNeu `vieneu_env\Scripts\python.exe` override + optional local model dir (empty = auto-download from HF). `_find_vieneu_python()` resolves env. UI vars: `vieneu_model_var`/`vieneu_ref_var`/`vieneu_reftext_var`/`vieneu_voice_var`/`vieneu_emotion_var` |
 | `f5tts_env_override` / `f5tts_model_dir` | `F5TTS_ENV_OVERRIDE` / `F5TTS_MODEL_DIR` | F5-TTS `f5tts_env\Scripts\python.exe` override + **required** local model dir (folder with `model_last.pt` + `vocab.txt`). `_find_f5tts_python()` resolves env. UI vars: `f5tts_model_var`/`f5tts_ref_var`/`f5tts_reftext_var`/`f5tts_speed_var` |
+| `omnivoice_env_override` / `omnivoice_model_dir` | `OMNIVOICE_ENV_OVERRIDE` / `OMNIVOICE_MODEL_DIR` | OmniVoice `omnivoice_env\Scripts\python.exe` override + **optional** local model dir (empty = auto-download from HF). `_find_omnivoice_python()` resolves env. UI vars: `omnivoice_model_var`/`omnivoice_ref_var`/`omnivoice_reftext_var` |
 | `translate_env_override` | `TRANSLATE_ENV_OVERRIDE` | Dedicated python.exe for offline translation; checked **before** `voxcpm_env` in `_translate_segments_local()`. Needed for envit5 (see tokenizer gotcha below) |
 | `local_translate_model_dir` / `local_translate_src_lang` | `LOCAL_TRANSLATE_MODEL_DIR` / `LOCAL_TRANSLATE_SRC_LANG` | Offline model dir (or HF id) + NLLB source-lang code |
 | `subtitle_edit_path` | `SUBTITLE_EDIT_PATH` | Prepended to Subtitle Edit search list |
@@ -510,10 +531,21 @@ The MSI installs everything bundled. These components are too large to bundle an
 | VoxCPM model (`VoxCPM-1.5-VN/`) | ~3.5 GB | VoxCPM TTS |
 | `vieneu_env\` | ~2–6 GB | VieNeu-TTS. **`pip install vieneu`** (Python 3.10/3.11). Runs on **CPU (ONNX, torch-free)** out of the box; add a **CUDA build of torch** (`pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124`) to auto-use GPU. **Do NOT use the `[gpu]` extra** — it pulls `lmdeploy` (a different backend) which has no Windows/py3.14 wheel. Place beside the exe; `_find_vieneu_python()` auto-detects |
 | `f5tts_env\` | ~6–8 GB | F5-TTS-Vietnamese. Python 3.10. Install: `git clone https://github.com/nguyenthienhy/F5-TTS-Vietnamese && cd F5-TTS-Vietnamese && pip install -e .` (provides the `f5_tts` package). For **GPU**, then run `pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126` (the base install is CPU-only torch 2.12; see the torch-pinning gotcha in the companion-script section). Optionally `pip install vinorm` for VN text normalization. Place `f5tts_env\` beside the exe; `_find_f5tts_python()` auto-detects (in the **built exe**, set the path in ⚙ Cài đặt → `f5tts_env python.exe` if it's not within 3 parent dirs) |
+| `omnivoice_env\` | ~6–8 GB | OmniVoice Vietnamese. Python 3.10/3.11. Install: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128` then `pip install omnivoice`. Model **auto-downloads** from HF (`splendor1811/omnivoice-vietnamese`) on first run + cached. Place `omnivoice_env\` beside the exe; `_find_omnivoice_python()` auto-detects (in the **built exe**, set the path in ⚙ Cài đặt → `omnivoice_env python.exe` if it's not within 3 parent dirs) |
+| OmniVoice model | auto-download | OmniVoice Vietnamese — pulled from HF (`splendor1811/omnivoice-vietnamese`) on first run + cached; only needs a manual local dir for fully-offline machines |
 | F5-TTS model | ~1.3 GB | F5-TTS-Vietnamese. Download `model_last.pt` + `vocab.txt` from `hynt/F5-TTS-Vietnamese-ViVoice` into a folder; set it in ⚙ Cài đặt → F5-TTS model folder (or the F5-TTS panel Model field). **Required** — no auto-download |
 | VieNeu model | auto-download | VieNeu-TTS — pulled from HF (`pnnbao-ump/VieNeu-TTS-v3-Turbo`) on first run + cached; only needs a manual local dir for fully-offline machines |
 | VideOCR CLI | small | Video OCR |
 | Offline translate model (NLLB-600M / envit5) | ~1.5–2.5 GB | Offline SRT/PDF translation (only if using provider `Offline`; reuses `voxcpm_env` + needs `transformers`/`sentencepiece`) |
+
+**Runtime auto-download models (NOT bundled, NOT in any copied folder)** — these land in `%USERPROFILE%\.cache\huggingface\hub` / `%USERPROFILE%\.cache\torch\hub`, so a target machine needs internet on first use **or** a hand-copied cache. The most-forgotten ones (a fresh machine silently fails without them):
+- `OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano` — **required** for VoxCPM
+- `charactr/vocos-mel-24khz` — **required** for F5-TTS (vocoder)
+- `pnnbao-ump/VieNeu-TTS-v3-Turbo`, `splendor1811/omnivoice-vietnamese` — VieNeu / OmniVoice models (when no local model dir set)
+- `Systran/faster-whisper-large-v3` (+ medium/small) — STT (`whisper_stt.py`) and Video-STT (`video_stt_helper.py`), pulled into `voxcpm_env`'s cache
+- `demucs htdemucs` (torch hub `checkpoints/955717e8-*.th`) — audio-enhance "Tách nhạc" (`audio_enhancer.py`)
+
+`_run_startup_diagnostics()` (#12, `_hf_checks` list) only probes the first four via `_hf_cache_has()`; whisper/demucs are not surfaced in the logbox. When adding a new engine with a runtime HF download, add its repo id to `_hf_checks` so the startup logbox flags it.
 
 ### Relative auto-detect (added) — copy beside the exe, no Settings needed
 
