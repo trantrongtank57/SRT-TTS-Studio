@@ -507,6 +507,14 @@ if exist "rvc_env" (
     robocopy "rvc_env" "output\Portable\rvc_env" /E /NFL /NDL /NJH /NJS /NC /NS >nul
 )
 
+:: --- Model F5-TTS-Vietnamese can exe (bat buoc cho F5-TTS, KHONG tu tai duoc) ---
+if exist "F5-TTS-Vietnamese-ViVoice\model_last.pt" (
+    echo   Copying F5-TTS-Vietnamese-ViVoice vao output\Portable\ ^(~5.4 GB, may take a while^)...
+    robocopy "F5-TTS-Vietnamese-ViVoice" "output\Portable\F5-TTS-Vietnamese-ViVoice" /E /NFL /NDL /NJH /NJS /NC /NS >nul
+) else (
+    echo   [!] Bo qua model F5-TTS: khong thay F5-TTS-Vietnamese-ViVoice\model_last.pt
+)
+
 :: --- Huong dan trien khai (neu co) ---
 if exist "MOVE_CHECKLIST.txt" copy /Y "MOVE_CHECKLIST.txt" "output\MOVE_CHECKLIST.txt" >nul
 
@@ -553,7 +561,7 @@ if exist "output\Portable\SRT_TTS_Studio_Trial.exe" (
 )
 
 echo.
-echo   Onefile exes + companion scripts + models + rvc_env deu nam trong output\Portable\
+echo   Onefile exes + companion scripts + models + rvc_env + F5-TTS model deu nam trong output\Portable\
 echo   (Cac onefile can cac file nay nam CANH exe moi chay du tinh nang)
 
 echo.

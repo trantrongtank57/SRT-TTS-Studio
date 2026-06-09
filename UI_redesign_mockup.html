@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SRT TTS Studio — Giao diện mới (Mockup)</title>
+<style>
+  /* ============ THEME TOKENS ============ */
+  :root {
+    --radius: 14px;
+    --radius-sm: 10px;
+    --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --accent: #7c5cff;
+    --accent-2: #36c5ff;
+    --accent-grad: linear-gradient(135deg, #7c5cff 0%, #36c5ff 100%);
+    --ok: #2dd4a7;
+    --warn: #ffb020;
+    --danger: #ff5d6c;
+    --shadow: 0 10px 30px rgba(0,0,0,.18);
+  }
+  /* DARK */
+  [data-theme="dark"] {
+    --bg: #0e1018;
+    --bg-2: #151826;
+    --surface: #1a1e2e;
+    --surface-2: #20253a;
+    --surface-3: #272d45;
+    --border: #2b3147;
+    --text: #eef1f8;
+    --text-dim: #98a0bb;
+    --text-faint: #6b7290;
+    --sidebar: #11131d;
+    --console-bg: #0b0d14;
+  }
+  /* LIGHT */
+  [data-theme="light"] {
+    --bg: #f4f6fb;
+    --bg-2: #eef1f8;
+    --surface: #ffffff;
+    --surface-2: #f7f9fd;
+    --surface-3: #eef2f9;
+    --border: #e2e7f0;
+    --text: #1a1f2e;
+    --text-dim: #5b6478;
+    --text-faint: #9aa3b8;
+    --sidebar: #ffffff;
+    --console-bg: #0b0d14;
+    --shadow: 0 10px 30px rgba(40,60,120,.10);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* ============ APP SHELL ============ */
+  .app {
+    display: grid;
+    grid-template-columns: 256px 1fr;
+    grid-template-rows: 100vh;
+    height: 100vh;
+  }
+
+  /* ============ SIDEBAR ============ */
+  .sidebar {
+    background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 18px 14px;
+    gap: 6px;
+    overflow-y: auto;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 8px 16px 8px;
+  }
+  .brand .logo {
+    width: 38px; height: 38px; border-radius: 11px;
+    background: var(--accent-grad);
+    display: grid; place-items: center;
+    font-weight: 800; color: #fff; font-size: 18px;
+    box-shadow: 0 6px 18px rgba(124,92,255,.4);
+  }
+  .brand .name { font-weight: 700; font-size: 15px; line-height: 1.1; }
+  .brand .ver { font-size: 11px; color: var(--text-faint); }
+
+  .nav-group-label {
+    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--text-faint); font-weight: 700;
+    padding: 14px 10px 6px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 11px;
+    padding: 9px 11px; border-radius: var(--radius-sm);
+    color: var(--text-dim); font-size: 13.5px; font-weight: 500;
+    cursor: pointer; border: 1px solid transparent;
+    transition: all .15s ease;
+    user-select: none;
+  }
+  .nav-item:hover { background: var(--surface-2); color: var(--text); }
+  .nav-item.active {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .nav-item.active .ic { color: #fff; background: var(--accent-grad); }
+  .nav-item .ic {
+    width: 26px; height: 26px; border-radius: 8px; flex: none;
+    display: grid; place-items: center; font-size: 14px;
+    background: var(--surface-3); color: var(--text-dim);
+    transition: all .15s ease;
+  }
+  .nav-item .badge {
+    margin-left: auto; font-size: 10px; font-weight: 700;
+    background: var(--accent); color: #fff; padding: 2px 7px; border-radius: 20px;
+  }
+  .sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
+  .user-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px;
+    border-radius: var(--radius-sm);
+  }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: linear-gradient(135deg,#ff9a6c,#ff5d6c);
+    display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px;
+  }
+  .user-row .uname { font-size: 12.5px; font-weight: 600; }
+  .user-row .ustat { font-size: 10.5px; color: var(--ok); }
+  .logout-btn {
+    margin-left: auto; cursor: pointer; color: var(--text-faint);
+    font-size: 16px; padding: 6px; border-radius: 8px;
+  }
+  .logout-btn:hover { color: var(--danger); background: var(--surface-2); }
+
+  /* ============ MAIN ============ */
+  .main { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  .topbar {
+    height: 60px; flex: none;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 22px;
+  }
+  .crumb { font-size: 13px; color: var(--text-faint); }
+  .crumb b { color: var(--text); font-weight: 700; font-size: 15px; }
+  .topbar-spacer { flex: 1; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 600; color: var(--text-dim);
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 30px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot.green { background: var(--ok); box-shadow: 0 0 0 3px rgba(45,212,167,.18); }
+  .theme-toggle {
+    display: flex; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 30px; padding: 3px; cursor: pointer;
+  }
+  .theme-toggle span {
+    padding: 5px 12px; border-radius: 30px; font-size: 12px; font-weight: 600;
+    color: var(--text-dim); display: flex; align-items: center; gap: 5px;
+  }
+  .theme-toggle span.on { background: var(--accent-grad); color: #fff; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text-dim); cursor: pointer; font-size: 15px;
+    display: grid; place-items: center;
+  }
+  .icon-btn:hover { color: var(--text); }
+
+  .content { flex: 1; overflow-y: auto; padding: 24px; }
+  .panel { display: none; animation: fade .25s ease; }
+  .panel.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px);} to {opacity:1; transform:none;} }
+
+  .page-head { margin-bottom: 20px; }
+  .page-head h1 { font-size: 22px; font-weight: 750; letter-spacing: -.02em; }
+  .page-head p { color: var(--text-dim); font-size: 13.5px; margin-top: 4px; }
+
+  /* cards */
+  .grid { display: grid; gap: 18px; }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-3 { grid-template-columns: repeat(3,1fr); }
+  .cols-4 { grid-template-columns: repeat(4,1fr); }
+  @media (max-width:1100px){ .cols-3,.cols-4{grid-template-columns:1fr 1fr;} }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .card.pad-lg { padding: 22px; }
+  .card-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; display:flex; align-items:center; gap:8px;}
+  .card-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 14px; }
+
+  /* stat cards */
+  .stat { display: flex; flex-direction: column; gap: 8px; }
+  .stat .lbl { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+  .stat .val { font-size: 26px; font-weight: 780; letter-spacing: -.02em; }
+  .stat .val small { font-size: 13px; color: var(--text-faint); font-weight:600;}
+  .stat .ico {
+    width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+    font-size: 18px; margin-bottom: 4px;
+  }
+  .ico.purple{ background: rgba(124,92,255,.14); color:#9d83ff;}
+  .ico.blue{ background: rgba(54,197,255,.14); color:#36c5ff;}
+  .ico.green{ background: rgba(45,212,167,.14); color:#2dd4a7;}
+  .ico.orange{ background: rgba(255,176,32,.14); color:#ffb020;}
+
+  /* feature tiles */
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px; cursor: pointer; transition: all .18s ease; position: relative; overflow: hidden;
+  }
+  .tile:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: var(--shadow); }
+  .tile .ico { width: 44px; height: 44px; border-radius: 12px; display:grid; place-items:center; font-size: 20px; margin-bottom: 12px; }
+  .tile h3 { font-size: 14.5px; font-weight: 700; margin-bottom: 5px; }
+  .tile p { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+  .tile .arrow { position: absolute; top: 18px; right: 18px; color: var(--text-faint); font-size: 16px; }
+
+  /* form bits */
+  .field { margin-bottom: 16px; }
+  .field label { display:block; font-size: 12.5px; font-weight: 600; margin-bottom: 7px; color: var(--text-dim); }
+  .input, .select {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 11px 13px; color: var(--text); font-size: 13px;
+    font-family: var(--font);
+  }
+  .input:focus, .select:focus { outline: none; border-color: var(--accent); }
+  .file-drop {
+    border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 26px;
+    text-align: center; color: var(--text-dim); background: var(--surface-2); cursor: pointer;
+    transition: all .15s;
+  }
+  .file-drop:hover { border-color: var(--accent); color: var(--text); }
+  .file-drop .big { font-size: 26px; margin-bottom: 8px; }
+  .file-drop .fn { font-size: 13px; font-weight: 600; color: var(--text); }
+  .file-drop .hint { font-size: 11.5px; margin-top: 4px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: var(--font); transition: all .15s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent-grad); border: none; color: #fff; box-shadow: 0 6px 16px rgba(124,92,255,.35); }
+  .btn.primary:hover { filter: brightness(1.05); }
+  .btn.ghost { background: transparent; }
+  .btn.danger { color: var(--danger); border-color: rgba(255,93,108,.4); background: rgba(255,93,108,.08); }
+  .btn.sm { padding: 8px 13px; font-size: 12px; }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* segmented */
+  .seg { display: inline-flex; background: var(--surface-2); border:1px solid var(--border); border-radius: var(--radius-sm); padding: 4px; gap: 4px; flex-wrap: wrap; }
+  .seg button {
+    border: none; background: transparent; color: var(--text-dim); font-size: 12.5px; font-weight: 600;
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font-family: var(--font);
+  }
+  .seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  [data-theme="dark"] .seg button.on { background: var(--surface-3); }
+
+  /* voice engine selector */
+  .engine-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+  @media (max-width:1300px){ .engine-grid{grid-template-columns:1fr 1fr;} }
+  .engine {
+    border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 13px;
+    cursor: pointer; transition: all .15s; background: var(--surface-2);
+  }
+  .engine:hover { border-color: var(--accent); }
+  .engine.sel { border-color: var(--accent); background: rgba(124,92,255,.08); }
+  .engine .et { font-size: 13px; font-weight: 700; display:flex; align-items:center; gap:7px; }
+  .engine .ed { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height:1.4; }
+  .engine .tag { font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 20px; margin-left:auto; }
+  .tag.local { background: rgba(45,212,167,.16); color: var(--ok); }
+  .tag.cloud { background: rgba(54,197,255,.16); color: var(--accent-2); }
+
+  /* progress + console */
+  .progress-wrap { margin: 4px 0 14px; }
+  .progress-top { display:flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px; }
+  .progress-top .pct { font-weight: 700; }
+  .bar { height: 10px; border-radius: 20px; background: var(--surface-3); overflow: hidden; }
+  .bar > i { display:block; height:100%; width: 62%; background: var(--accent-grad); border-radius:20px; transition: width .4s; }
+
+  .console {
+    background: var(--console-bg); border-radius: var(--radius-sm); padding: 14px 16px;
+    font-family: "Cascadia Code", "Consolas", monospace; font-size: 12px; line-height: 1.8;
+    color: #c8d0e0; max-height: 200px; overflow-y: auto; border: 1px solid var(--border);
+  }
+  .console .ln { white-space: pre-wrap; }
+  .console .ok { color: #4ade80; } .console .info { color: #60c5ff; }
+  .console .warn { color: #ffcf5c; } .console .err { color: #ff7b88; }
+  .console .dim { color: #6b7290; }
+
+  .row-split { display: grid; grid-template-columns: 1.35fr 1fr; gap: 18px; align-items:start; }
+  @media (max-width:1150px){ .row-split{grid-template-columns:1fr;} }
+
+  .switch { width: 40px; height: 23px; border-radius: 20px; background: var(--surface-3); position: relative; cursor: pointer; flex:none; transition: all .15s; }
+  .switch.on { background: var(--accent); }
+  .switch i { position:absolute; top:3px; left:3px; width:17px; height:17px; border-radius:50%; background:#fff; transition: all .15s; }
+  .switch.on i { left: 20px; }
+  .opt-row { display:flex; align-items:center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+  .opt-row:last-child { border-bottom: none; }
+  .opt-row .ot { font-size: 13px; font-weight: 600; }
+  .opt-row .od { font-size: 11.5px; color: var(--text-dim); }
+
+  .badge-soft { font-size: 11px; font-weight:700; padding: 3px 9px; border-radius: 20px; background: var(--surface-3); color: var(--text-dim); }
+  .hr { height:1px; background: var(--border); margin: 18px 0; border:none; }
+  .muted { color: var(--text-dim); font-size: 12.5px; }
+  .scroll-hint { font-size: 11px; color: var(--text-faint); text-align:center; padding: 8px;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ========== SIDEBAR ========== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">S</div>
+      <div>
+        <div class="name">SRT TTS Studio</div>
+        <div class="ver">v2.0 · Giao diện mới</div>
+      </div>
+    </div>
+
+    <div class="nav-group-label">Tổng quan</div>
+    <div class="nav-item active" data-go="dashboard"><span class="ic">▦</span> Bảng điều khiển</div>
+
+    <div class="nav-group-label">Chuyển giọng</div>
+    <div class="nav-item" data-go="srt"><span class="ic">🅂</span> SRT → Audio</div>
+    <div class="nav-item" data-go="doc"><span class="ic">🄿</span> PDF / Word → Audio</div>
+    <div class="nav-item" data-go="voice"><span class="ic">🎙</span> Giọng đọc & Voice Clone</div>
+
+    <div class="nav-group-label">Dịch thuật</div>
+    <div class="nav-item" data-go="translate"><span class="ic">文</span> Dịch sang tiếng Việt</div>
+
+    <div class="nav-group-label">Video &amp; Phụ đề</div>
+    <div class="nav-item" data-go="ocr"><span class="ic">⌷</span> Tách sub cứng (OCR)</div>
+    <div class="nav-item" data-go="stt"><span class="ic">🅣</span> Speech-to-Text</div>
+    <div class="nav-item" data-go="studio"><span class="ic">◈</span> Edit Studio</div>
+
+    <div class="nav-group-label">Xử lý file</div>
+    <div class="nav-item" data-go="media"><span class="ic">⚙</span> Nén · Ghép · Sửa video</div>
+
+    <div class="nav-group-label">Hệ thống</div>
+    <div class="nav-item" data-go="settings"><span class="ic">⚙</span> Cài đặt</div>
+
+    <div class="sidebar-footer">
+      <div class="user-row">
+        <div class="avatar">M</div>
+        <div>
+          <div class="uname">mine</div>
+          <div class="ustat">● Đã đăng nhập</div>
+        </div>
+        <div class="logout-btn" title="Đăng xuất">⎋</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========== MAIN ========== -->
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb"><b id="crumbTitle">Bảng điều khiển</b></div>
+      <div class="topbar-spacer"></div>
+      <div class="chip"><span class="dot green"></span> GPU: RTX 4060 · sẵn sàng</div>
+      <div class="theme-toggle" id="themeToggle" title="Đổi giao diện sáng/tối">
+        <span class="on" data-theme-set="dark">🌙 Tối</span>
+        <span data-theme-set="light">☀️ Sáng</span>
+      </div>
+      <div class="icon-btn" title="Trợ giúp">?</div>
+    </header>
+
+    <div class="content">
+
+      <!-- ===== DASHBOARD ===== -->
+      <section class="panel active" id="p-dashboard">
+        <div class="page-head">
+          <h1>Chào mừng trở lại 👋</h1>
+          <p>Chọn một tác vụ để bắt đầu, hoặc xem nhanh trạng thái công cụ bên dưới.</p>
+        </div>
+
+        <div class="grid cols-4" style="margin-bottom:20px;">
+          <div class="card stat"><div class="ico purple">🅂</div><div class="lbl">SRT đã xử lý</div><div class="val">128 <small>file</small></div></div>
+          <div class="card stat"><div class="ico blue">🎧</div><div class="lbl">Audio tạo ra</div><div class="val">3.412 <small>dòng</small></div></div>
+          <div class="card stat"><div class="ico green">文</div><div class="lbl">Đã dịch</div><div class="val">86 <small>tài liệu</small></div></div>
+          <div class="card stat"><div class="ico orange">🎙</div><div class="lbl">Engine sẵn sàng</div><div class="val">9 / 11</div></div>
+        </div>
+
+        <div class="card-title" style="margin:8px 2px 14px; font-size:15px;">Tác vụ chính</div>
+        <div class="grid cols-3">
+          <div class="tile" data-go="srt"><div class="ico ico purple" style="background:rgba(124,92,255,.14)">🅂</div><h3>SRT → Audio</h3><p>Lồng tiếng phụ đề theo đúng timeline, chống chồng giọng tự động.</p><span class="arrow">→</span></div>
+          <div class="tile" data-go="doc"><div class="ico blue" style="background:rgba(54,197,255,.14)">🄿</div><h3>PDF / Word → Audio</h3><p>Đọc tài liệu PDF, Word, TXT thành audio chia đoạn thông minh.</p><span class="arrow">→</span></div>
+          <div class="tile" data-go="voice"><div class="ico green" style="background:rgba(45,212,167,.14)">🎙</div><h3>Voice Clone</h3><p>Nhân bản giọng với RVC, VoxCPM, VieNeu, F5-TTS, OmniVoice.</p><span class="arrow">→</span></div>
+          <div class="tile" data-go="translate"><div class="ico orange" style="background:rgba(255,176,32,.14)">文</div><h3>Dịch sang tiếng Việt</h3><p>SRT / PDF / Word qua Claude, Gemini, OpenAI hoặc dịch offline.</p><span class="arrow">→</span></div>
+          <div class="tile" data-go="ocr"><div class="ico purple" style="background:rgba(124,92,255,.14)">⌷</div><h3>Tách sub cứng (OCR)</h3><p>Bóc phụ đề gắn cứng trong video thành file SRT.</p><span class="arrow">→</span></div>
+          <div class="tile" data-go="studio"><div class="ico blue" style="background:rgba(54,197,255,.14)">◈</div><h3>Edit Studio</h3><p>Xem trước & kiểm tra video + audio đã lồng tiếng.</p><span class="arrow">→</span></div>
+        </div>
+      </section>
+
+      <!-- ===== SRT → AUDIO ===== -->
+      <section class="panel" id="p-srt">
+        <div class="page-head">
+          <h1>SRT → Audio</h1>
+          <p>Chuyển file phụ đề thành giọng đọc và ghép theo timeline.</p>
+        </div>
+
+        <div class="row-split">
+          <div>
+            <div class="card pad-lg" style="margin-bottom:18px;">
+              <div class="card-title">① Chọn file phụ đề</div>
+              <div class="card-sub">Hỗ trợ .srt · kéo thả hoặc bấm để chọn</div>
+              <div class="file-drop">
+                <div class="big">📄</div>
+                <div class="fn">phim_tap_01.srt</div>
+                <div class="hint">412 dòng · kéo file khác vào để thay</div>
+              </div>
+            </div>
+
+            <div class="card pad-lg" style="margin-bottom:18px;">
+              <div class="card-title">② Tiến trình</div>
+              <div class="card-sub">Đang tạo audio cho từng dòng phụ đề</div>
+              <div class="progress-wrap">
+                <div class="progress-top"><span class="muted">Dòng 256 / 412</span><span class="pct">62%</span></div>
+                <div class="bar"><i></i></div>
+              </div>
+              <div class="console">
+<span class="ln dim">[10:42:01] Bắt đầu tạo audio — engine: Edge TTS (vi-VN-HoaiMy)</span>
+<span class="ln ok">[10:42:03] ✓ Dòng 0254 — line_0254.mp3 (3.6s)</span>
+<span class="ln ok">[10:42:04] ✓ Dòng 0255 — line_0255.mp3 (2.1s)</span>
+<span class="ln warn">[10:42:06] ⟳ Dòng 0256 — audio quá dài, thử lại (1/3)…</span>
+<span class="ln info">[10:42:07] ✓ Dòng 0256 — đạt chuẩn sau khi thử lại</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="card pad-lg" style="margin-bottom:18px;">
+              <div class="card-title">Giọng đọc</div>
+              <div class="card-sub">Đang dùng · đổi tại tab Giọng đọc</div>
+              <div class="engine sel" style="margin-bottom:8px;">
+                <div class="et">Edge TTS — HoaiMy <span class="tag cloud">Cloud</span></div>
+                <div class="ed">Giọng nữ miền Bắc, tốc độ +0%, cao độ +0Hz</div>
+              </div>
+              <button class="btn sm ghost" data-go="voice">⇄ Đổi giọng / Voice Clone</button>
+            </div>
+
+            <div class="card pad-lg" style="margin-bottom:18px;">
+              <div class="card-title">Tùy chọn ghép</div>
+              <div class="opt-row">
+                <div style="flex:1"><div class="ot">Chống chồng giọng</div><div class="od">Tự co giãn tốc độ cho khớp khe thời gian</div></div>
+                <div class="switch on"><i></i></div>
+              </div>
+              <div class="opt-row">
+                <div style="flex:1"><div class="ot">Song ngữ</div><div class="od">Giữ cả phụ đề gốc khi xuất</div></div>
+                <div class="switch"><i></i></div>
+              </div>
+              <div class="opt-row">
+                <div style="flex:1"><div class="ot">Kiểm tra chất lượng</div><div class="od">Tự phát hiện & tạo lại dòng lỗi</div></div>
+                <div class="switch on"><i></i></div>
+              </div>
+            </div>
+
+            <div class="card pad-lg">
+              <div class="btn-row">
+                <button class="btn primary" style="flex:1">▶ Bắt đầu tạo audio</button>
+              </div>
+              <div class="btn-row" style="margin-top:10px;">
+                <button class="btn sm" style="flex:1">⏸ Tạm dừng</button>
+                <button class="btn sm" style="flex:1">⏹ Dừng</button>
+                <button class="btn sm" style="flex:1">⟳ Tiếp tục</button>
+              </div>
+              <hr class="hr">
+              <div class="btn-row">
+                <button class="btn" style="flex:1">⧉ Ghép timeline → final.mp3</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== PDF/WORD ===== -->
+      <section class="panel" id="p-doc">
+        <div class="page-head">
+          <h1>PDF / Word → Audio</h1>
+          <p>Đọc tài liệu thành audio, chia đoạn ~250 ký tự theo câu.</p>
+        </div>
+        <div class="row-split">
+          <div class="card pad-lg">
+            <div class="card-title">Chọn tài liệu</div>
+            <div class="card-sub">.pdf · .docx · .txt</div>
+            <div class="file-drop"><div class="big">📑</div><div class="fn">tai_lieu_huong_dan.pdf</div><div class="hint">36 trang · 84 đoạn</div></div>
+            <div class="seg" style="margin-top:16px;">
+              <button class="on">Tất cả đoạn</button><button>Chọn khoảng</button><button>Một đoạn</button>
+            </div>
+            <div class="btn-row" style="margin-top:16px;">
+              <button class="btn primary" style="flex:1">▶ Đọc tài liệu (TTS)</button>
+              <button class="btn">⧉ Ghép audio</button>
+            </div>
+          </div>
+          <div class="card pad-lg">
+            <div class="card-title">Xem trước đoạn</div>
+            <div class="card-sub">Bấm một đoạn để nghe / tạo lại</div>
+            <div class="console" style="max-height:340px; background:var(--surface-2); color:var(--text);">
+<span class="ln"><b>Đoạn 0001</b> — Chào mừng bạn đến với hướng dẫn sử dụng phần mềm…</span>
+<span class="ln dim">─────────────</span>
+<span class="ln"><b>Đoạn 0002</b> — Trước tiên, hãy cài đặt các thành phần cần thiết…</span>
+<span class="ln dim">─────────────</span>
+<span class="ln"><b>Đoạn 0003</b> — Sau khi cài xong, mở phần mềm và đăng nhập…</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== VOICE / CLONE ===== -->
+      <section class="panel" id="p-voice">
+        <div class="page-head">
+          <h1>Giọng đọc &amp; Voice Clone</h1>
+          <p>Chọn nhà cung cấp giọng online hoặc một engine nhân bản giọng. Các engine loại trừ lẫn nhau — chỉ bật một.</p>
+        </div>
+
+        <div class="card pad-lg" style="margin-bottom:18px;">
+          <div class="card-title">Nhà cung cấp online <span class="badge-soft">Cloud TTS</span></div>
+          <div class="card-sub">Nhanh, không cần cài đặt nặng</div>
+          <div class="engine-grid">
+            <div class="engine sel"><div class="et">Edge TTS <span class="tag cloud">Cloud</span></div><div class="ed">Microsoft · nhiều giọng vi-VN miễn phí</div></div>
+            <div class="engine"><div class="et">FPT.AI <span class="tag cloud">Cloud</span></div><div class="ed">Giọng Việt tự nhiên, cần API key</div></div>
+            <div class="engine"><div class="et">Vbee <span class="tag cloud">Cloud</span></div><div class="ed">Giọng AI tiếng Việt chất lượng cao</div></div>
+            <div class="engine"><div class="et">Zalo AI <span class="tag cloud">Cloud</span></div><div class="ed">Giọng Bắc/Trung/Nam</div></div>
+            <div class="engine"><div class="et">EverAI <span class="tag cloud">Cloud</span></div><div class="ed">Đa giọng, đa ngôn ngữ</div></div>
+            <div class="engine"><div class="et">MiniMax <span class="tag cloud">Cloud</span></div><div class="ed">Giọng cảm xúc, biểu cảm tốt</div></div>
+          </div>
+        </div>
+
+        <div class="card pad-lg">
+          <div class="card-title">Nhân bản giọng (Voice Clone) <span class="badge-soft">Local · GPU</span></div>
+          <div class="card-sub">Chạy trên máy, cần model + audio mẫu. Tự chọn CPU/GPU.</div>
+          <div class="engine-grid">
+            <div class="engine"><div class="et">RVC <span class="tag local">Local</span></div><div class="ed">Chuyển giọng qua model .pth + index</div></div>
+            <div class="engine"><div class="et">VoxCPM <span class="tag local">Local</span></div><div class="ed">Clone từ audio mẫu, chất lượng cao</div></div>
+            <div class="engine"><div class="et">VieNeu-TTS <span class="tag local">Local</span></div><div class="ed">Tối ưu tiếng Việt · model tự tải</div></div>
+            <div class="engine"><div class="et">F5-TTS <span class="tag local">Local</span></div><div class="ed">Clone thuần từ giọng mẫu</div></div>
+            <div class="engine"><div class="et">OmniVoice <span class="tag local">Local</span></div><div class="ed">Clone tiếng Việt · model tự tải</div></div>
+          </div>
+
+          <hr class="hr">
+          <div class="grid cols-2">
+            <div class="field" style="margin:0"><label>Audio mẫu (giọng cần clone)</label><div class="file-drop" style="padding:16px"><div class="fn">giong_mau.wav</div><div class="hint">8s · 24kHz</div></div></div>
+            <div>
+              <div class="field"><label>Văn bản của audio mẫu</label><input class="input" value="Xin chào, đây là giọng đọc mẫu của tôi."></div>
+              <div class="btn-row"><button class="btn sm">🎤 Tự nhận dạng (STT)</button><button class="btn sm">✨ Xử lý audio</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== TRANSLATE ===== -->
+      <section class="panel" id="p-translate">
+        <div class="page-head">
+          <h1>Dịch sang tiếng Việt</h1>
+          <p>Dịch SRT, PDF, Word sang tiếng Việt tự nhiên qua LLM hoặc dịch offline.</p>
+        </div>
+        <div class="row-split">
+          <div>
+            <div class="card pad-lg" style="margin-bottom:18px;">
+              <div class="card-title">Nguồn dịch</div>
+              <div class="seg" style="margin:6px 0 16px;">
+                <button class="on">SRT</button><button>PDF</button><button>Word / TXT</button>
+              </div>
+              <div class="file-drop"><div class="big">文</div><div class="fn">movie_en.srt</div><div class="hint">512 dòng · Tiếng Anh → Tiếng Việt</div></div>
+            </div>
+            <div class="card pad-lg">
+              <div class="card-title">Tiến trình dịch</div>
+              <div class="progress-wrap" style="margin-top:12px;">
+                <div class="progress-top"><span class="muted">Lô 6 / 13 (40 dòng/lô)</span><span class="pct">46%</span></div>
+                <div class="bar"><i style="width:46%"></i></div>
+              </div>
+              <div class="btn-row" style="margin-top:12px;">
+                <button class="btn sm" style="flex:1">⏸ Tạm dừng</button>
+                <button class="btn sm" style="flex:1">⟳ Tiếp tục</button>
+                <button class="btn sm danger" style="flex:1">⏹ Dừng</button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="card pad-lg" style="margin-bottom:18px;">
+              <div class="card-title">Công cụ dịch</div>
+              <div class="field"><label>Nhà cung cấp</label>
+                <select class="select"><option>Claude (Anthropic)</option><option>Gemini (Google)</option><option>OpenAI</option><option>Offline (trên máy)</option></select>
+              </div>
+              <div class="field" style="margin-bottom:0"><label>Định dạng xuất</label>
+                <select class="select"><option>SRT (giữ timestamp)</option><option>Word (.docx)</option><option>PDF</option><option>TXT</option></select>
+              </div>
+            </div>
+            <div class="card pad-lg">
+              <div class="card-title">Ngữ cảnh & tùy chọn</div>
+              <div class="field"><label>Ngữ cảnh (xưng hô, bối cảnh)</label><input class="input" placeholder="VD: phim hành động, nhân vật chính xưng tôi…"></div>
+              <div class="opt-row"><div style="flex:1"><div class="ot">Song ngữ</div><div class="od">Giữ cả câu gốc + bản dịch</div></div><div class="switch"><i></i></div></div>
+              <button class="btn primary" style="width:100%; margin-top:14px;">文 Bắt đầu dịch</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== OCR ===== -->
+      <section class="panel" id="p-ocr">
+        <div class="page-head"><h1>Tách sub cứng (OCR)</h1><p>Bóc phụ đề gắn cứng trong video thành file .srt.</p></div>
+        <div class="row-split">
+          <div class="card pad-lg">
+            <div class="card-title">Video nguồn</div>
+            <div class="file-drop" style="margin-top:8px;"><div class="big">🎬</div><div class="fn">video_raw.mp4</div><div class="hint">1080p · 24:18</div></div>
+            <div class="grid cols-2" style="margin-top:16px;">
+              <div class="field" style="margin:0"><label>Ngôn ngữ phụ đề</label><select class="select"><option>Tiếng Trung</option><option>Tiếng Anh</option><option>Tiếng Việt</option></select></div>
+              <div class="field" style="margin:0"><label>Vùng quét</label><select class="select"><option>1/3 dưới màn hình</option><option>Toàn màn hình</option><option>Tùy chỉnh</option></select></div>
+            </div>
+            <div class="btn-row" style="margin-top:16px;"><button class="btn primary" style="flex:1">⌷ Bắt đầu OCR</button></div>
+            <div class="btn-row" style="margin-top:10px;"><button class="btn sm" style="flex:1">⏸ Dừng</button><button class="btn sm" style="flex:1">⟳ Tiếp tục</button><button class="btn sm danger" style="flex:1">⏹ Hủy</button></div>
+          </div>
+          <div class="card pad-lg">
+            <div class="card-title">Tiến trình</div>
+            <div class="progress-wrap" style="margin-top:12px;"><div class="progress-top"><span class="muted">Bước 2/3 — nhận dạng</span><span class="pct">55%</span></div><div class="bar"><i style="width:55%"></i></div></div>
+            <div class="console" style="margin-top:6px;">
+<span class="ln info">Step 1/3 — trích khung hình ✓</span>
+<span class="ln info">Step 2/3 — OCR đang chạy…</span>
+<span class="ln dim">Step 3/3 — ghép phụ đề</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== STT ===== -->
+      <section class="panel" id="p-stt">
+        <div class="page-head"><h1>Speech-to-Text</h1><p>Tạo phụ đề từ giọng nói trong video bằng faster-whisper.</p></div>
+        <div class="card pad-lg" style="max-width:760px;">
+          <div class="file-drop"><div class="big">🅣</div><div class="fn">phong_van.mp4</div><div class="hint">12:40 · sẽ xuất .srt</div></div>
+          <div class="grid cols-2" style="margin-top:16px;">
+            <div class="field" style="margin:0"><label>Model</label><select class="select"><option>large-v3 (chính xác nhất)</option><option>medium</option><option>small (nhanh)</option></select></div>
+            <div class="field" style="margin:0"><label>Ngôn ngữ</label><select class="select"><option>Tự nhận diện</option><option>Tiếng Việt</option><option>Tiếng Anh</option></select></div>
+          </div>
+          <button class="btn primary" style="width:100%; margin-top:16px;">🅣 Tạo phụ đề</button>
+        </div>
+      </section>
+
+      <!-- ===== EDIT STUDIO ===== -->
+      <section class="panel" id="p-studio">
+        <div class="page-head"><h1>Edit Studio</h1><p>Xem trước & kiểm tra video kèm audio đã lồng tiếng.</p></div>
+        <div class="row-split">
+          <div class="card pad-lg">
+            <div style="background:#000; border-radius:var(--radius-sm); aspect-ratio:16/9; display:grid; place-items:center; color:#445; font-size:48px;">▶</div>
+            <div class="progress-wrap" style="margin-top:14px;"><div class="bar"><i style="width:38%"></i></div></div>
+            <div class="btn-row" style="margin-top:12px; justify-content:center;">
+              <button class="btn sm">⏮</button><button class="btn primary sm">▶ Phát</button><button class="btn sm">⏭</button>
+            </div>
+          </div>
+          <div class="card pad-lg">
+            <div class="card-title">Nạp nội dung</div>
+            <div class="btn-row" style="flex-direction:column;">
+              <button class="btn" style="width:100%">📄 Nạp SRT</button>
+              <button class="btn" style="width:100%">🎬 Nạp Video</button>
+              <button class="btn" style="width:100%">📁 Nạp thư mục Audio (theo dòng)</button>
+              <button class="btn" style="width:100%">🎧 Nạp file Audio (final.mp3)</button>
+              <button class="btn" style="width:100%">🎵 Nạp nhiều Audio (phát tuần tự)</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== MEDIA ===== -->
+      <section class="panel" id="p-media">
+        <div class="page-head"><h1>Nén · Ghép · Sửa video</h1><p>Các công cụ xử lý media bằng ffmpeg.</p></div>
+        <div class="grid cols-3">
+          <div class="card pad-lg">
+            <div class="ico orange" style="width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-size:18px;margin-bottom:12px;background:rgba(255,176,32,.14)">🗜</div>
+            <div class="card-title">Nén video</div>
+            <div class="card-sub">Giảm dung lượng, giữ chất lượng</div>
+            <button class="btn primary sm" style="width:100%">Chọn video & nén</button>
+          </div>
+          <div class="card pad-lg">
+            <div class="ico green" style="width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-size:18px;margin-bottom:12px;background:rgba(45,212,167,.14)">🔊</div>
+            <div class="card-title">Ghép Audio → Video</div>
+            <div class="card-sub">Mux final.mp3 vào video</div>
+            <button class="btn primary sm" style="width:100%">Ghép audio vào video</button>
+          </div>
+          <div class="card pad-lg">
+            <div class="ico blue" style="width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-size:18px;margin-bottom:12px;background:rgba(54,197,255,.14)">🛠</div>
+            <div class="card-title">Sửa video lỗi</div>
+            <div class="card-sub">Khôi phục file hỏng/đứt</div>
+            <button class="btn primary sm" style="width:100%">Quét & sửa</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== SETTINGS ===== -->
+      <section class="panel" id="p-settings">
+        <div class="page-head"><h1>Cài đặt</h1><p>Đường dẫn công cụ, API key và môi trường engine.</p></div>
+        <div class="grid cols-2">
+          <div class="card pad-lg">
+            <div class="card-title">Đường dẫn công cụ</div>
+            <div class="field"><label>Thư mục FFmpeg</label><input class="input" value="C:\ffmpeg\bin"></div>
+            <div class="field"><label>VideOCR CLI</label><input class="input" value="…\VideOCR-1.5.1\CLI"></div>
+            <div class="field" style="margin:0"><label>Subtitle Edit</label><input class="input" placeholder="(tùy chọn)"></div>
+          </div>
+          <div class="card pad-lg">
+            <div class="card-title">API Key dịch thuật</div>
+            <div class="field"><label>Anthropic (Claude)</label><input class="input" type="password" value="••••••••••••"></div>
+            <div class="field"><label>Google (Gemini)</label><input class="input" type="password" placeholder="chưa đặt"></div>
+            <div class="field" style="margin:0"><label>OpenAI</label><input class="input" type="password" placeholder="chưa đặt"></div>
+          </div>
+          <div class="card pad-lg">
+            <div class="card-title">Môi trường engine (python.exe)</div>
+            <div class="field"><label>voxcpm_env</label><input class="input" value="…\voxcpm_env\Scripts\python.exe"></div>
+            <div class="field"><label>vieneu_env</label><input class="input" placeholder="tự dò cạnh exe"></div>
+            <div class="field" style="margin:0"><label>f5tts_env / omnivoice_env</label><input class="input" placeholder="tự dò cạnh exe"></div>
+          </div>
+          <div class="card pad-lg">
+            <div class="card-title">Chuẩn đoán khởi động</div>
+            <div class="console" style="background:var(--surface-2); color:var(--text); max-height:220px;">
+<span class="ln ok">✓ FFmpeg — OK</span>
+<span class="ln ok">✓ voxcpm_env — OK</span>
+<span class="ln ok">✓ VoxCPM model — OK</span>
+<span class="ln warn">⚠ MOSS-Audio-Tokenizer — chưa có cache</span>
+<span class="ln ok">✓ vieneu_env — OK</span>
+<span class="ln err">✗ f5tts model — chưa đặt thư mục</span>
+            </div>
+            <button class="btn sm" style="width:100%; margin-top:12px;">⟳ Chạy lại chẩn đoán</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // theme toggle
+  const tg = document.getElementById('themeToggle');
+  tg.addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    tg.querySelectorAll('span').forEach(s => s.classList.toggle('on', s.dataset.themeSet === next));
+  });
+
+  // navigation
+  const titles = {
+    dashboard:'Bảng điều khiển', srt:'SRT → Audio', doc:'PDF / Word → Audio',
+    voice:'Giọng đọc & Voice Clone', translate:'Dịch sang tiếng Việt',
+    ocr:'Tách sub cứng (OCR)', stt:'Speech-to-Text', studio:'Edit Studio',
+    media:'Nén · Ghép · Sửa video', settings:'Cài đặt'
+  };
+  function go(id){
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('p-'+id).classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.go === id));
+    document.getElementById('crumbTitle').textContent = titles[id] || '';
+    document.querySelector('.content').scrollTop = 0;
+  }
+  document.querySelectorAll('[data-go]').forEach(el => {
+    el.addEventListener('click', () => go(el.dataset.go));
+  });
+
+  // engine single-select within a group
+  document.querySelectorAll('.engine-grid').forEach(grid => {
+    grid.querySelectorAll('.engine').forEach(e => {
+      e.addEventListener('click', () => {
+        // clear ALL engines across both groups (mutually exclusive)
+        document.querySelectorAll('.engine').forEach(x => x.classList.remove('sel'));
+        e.classList.add('sel');
+      });
+    });
+  });
+
+  // switches
+  document.querySelectorAll('.switch').forEach(s => s.addEventListener('click', () => s.classList.toggle('on')));
+  // segmented
+  document.querySelectorAll('.seg').forEach(seg => {
+    seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+      seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+    }));
+  });
+</script>
+</body>
+</html>

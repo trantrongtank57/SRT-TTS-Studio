@@ -56,8 +56,9 @@ for exe in ("output/Portable/SRT_TTS_Studio_Portable.exe",
 | 6A | PyInstaller onedir using `SRT_TTS_Studio_onedir.spec` |
 | 6B | Bundle ffmpeg/ffprobe |
 | 6C | `gen_integrity.py` |
-| **6G** | **FAIL-CLOSED** copy of 11 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` into `dist\SRT_TTS_Studio\`; verifies each file landed; aborts if anything missing. Must run before step 7 so WiX Heat picks them up. |
+| **6G** | **FAIL-CLOSED** copy of 12 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` into `dist\SRT_TTS_Studio\`; verifies each file landed; aborts if anything missing. Must run before step 7 so WiX Heat picks them up. |
 | 6D/E/F | 3 onefile PyInstaller builds (Portable / Secured / Trial) |
+| 9 (Portable pack) | Copies onefile exes + 12 companion `.py` + `hubert_base.pt` + `rmvpe.pt` + `rvc_env\` + **`F5-TTS-Vietnamese-ViVoice\` (F5 model, ~5.4 GB, robocopy if `model_last.pt` present)** into `output\Portable\`. The F5 model is the one large model the build copies — all other big envs/models are hand-copied (see output layout below). |
 | 7–8 | WiX Heat → candle → light → MSI (source: `product.wxs`) |
 | 9 | `output\SRT_TTS_Studio_Setup.msi` + `output\Portable\` (exes + companion files + models + rvc_env) |
 
@@ -82,10 +83,13 @@ output\
     SRT_TTS_Studio_Portable.exe   ← onefile
     SRT_TTS_Studio_Secured.exe    ← onefile + .integrity companion
     SRT_TTS_Studio_Trial.exe      ← onefile, 24h trial
-    11× companion .py             ← must sit next to exe (also embedded in exe via datas)
+    12× companion .py             ← must sit next to exe (also embedded in exe via datas)
     hubert_base.pt, rmvpe.pt
     rvc_env\
+    F5-TTS-Vietnamese-ViVoice\    ← F5-TTS model (model_last.pt + vocab.txt); copied only if present in repo root
 ```
+
+**Big external deps are NOT in `output\Portable\`** — they live outside the repo and must be hand-copied per `MOVE_CHECKLIST.txt`: `voxcpm_env\` (shared by VoxCPM/STT/audio-enhance/SRT-align/video-STT/offline-translate), VoxCPM model, `vieneu_env\`, `f5tts_env\`, `omnivoice_env\`, VideOCR CLI, plus runtime HF-cache models (`MOSS-Audio-Tokenizer-Nano`, `vocos-mel-24khz`, `faster-whisper-large-v3`, `demucs htdemucs`). `_run_startup_diagnostics()` flags each missing piece in the logbox at launch.
 
 ## Critical: Security / Code Protection Architecture
 

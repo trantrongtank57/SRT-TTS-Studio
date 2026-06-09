@@ -1158,7 +1158,50 @@ os.makedirs(CLEAN_VIDEO_DIR, exist_ok=True)
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+# === Bảng màu hiện đại (tím–navy) ====================================
+# Tinh chỉnh ThemeManager TRƯỚC khi tạo widget, để mọi nút/slider/thanh
+# tiến trình mặc định mang tông tím thay cho xanh CTk. Bọc try/except
+# từng mục — nếu cấu trúc theme khác phiên bản thì bỏ qua, app vẫn chạy.
+_ACCENT      = "#7c5cff"   # tím chủ đạo
+_ACCENT_HOV  = "#6a4ae0"   # tím đậm khi hover
+_ACCENT_2    = "#36c5ff"   # xanh cyan phụ
+try:
+    _thm = ctk.ThemeManager.theme
+
+    def _thm_set(comp, key, value):
+        try:
+            if comp in _thm and key in _thm[comp]:
+                _thm[comp][key] = value
+        except Exception:
+            pass
+
+    _thm_set("CTkButton", "fg_color",    [_ACCENT, _ACCENT])
+    _thm_set("CTkButton", "hover_color", [_ACCENT_HOV, _ACCENT_HOV])
+    _thm_set("CTkProgressBar", "progress_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkSlider", "button_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkSlider", "button_hover_color", [_ACCENT_HOV, _ACCENT_HOV])
+    _thm_set("CTkSlider", "progress_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkCheckBox", "fg_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkCheckBox", "hover_color", [_ACCENT_HOV, _ACCENT_HOV])
+    _thm_set("CTkSwitch", "progress_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkRadioButton", "fg_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkRadioButton", "hover_color", [_ACCENT_HOV, _ACCENT_HOV])
+    _thm_set("CTkOptionMenu", "fg_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkOptionMenu", "button_color", [_ACCENT_HOV, _ACCENT_HOV])
+    _thm_set("CTkOptionMenu", "button_hover_color", [_ACCENT_HOV, _ACCENT_HOV])
+    _thm_set("CTkComboBox", "button_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkComboBox", "button_hover_color", [_ACCENT_HOV, _ACCENT_HOV])
+    _thm_set("CTkSegmentedButton", "selected_color", [_ACCENT, _ACCENT])
+    _thm_set("CTkSegmentedButton", "selected_hover_color", [_ACCENT_HOV, _ACCENT_HOV])
+except Exception:
+    pass
+# =====================================================================
+
 app = ctk.CTk()
+try:
+    app.configure(fg_color="#0f1119")   # nền cửa sổ navy sâu, hợp tông tím
+except Exception:
+    pass
 
 try:
     app.iconbitmap(get_resource_path("logo.ico"))
@@ -1186,7 +1229,45 @@ current_index = 0
 # UI
 # =========================
 
-_title_canvas = tk.Canvas(_root, height=52, highlightthickness=0, bg="#1a1a2e")
+# === Khung tổng cấp cao: sidebar TRÁI cao full + cột nội dung PHẢI =====
+# Bố cục giống mockup HTML: cột trái cố định chứa sidebar điều hướng,
+# cột phải chứa tiêu đề + điều khiển giọng + console + thẻ chức năng.
+# Các widget bên dưới (title canvas, _vpane, ws_nav, ws_content) được
+# gắn vào 2 cột này thay vì gắn thẳng vào cửa sổ.
+_app_body = ctk.CTkFrame(app, fg_color="transparent")
+_app_body.pack(fill="both", expand=True)
+
+_left_col = ctk.CTkFrame(_app_body, width=232, fg_color="#13151f", corner_radius=0)
+_left_col.pack(side="left", fill="y")
+_left_col.pack_propagate(False)
+
+# (Đã bỏ khối logo/tên app ở đầu sidebar theo yêu cầu — sidebar bắt đầu
+#  thẳng bằng danh sách điều hướng.)
+
+_right_col = ctk.CTkFrame(_app_body, fg_color="transparent")
+_right_col.pack(side="left", fill="both", expand=True)
+
+# Thân phải: Console (trên) + Thẻ chức năng (dưới), chia theo TỈ LỆ bằng
+# grid — thẻ chức năng (row 1) được ưu tiên chỗ hơn console (row 0).
+# side="bottom" để khối này nằm DƯỚI thanh tiêu đề (pack side="top").
+_rc_body = ctk.CTkFrame(_right_col, fg_color="transparent")
+_rc_body.pack(side="bottom", fill="both", expand=True)
+_rc_body.grid_columnconfigure(0, weight=1)
+_rc_body.grid_rowconfigure(0, weight=2)   # console
+_rc_body.grid_rowconfigure(1, weight=3)   # thẻ chức năng (nhiều chỗ hơn)
+
+# Vùng nội dung cuộn (chứa các TRANG chức năng) — tạo SỚM để trang
+# "Giọng đọc" có thể chứa voice_frame (voice_frame được tạo ngay bên dưới).
+# Hệ thống workspace bên dưới sẽ đăng ký các trang còn lại vào ws_content này.
+ws_content = ctk.CTkScrollableFrame(_rc_body, fg_color="transparent")
+ws_content.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+button_frame = ws_content  # tuong thich nguoc
+
+# Trang "Giọng đọc & Voice Clone" (hiện như một mục trong sidebar, giống các
+# tính năng khác). voice_frame sẽ nằm trong trang này -> giữ bề ngang rộng.
+voice_page = ctk.CTkFrame(ws_content, fg_color="transparent")
+
+_title_canvas = tk.Canvas(_right_col, height=52, highlightthickness=0, bg="#0f1119")
 _title_canvas.pack(pady=10, fill="x")
 
 _title_text = "SRT TTS Studio"
@@ -1258,11 +1339,48 @@ btn_toggle_console = ctk.CTkButton(
 )
 btn_toggle_console.place(relx=1.0, rely=0.0, anchor="ne", x=-150, y=11)
 
+# Nút ẩn/hiện SIDEBAR (☰) — đặt góc trái trên, luôn thấy dù sidebar ẩn hay hiện.
+_sidebar_visible = {"on": True}
+def toggle_sidebar():
+    try:
+        if _sidebar_visible["on"]:
+            _left_col.pack_forget()
+            _sidebar_visible["on"] = False
+        else:
+            _left_col.pack(side="left", fill="y", before=_right_col)
+            _sidebar_visible["on"] = True
+    except Exception:
+        pass
+btn_toggle_sidebar = ctk.CTkButton(
+    _root, text="☰", width=34, height=28, corner_radius=8,
+    font=("Arial", 16), fg_color="#2b3340", hover_color="#363f4e",
+    text_color="#c7d0db", command=toggle_sidebar,
+)
+btn_toggle_sidebar.place(relx=0.0, rely=0.0, anchor="nw", x=8, y=11)
+
+# Chip trạng thái GPU -> đặt ở CHÂN SIDEBAR TRÁI (gọn, không che tiêu đề)
+try:
+    _gpu_foot = ctk.CTkFrame(_left_col, fg_color="#1a1e2e", corner_radius=10)
+    _gpu_foot.pack(side="bottom", fill="x", padx=10, pady=(6, 10))
+    _gpu_short = (DETECTED_GPU or "Không thấy GPU NVIDIA")
+    _gpu_short = _gpu_short.replace("NVIDIA GeForce ", "").replace("NVIDIA ", "")
+    ctk.CTkLabel(
+        _gpu_foot, text=("●  GPU sẵn sàng" if DETECTED_GPU else "●  Chạy bằng CPU"),
+        font=("Arial", 10, "bold"),
+        text_color=("#2dd4a7" if DETECTED_GPU else "#8a93ad"), anchor="w",
+    ).pack(fill="x", padx=12, pady=(8, 0))
+    ctk.CTkLabel(
+        _gpu_foot, text=_gpu_short, font=("Arial", 11), text_color="#c7d0db",
+        anchor="w", justify="left", wraplength=188,
+    ).pack(fill="x", padx=12, pady=(0, 8))
+except Exception:
+    pass
+
 if _TRIAL_REMAINING_SECONDS >= 0:
     _bh = _TRIAL_REMAINING_SECONDS // 3600
     _bm = (_TRIAL_REMAINING_SECONDS % 3600) // 60
     ctk.CTkLabel(
-        _root,
+        _right_col,
         text=f"⏰  Phiên bản dùng thử — còn {_bh} giờ {_bm:02d} phút",
         font=("Arial", 11),
         text_color="#FF9800",
@@ -1277,18 +1395,18 @@ videocr_align_var     = ctk.BooleanVar(value=True)   # căn timing theo giọng 
 
 # PanedWindow dọc: voice_frame (trên) + main_frame (dưới), kéo được
 _vpane = tk.PanedWindow(
-    _root,
+    _rc_body,
     orient=tk.VERTICAL,
     sashwidth=6,
     sashrelief="flat",
     sashpad=0,
-    bg="#2b2b2b",
+    bg="#0f1119",
     bd=0,
 )
-_vpane.pack(fill="both", expand=True, padx=10, pady=(0, 0))
+_vpane.grid(row=0, column=0, sticky="nsew", padx=10, pady=(0, 4))
 
-voice_frame = ctk.CTkFrame(_vpane)
-_vpane.add(voice_frame, sticky="nsew", stretch="never")
+voice_frame = ctk.CTkFrame(voice_page)
+voice_frame.pack(fill="both", expand=True, padx=2, pady=2)
 
 # Row 1: Provider + Voice
 voice_row1 = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -2417,6 +2535,18 @@ def _quick_tts_choose_output():
         _quick_tts_output_var.set(path)
         log(f"[Quick TTS] Output: {path}")
 
+def _quick_tts_open_output():
+    """Mở thư mục chứa file output (hoặc OUTPUT_DIR nếu chưa chọn)."""
+    out = _quick_tts_output_var.get().strip()
+    try:
+        folder = os.path.dirname(os.path.abspath(out)) if out else OUTPUT_DIR
+        if not folder or not os.path.isdir(folder):
+            folder = OUTPUT_DIR
+        os.startfile(folder)
+        log(f"[Quick TTS] Mở thư mục: {folder}")
+    except Exception as e:
+        log(f"[Quick TTS] Không mở được thư mục output: {e}")
+
 # (nut Output -> workspace "Text -> Audio")
 
 def _quick_tts_run():
@@ -3530,25 +3660,21 @@ subtitle_size_slider.pack(fill="x", padx=10, pady=(0, 10))
 #   - Console/preview (main_frame) an/hien duoc bang nut trong sidebar.
 #   - Ten bien nut + section giu NGUYEN -> khong ham nao phai sua.
 # =====================================================================
-_WS_NAVBG   = "#1a1e25"
-_WS_ACTIVE  = "#274156"
-_WS_HOVER   = "#222831"
-_WS_TXT     = "#c7d0db"
+_WS_NAVBG   = "#13151f"   # sidebar navy sâu
+_WS_ACTIVE  = "#3a3568"   # mục đang chọn — tím slate
+_WS_HOVER   = "#1d2030"
+_WS_TXT     = "#9aa3bd"
 _WS_TXT_ACT = "#ffffff"
 
-ws_shell = ctk.CTkFrame(_root, fg_color="transparent")
-ws_shell.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+# Sidebar điều hướng -> CỘT TRÁI (cao toàn màn, đặt dưới khối logo/brand).
+# Vùng nội dung (thẻ chức năng) -> CỘT PHẢI, nằm dưới console.
+ws_nav = ctk.CTkFrame(_left_col, fg_color=_WS_NAVBG, corner_radius=0)
+ws_nav.pack(side="top", fill="both", expand=True, padx=0, pady=(38, 0))
 
-ws_nav = ctk.CTkFrame(ws_shell, width=216, fg_color=_WS_NAVBG, corner_radius=10)
-ws_nav.pack(side="left", fill="y", padx=(0, 8))
-ws_nav.pack_propagate(False)
-
-ws_content = ctk.CTkScrollableFrame(ws_shell, fg_color="transparent")
-ws_content.pack(side="left", fill="both", expand=True)
-button_frame = ws_content  # tuong thich nguoc
-
-_WS_KEYS = ["tts", "textaudio", "doc", "extract", "translate", "video", "system"]
+# ws_content + voice_page đã được tạo SỚM ở trên (gần _rc_body).
+_WS_KEYS = ["tts", "voice", "textaudio", "doc", "extract", "translate", "video", "system"]
 ws_pages = {_k: ctk.CTkFrame(ws_content, fg_color="transparent") for _k in _WS_KEYS}
+ws_pages["voice"] = voice_page   # trang Giọng đọc đã dựng sẵn (chứa voice_frame)
 
 ws_nav_buttons = {}
 _ws_current = {"key": "tts"}
@@ -3571,6 +3697,7 @@ def show_workspace(key):
 _WS_NAV_ITEMS = [
     ("__cap1",    "TẠO GIỌNG NÓI"),
     ("tts",       "\U0001F3A7   SRT \u2192 Lồng tiếng"),
+    ("voice",     "\U0001F399\ufe0f   Gi\u1ecdng \u0111\u1ecdc / Clone"),
     ("textaudio", "\U0001F4DD   Text \u2192 Audio"),
     ("doc",       "\U0001F4C4   Tài liệu \u2192 Audio"),
     ("__cap2",    "PHỤ ĐỀ"),
@@ -3581,21 +3708,35 @@ _WS_NAV_ITEMS = [
     ("system",    "\u2699\uFE0F   Hệ thống"),
 ]
 
+# Dua muc "voice" (Giong doc / Clone) len TRUOC "tts" (SRT -> Long tieng) o sidebar.
+try:
+    _ks = [k for k, _ in _WS_NAV_ITEMS]
+    if "voice" in _ks and "tts" in _ks:
+        _vi = _ks.index("voice")
+        _ti = _ks.index("tts")
+        if _vi > _ti:
+            _WS_NAV_ITEMS.insert(_ti, _WS_NAV_ITEMS.pop(_vi))
+except Exception:
+    pass
+
 # Nut an/hien Console o DAY sidebar (co dinh, luon thay) - tao truoc de pack bottom
 _console_visible = {"on": True}
 def toggle_console():
+    # voice_frame giờ là một TRANG riêng (không còn nằm trong _vpane), nên
+    # ẩn/hiện Console = ẩn/hiện cả vùng _vpane (row 0 của _rc_body) và nhường
+    # toàn bộ chỗ cho khu thẻ chức năng (row 1).
     if _console_visible["on"]:
         try:
-            _vpane.forget(main_frame)
-            _vpane.paneconfigure(voice_frame, stretch="always")
+            _vpane.grid_remove()
+            _rc_body.grid_rowconfigure(0, weight=0)
         except Exception:
             pass
         _console_visible["on"] = False
         btn_toggle_console.configure(text="\U0001F5A5   Hiện Console")
     else:
         try:
-            _vpane.paneconfigure(voice_frame, stretch="never")
-            _vpane.add(main_frame, sticky="nsew", stretch="always")
+            _rc_body.grid_rowconfigure(0, weight=2)
+            _vpane.grid()
         except Exception:
             pass
         _console_visible["on"] = True
@@ -3622,16 +3763,16 @@ for _key, _label in _WS_NAV_ITEMS:
 # Per-row frames — mỗi hàng tự chia đều width cho tất cả nút (pack expand=True)
 # === Bố cục nút theo NHÓM CHỨC NĂNG (thay cho các hàng phẳng _brow*) ===
 # Mỗi nhóm = 1 "thẻ" có tiêu đề + vạch màu; tên biến nút giữ NGUYÊN.
-_SEC_BG, _SEC_BORDER = "#23272f", "#333a45"
-_SUB_FG, _TTL_FG, _SUBTTL_FG = "#7b8593", "#e6eaf0", "#7a828f"
+_SEC_BG, _SEC_BORDER = "#181c2b", "#2a3046"
+_SUB_FG, _TTL_FG, _SUBTTL_FG = "#8a93ad", "#eef1f8", "#8a93ad"
 
-def _make_section(title, subtitle="", accent="#3b8ed0", ws="tts"):
+def _make_section(title, subtitle="", accent="#7c5cff", ws="tts"):
     _parent = ws_pages.get(ws, button_frame)
     card = ctk.CTkFrame(_parent, fg_color=_SEC_BG,
-                        border_color=_SEC_BORDER, border_width=1, corner_radius=10)
-    card.pack(fill="x", padx=2, pady=(0, 9))
+                        border_color=_SEC_BORDER, border_width=1, corner_radius=14)
+    card.pack(fill="x", padx=4, pady=(0, 12))
     head = ctk.CTkFrame(card, fg_color="transparent")
-    head.pack(fill="x", padx=12, pady=(9, 0))
+    head.pack(fill="x", padx=14, pady=(12, 2))
     ctk.CTkFrame(head, fg_color=accent, width=4, height=28, corner_radius=2).pack(side="left", padx=(0, 10))
     box = ctk.CTkFrame(head, fg_color="transparent")
     box.pack(side="left", fill="x", expand=True)
@@ -3641,7 +3782,7 @@ def _make_section(title, subtitle="", accent="#3b8ed0", ws="tts"):
         ctk.CTkLabel(box, text=subtitle, font=("Arial", 11),
                      text_color=_SUBTTL_FG, anchor="w").pack(fill="x")
     body = ctk.CTkFrame(card, fg_color="transparent")
-    body.pack(fill="x", padx=8, pady=(2, 8))
+    body.pack(fill="x", padx=10, pady=(4, 12))
     return body
 
 def _sec_row(parent):
@@ -3659,7 +3800,7 @@ def _sec_sublabel(parent, text):
                  text_color=_SUB_FG, anchor="w").pack(fill="x", padx=5, pady=(7, 1))
 
 # Nhom 1
-_sec1 = _make_section("SRT → Lồng tiếng (TTS)", "Nạp phụ đề → tạo giọng → ghép vào video", "#3b8ed0", ws="tts")
+_sec1 = _make_section("SRT → Lồng tiếng (TTS)", "Nạp phụ đề → tạo giọng → ghép vào video", "#7c5cff", ws="tts")
 _sec_sublabel(_sec1, "TẠO")
 _g1_create = _sec_row(_sec1)
 _sec_sublabel(_sec1, "ĐIỀU KHIỂN TIẾN TRÌNH")
@@ -3668,14 +3809,16 @@ _sec_sublabel(_sec1, "CHỈNH SỬA & ĐẦU RA")
 _g1_io = _sec_row(_sec1)
 
 # Nhom 2
-_sec2 = _make_section("Tài liệu → Audio (PDF / Word / TXT)", "Đọc tài liệu thành giọng nói", "#9b6cff", ws="doc")
+_sec2 = _make_section("Tài liệu → Audio (PDF / Word / TXT)", "Đọc tài liệu thành giọng nói", "#36c5ff", ws="doc")
 _sec_sublabel(_sec2, "NẠP & ĐỌC")
 _g2_load = _sec_row(_sec2)
 _sec_sublabel(_sec2, "SỬA & GHÉP")
 _g2_edit = _sec_row(_sec2)
+_sec_sublabel(_sec2, "OUTPUT")
+_g2_out = _sec_row(_sec2)
 
 # Nhom 3
-_sec3 = _make_section("Video → Phụ đề", "Trích phụ đề từ video: OCR (sub cứng) hoặc STT (giọng nói)", "#2fa572", ws="extract")
+_sec3 = _make_section("Video → Phụ đề", "Trích phụ đề từ video: OCR (sub cứng) hoặc STT (giọng nói)", "#2dd4a7", ws="extract")
 _g3_cols = _sec_row(_sec3)
 _g3_ocr_col = _sec_col(_g3_cols)
 _g3_stt_col = _sec_col(_g3_cols)
@@ -3689,14 +3832,16 @@ _g3_stt = _sec_row(_g3_stt_col)
 _g3_stt_opt = _sec_row(_g3_stt_col)
 
 # Nhom 4
-_sec4 = _make_section("Dịch thuật AI", "Dịch phụ đề & tài liệu sang tiếng Việt bằng LLM", "#e0913b", ws="translate")
+_sec4 = _make_section("Dịch thuật AI", "Dịch phụ đề & tài liệu sang tiếng Việt bằng LLM", "#ffb020", ws="translate")
 _sec_sublabel(_sec4, "TUỲ CHỌN DỊCH")
 _g4_opt = _sec_row(_sec4)
 _sec_sublabel(_sec4, "DỊCH & ĐIỀU KHIỂN")
 _g4_run = _sec_row(_sec4)
+_sec_sublabel(_sec4, "OUTPUT")
+_g4_out = _sec_row(_sec4)
 
 # Nhom 5
-_sec5 = _make_section("Công cụ Video", "Sửa lỗi · nén dung lượng · ghép audio vào video", "#6b7686", ws="video")
+_sec5 = _make_section("Công cụ Video", "Sửa lỗi · nén dung lượng · ghép audio vào video", "#8b93a8", ws="video")
 _g5_cols = _sec_row(_sec5)
 _g5_repair_col = _sec_col(_g5_cols)
 _g5_comp_col = _sec_col(_g5_cols)
@@ -3718,7 +3863,7 @@ _sec_sublabel(_sec5, "BIÊN TẬP")
 _g5_studio = _sec_row(_sec5)
 
 # Nhom 6
-_sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#48505d", ws="system")
+_sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#5a6478", ws="system")
 _g6 = _sec_row(_sec6)
 
 # Mo workspace mac dinh khi khoi dong
@@ -3753,7 +3898,7 @@ videocr_align_check = ctk.CTkCheckBox(_g3_ocr_opt2, text="Căn giọng", variabl
 videocr_align_check.pack(side="left", padx=(0, 4))
 
 # === Workspace "Text -> Audio": go/dan van ban -> tao audio le ===
-_sec_qt = _make_section("Text → Audio", "Gõ hoặc dán văn bản bất kỳ để tạo một audio lẻ", "#3b8ed0", ws="textaudio")
+_sec_qt = _make_section("Text → Audio", "Gõ hoặc dán văn bản bất kỳ để tạo một audio lẻ", "#7c5cff", ws="textaudio")
 _sec_sublabel(_sec_qt, "VĂN BẢN")
 _qt_row1 = _sec_row(_sec_qt)
 _sec_sublabel(_sec_qt, "TẠO AUDIO")
@@ -3768,6 +3913,10 @@ quick_tts_entry.pack(side="left", expand=True, fill="x", padx=(2, 2))
 
 ctk.CTkButton(
     _qt_row2, text="📁 Chọn Output", command=_quick_tts_choose_output,
+    height=40, font=("Arial", 13),
+).pack(side="left", expand=True, fill="x", padx=4, pady=2)
+ctk.CTkButton(
+    _qt_row2, text="📂 Mở Output", command=_quick_tts_open_output,
     height=40, font=("Arial", 13),
 ).pack(side="left", expand=True, fill="x", padx=4, pady=2)
 ctk.CTkButton(
@@ -4881,6 +5030,37 @@ def _write_translated_doc(base, chunks, translated, bilingual, fmt, log_cb=None)
     return out_path
 
 
+# === Thư mục output cho Dịch thuật (rỗng = lưu cạnh file gốc, như cũ) ===
+TRANSLATE_OUTPUT_DIR = ""
+
+def _translate_redirect(default_path):
+    """Nếu đã chọn thư mục output cho dịch -> đổi sang đó; nếu không giữ nguyên."""
+    try:
+        if TRANSLATE_OUTPUT_DIR and os.path.isdir(TRANSLATE_OUTPUT_DIR):
+            return os.path.join(TRANSLATE_OUTPUT_DIR, os.path.basename(default_path))
+    except Exception:
+        pass
+    return default_path
+
+def choose_translate_output_folder():
+    global TRANSLATE_OUTPUT_DIR
+    d = filedialog.askdirectory(
+        title="Chọn thư mục lưu file dịch (Cancel = để cạnh file gốc)")
+    if d:
+        TRANSLATE_OUTPUT_DIR = d
+        log(f"[Dịch] Thư mục output: {d}")
+
+def open_translate_output_folder():
+    try:
+        folder = TRANSLATE_OUTPUT_DIR if (TRANSLATE_OUTPUT_DIR and os.path.isdir(TRANSLATE_OUTPUT_DIR)) else OUTPUT_DIR
+        os.startfile(folder)
+        log(f"[Dịch] Mở thư mục: {folder}")
+        if not TRANSLATE_OUTPUT_DIR:
+            log("[Dịch] (Chưa chọn thư mục output — file dịch đang lưu CẠNH file gốc)")
+    except Exception as e:
+        log(f"[Dịch] Không mở được thư mục: {e}")
+
+
 def translate_srt():
     """Dịch 1 file .srt sang tiếng Việt → <tên>_vi.srt (giữ timestamp)."""
     path = filedialog.askopenfilename(
@@ -4910,7 +5090,7 @@ def translate_srt():
                 log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
             for s, src, tr in zip(subs, sources, translated):
                 s.content = (f"{src}\n{tr}" if bilingual else tr)
-            out_path = os.path.splitext(path)[0] + "_vi.srt"
+            out_path = _translate_redirect(os.path.splitext(path)[0] + "_vi.srt")
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(srt.compose(subs))
             if TRANSLATE_STOP:
@@ -4980,7 +5160,7 @@ def translate_pdf():
                 chunks, context,
                 progress_cb=_make_translate_progress_cb(),
                 log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
-            base = os.path.splitext(path)[0] + "_vi"
+            base = _translate_redirect(os.path.splitext(path)[0] + "_vi")
             out_path = _write_translated_doc(base, chunks, translated, bilingual, out_fmt,
                                              log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
             if TRANSLATE_STOP:
@@ -5037,7 +5217,7 @@ def translate_doc():
                 chunks, context,
                 progress_cb=_make_translate_progress_cb(),
                 log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
-            base = os.path.splitext(path)[0] + "_vi"
+            base = _translate_redirect(os.path.splitext(path)[0] + "_vi")
             out_path = _write_translated_doc(base, chunks, translated, bilingual, out_fmt,
                                              log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
             if TRANSLATE_STOP:
@@ -12750,6 +12930,12 @@ btn_pdf_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 btn_pdf_regen = ctk.CTkButton(_g2_edit, text="Regenerate đoạn", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_regen.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
+# Output cho Tài liệu -> Audio (dùng chung OUTPUT_DIR)
+btn_pdf_choose_out = ctk.CTkButton(_g2_out, text="\U0001F4C1 Chọn Output Folder", command=choose_output_folder, height=36, font=("Arial", 13))
+btn_pdf_choose_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_pdf_open_out = ctk.CTkButton(_g2_out, text="\U0001F4C2 Open Output Folder", command=open_output_folder, height=36, font=("Arial", 13))
+btn_pdf_open_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
 # ── Row 4: Video OCR ──────────────────────────────────────────────────────────
 btn_videocr_load = ctk.CTkButton(_g3_ocr, text="Chọn Video OCR", command=load_videocr_video, height=36, font=("Arial", 13))
 btn_videocr_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -12913,6 +13099,12 @@ btn_tr_stop = ctk.CTkButton(_g4_run, text="⏹ Dừng hẳn", command=_translate
                             height=32, font=("Arial", 13), state="disabled",
                             fg_color="#8B2020", hover_color="#5e1616")
 btn_tr_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# Output cho Dịch thuật (rỗng = lưu cạnh file gốc)
+btn_tr_choose_out = ctk.CTkButton(_g4_out, text="\U0001F4C1 Chọn Output Folder", command=choose_translate_output_folder, height=36, font=("Arial", 13))
+btn_tr_choose_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_tr_open_out = ctk.CTkButton(_g4_out, text="\U0001F4C2 Open Output Folder", command=open_translate_output_folder, height=36, font=("Arial", 13))
+btn_tr_open_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 
 # =========================
