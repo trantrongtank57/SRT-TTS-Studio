@@ -160,8 +160,8 @@ Two ways to leave the running app — both live near the bottom of the file:
 
 | Trigger | Function | Behavior |
 |---|---|---|
-| Window **X** button (`WM_DELETE_WINDOW`) | `on_app_close()` @12658 | Confirm dialog → `stop_all_processes()` → goodbye sound (`naycaugioi.wav`, sync) → `os._exit(0)`. Quits for good. |
-| **Logout** button (`btn_exit`, top-right `_g6`) | `on_logout()` @12683 | Same X effect (confirm + stop processes + goodbye sound), but **relaunches** instead of exiting → returns to the login screen. |
+| Window **X** button (`WM_DELETE_WINDOW`) | `on_app_close()` @13738 | Confirm dialog → `stop_all_processes()` → goodbye sound (`naycaugioi.wav`, sync) → `os._exit(0)`. Quits for good. |
+| **Logout** button (`btn_exit`, top-right `_g6`) | `on_logout()` @13763 | Same X effect (confirm + stop processes + goodbye sound), but **relaunches** instead of exiting → returns to the login screen. |
 
 **Logout relaunch must NOT use `os.execl`.** Under PyInstaller onefile, re-exec inherits the bootloader's injected env vars (`_MEIPASS`, `_PYI_*`, `SSL_CERT_FILE`/`SSL_CERT_DIR`) pointing at the temp extraction dir that gets cleaned up on exit → `FileNotFoundError` in `ssl`/`edge_tts` at next import. Instead `on_logout()`:
 1. **Releases the single-instance mutex** (`ReleaseMutex` + `CloseHandle` on `builtins._srt_studio_mutex`) — else the fresh process hits "Phần mềm đang chạy!".
@@ -170,7 +170,7 @@ Two ways to leave the running app — both live near the bottom of the file:
 
 ## Codebase Structure
 
-`apppp_integrated.py` (~13,490 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
+`apppp_integrated.py` (~14,740 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
 
 > **Line anchors below are approximate** — the single file grows with every feature, so `@NNNN` references drift. Treat them as hints; locate symbols by name (`grep -n "^def name" apppp_integrated.py`) rather than trusting the exact number.
 
@@ -181,26 +181,30 @@ Two ways to leave the running app — both live near the bottom of the file:
 | Lines (approx.) | Section |
 |---|---|
 | 1–110 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
-| ~110–1040 | Security checks (`_check_integrity` @114, DRM, trial, VM detection), global state vars (incl. translate / OCR-control / Edit-Studio globals), settings load/save (`_load_settings`/`_save_settings`), `_load_settings()` call @1040 |
-| ~1040–1200 | CustomTkinter app/window creation, UI layout frames |
-| ~1200–2130 | Voice/provider UI + the five local-engine panels (RVC, VoxCPM, VieNeu, F5-TTS, OmniVoice) + `_apply_voice_exclusivity`, Quick TTS |
-| ~2130–3780 | Workspace layout, progress-bar canvas, scrollable `button_frame` + button rows, `show_fireworks` (@3533) |
-| ~3785–4060 | `show_settings_dialog` (@3785) — scrollable settings dialog |
-| ~4060–4980 | **Translation to Vietnamese** (LLM online + offline) — `_translate_active_key` (@4072), `_translate_segments` (@4230), `translate_srt/pdf/doc` (@4585), `_write_translated_doc`, `_read_text_smart` |
-| ~4980–8130 | Feature functions: `update_progress` (@4998), `_split_text_chunks` (@5123), **Video OCR** (`_run_videocr_thread` @5388 + pause/stop), TTS providers (Edge/FPT/Vbee/Zalo/EverAI/MiniMax), RVC, VoxCPM, **PDF + Word/TXT TTS** (`load_pdf` @6354, `load_doc_tts` @6426), STT, compress, mux |
-| ~8130–8900 | Local voice-clone batch backends: VieNeu (`_vieneu_preflight` @8138), **F5-TTS** (`_f5tts_preflight` @8489, `_run_f5tts_batch` @8547, `_run_f5tts_batch_pdf`), regenerate paths |
-| ~8900–12080 | `merge_ffmpeg` (@8902), **Edit Studio** (`open_edit_studio` @9657 + sequential playlist), remaining video tools, UI widget instantiation for all button rows |
-| ~12080–13460 | `set_mode()` (@12088) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, Logout button) and the exit / Logout flow (`on_app_close` @12658, `on_logout` @12683) |
-| ~13460–end | `app.mainloop()` (@13466) at module level |
+| ~110–1050 | Security checks (`_check_integrity` @114, DRM, trial, VM detection), global state vars (incl. translate / OCR-control / Edit-Studio globals), settings load/save (`_load_settings`/`_save_settings`), `_load_settings()` call @1053 |
+| ~1050–1300 | CustomTkinter app/window creation, UI layout frames |
+| ~1300–2300 | Voice/provider UI + the five local-engine panels (RVC, VoxCPM, VieNeu, F5-TTS, OmniVoice) + `_apply_voice_exclusivity`, Quick TTS |
+| ~2300–4000 | Workspace layout, progress-bar canvas, scrollable `button_frame`/`ws_content`, sidebar-workspace (`show_workspace`, `_make_section` @3802), `show_fireworks` (@4006) |
+| ~4000–4550 | `show_settings_dialog` (@4258) — scrollable settings dialog |
+| ~4550–5500 | **Translation to Vietnamese** (LLM online + offline) — `_translate_active_key` (@4568), `_translate_segments` (@4726), `translate_srt` (@5112), `translate_pdf/doc`, `_write_translated_doc`, `_read_text_smart` |
+| ~5500–8780 | Feature functions: `update_progress` (@5525), `_split_text_chunks` (@5650), **Video OCR** (`_run_videocr_thread` @5915 + pause/stop), TTS providers (Edge/FPT/Vbee/Zalo/EverAI/MiniMax), RVC, VoxCPM, **PDF + Word/TXT TTS** (`load_pdf` @6881, `load_doc_tts` @6953), STT, compress, mux |
+| ~8780–9890 | Local voice-clone batch backends: VieNeu (`_vieneu_preflight` @8780), **F5-TTS** (`_f5tts_preflight` @9131, `_run_f5tts_batch` @9189, `_run_f5tts_batch_pdf`), regenerate paths |
+| ~9890–13160 | `merge_ffmpeg` (@9897), **Edit Studio** (`open_edit_studio` @10723 + sequential playlist), remaining video tools, UI widget instantiation for all button rows |
+| ~13160–14710 | `set_mode()` (@13166) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, Logout button), `_run_startup_diagnostics` (@14363), and the exit / Logout flow (`on_app_close` @13738, `on_logout` @13763) |
+| ~14710–end | `app.mainloop()` (@14717) at module level |
 
 ## UI Architecture Patterns (apppp_integrated.py)
 
-### Button rows
-The button panel uses fixed rows (`_brow0`, `_brow0b`, `_brow1`–`_brow8`, `_brow8b`, plus `_brow4b`) created once at startup (~line 2700) and populated later in the widget-instantiation block (~line 9857). When adding a new feature, add a new `_browN` at the row-definition block **and** populate it there. (`_brow8` = SRT/PDF/Word-TXT translation row; `_brow8b` = translate pause/resume/stop; `_brow4b` = OCR pause/resume/stop.)
+### Sidebar-workspace layout (replaced the old flat `_brow*` rows)
 
-`button_frame` is a **`CTkScrollableFrame`** (fixed `height=340`, ~line 2703), not a plain frame — extra rows scroll instead of being clipped off the bottom of the window. Each `_browN` is a transparent `ctk.CTkFrame` packed `fill="x"`.
+The UI was **redesigned** into a sidebar-navigation + paged-workspace layout (~line 3670, `# BO CUC SIDEBAR-WORKSPACE`). The old flat button rows `_brow0`–`_brow8` **no longer exist** — features are now grouped into "pages" reached from a left sidebar. (`_brow*` greps now only match `_browse_*` file-picker callbacks.)
 
-**Uniform-width rule:** every button packs `side="left", expand=True, fill="x"` (no fixed `width`), so within a row all buttons share the width equally. Buttons are *not* assigned a fixed pixel width — a previous attempt at uniform fixed-width caused overflow (10-button rows ran off-screen) and large gaps on 3-button rows. To keep button sizes even *across* rows, keep button counts per row similar (this is why the original 10-button SRT/TTS row was split into `_brow0` + `_brow0b`, 5 buttons each). Mixed rows (`_brow5`/`_brow6`/`_brow7`) interleave `CTkOptionMenu`/`CTkLabel`/`CTkEntry`/`CTkCheckBox` (fixed `width`, packed without `expand`) between the expanding buttons.
+- **Two columns** (~line 1237): `_left_col` (width 232, navy sidebar) holds `ws_nav`; `_right_col` splits via grid into a console area (`_vpane`, row 0) on top and the scrollable function area `ws_content` (row 1) below. `button_frame = ws_content` is kept as a **backward-compat alias** (line 1264) so older code referencing `button_frame` still works.
+- **Pages** (`ws_pages`, ~line 3690): one `CTkFrame` per key in `_WS_KEYS = ["tts","voice","textaudio","doc","extract","translate","video","editstudio","tools","system"]`. `show_workspace(key)` (~3696) `pack_forget`s all pages and packs the chosen one, and highlights the active sidebar button. Sidebar items + captions come from `_WS_NAV_ITEMS` (~3711).
+- **Sections (cards)** — `_make_section(title, subtitle, accent, ws=KEY)` (~3802) creates a titled card **inside `ws_pages[ws]`** and returns its `body` frame. Helpers `_sec_row(parent)` (horizontal) / `_sec_col(parent)` (equal-width column, `expand=True`) / `_sec_sublabel(parent, text)` build the layout inside a card. Buttons still pack `side="left", expand=True, fill="x"` for equal width within a row.
+- **Console toggle** — `toggle_console()` (~3756) hides/shows the `_vpane` row and reallocates grid weight to the function area.
+
+**To add a new feature button/group:** call `_make_section(..., ws="<page>")` to get a card body (pick the page it belongs to, or add a new key to `_WS_KEYS` + an entry to `_WS_NAV_ITEMS`), then pack widgets into `_sec_row`/`_sec_col` frames within it. **Widget variable names were kept identical across the redesign** — so existing handlers and `set_mode()` did not need changes.
 
 ### set_mode() — UI state machine
 `set_mode(mode)` is the single function that enables/disables all buttons and controls. It must be called from the main thread (use `app.after(0, lambda: set_mode("..."))` from worker threads). Every new feature needs:
@@ -212,7 +216,7 @@ Current modes: `srt`, `pdf`, `pdf_tts_done`, `video`, `reset`, `tts_running`, `t
 
 ### Video OCR pause/stop/resume (process-tree control)
 
-"Tách Sub Cứng (OCR)" runs the external **VideOCR CLI** as a subprocess (`_run_videocr_thread`), which spawns its own worker children — so pause/resume can't go through stdin. Instead, row `_brow4b` has 3 buttons (`btn_videocr_pause`/`resume`/`stop`) that act on the **whole process tree** via `_proc_tree_action(proc, action)`: uses `psutil` (`Process.children(recursive=True)` → `suspend`/`resume`/`kill`) when available, else falls back to `ctypes` `NtSuspendProcess`/`NtResumeProcess` (main pid only) for pause/resume and `taskkill /T /F` for stop. The running proc is stored in `_VIDEOCR_PROC`; flags `VIDEOCR_PAUSED`/`VIDEOCR_STOP`. Buttons enabled only in `videocr_running`. On stop, `_run_videocr_thread` sees `VIDEOCR_STOP` and returns to `videocr` mode (no error log, no fireworks). Progress already streams to logbox + bar by parsing the CLI's `Step 1/3`…`Step 3/3` lines (mapped to 0–33/33–66/66–100%). `psutil` added to build_all.bat pip line + spec `hiddenimports`.
+"Tách Sub Cứng (OCR)" runs the external **VideOCR CLI** as a subprocess (`_run_videocr_thread`), which spawns its own worker children — so pause/resume can't go through stdin. Instead, the OCR control row (`_g3_ocr_ctrl` in the "extract" page) has 3 buttons (`btn_videocr_pause`/`resume`/`stop`) that act on the **whole process tree** via `_proc_tree_action(proc, action)`: uses `psutil` (`Process.children(recursive=True)` → `suspend`/`resume`/`kill`) when available, else falls back to `ctypes` `NtSuspendProcess`/`NtResumeProcess` (main pid only) for pause/resume and `taskkill /T /F` for stop. The running proc is stored in `_VIDEOCR_PROC`; flags `VIDEOCR_PAUSED`/`VIDEOCR_STOP`. Buttons enabled only in `videocr_running`. On stop, `_run_videocr_thread` sees `VIDEOCR_STOP` and returns to `videocr` mode (no error log, no fireworks). Progress already streams to logbox + bar by parsing the CLI's `Step 1/3`…`Step 3/3` lines (mapped to 0–33/33–66/66–100%). `psutil` added to build_all.bat pip line + spec `hiddenimports`.
 
 ### Thread safety
 All UI mutations **must** happen on the main thread. From any worker thread:
@@ -404,13 +408,13 @@ Branch logic inside both (matching the batch flows): `VOXCPM_ENABLED` → `_voxc
 
 **`_voxcpm_generate_one_sync(index, text, out_prefix="line_")`** — shared single-line VoxCPM helper. The `voxcpm_helper.py` always writes `line_{idx:04d}.wav` (filename driven by the JSON `index`); this fn converts it to `{out_prefix}{idx:04d}.mp3` (`"line_"` for SRT, `"pdf_line_"` for PDF).
 
-**Word/TXT TTS reuses the PDF pipeline**: `load_doc_tts()` (`btn_load_doc_tts`, row 3) extracts text (`.docx` → `python-docx` paragraphs; `.txt` → `_read_text_smart`), chunks it with `_split_text_chunks()` (~250 chars at sentence boundaries — same sizing as PDF), then sets `PDF_CHUNKS` + `set_mode("pdf")`. From there the existing "Đọc PDF (TTS)" / "Merge PDF Audio" / "Regenerate đoạn PDF" buttons all work unchanged (output `pdf_line_*.mp3`). `btn_load_doc_tts` is registered in `_pdf_btns` so `set_mode` toggles it like the other PDF buttons.
+**Word/TXT TTS reuses the PDF pipeline**: `load_doc_tts()` (`btn_load_doc_tts`, in the "doc" page) extracts text (`.docx` → `python-docx` paragraphs; `.txt` → `_read_text_smart`), chunks it with `_split_text_chunks()` (~250 chars at sentence boundaries — same sizing as PDF), then sets `PDF_CHUNKS` + `set_mode("pdf")`. From there the existing "Đọc PDF (TTS)" / "Merge PDF Audio" / "Regenerate đoạn PDF" buttons all work unchanged (output `pdf_line_*.mp3`). `btn_load_doc_tts` is registered in `_pdf_btns` so `set_mode` toggles it like the other PDF buttons.
 
 When adding a new per-line/per-chunk regenerate, register its button in `_pdf_btns`/`_srt_btns` (auto-disable sweep) AND the explicit disable spots in the SRT/`tts_running` modes (those toggle PDF buttons individually, not via the list).
 
 ## Timeline Dubbing — anti voice-overlap (`merge_ffmpeg`)
 
-`merge_ffmpeg()` (~8902) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
+`merge_ffmpeg()` (~9897) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
 
 **Root overlap bug (fixed):** TTS audio (esp. Vietnamese / Edge TTS) is often longer than a subtitle's time slot, so `amix` overlays adjacent lines → "đè giọng / chồng giọng" (voice stacking) + timeline drift.
 
@@ -418,7 +422,7 @@ When adding a new per-line/per-chunk regenerate, register its button in `_pdf_bt
 
 ## Mux Audio → Video (`_run_mux_thread`)
 
-Row `_brow7` — "Ghép Audio Final vào Video": pick a video + a final audio track (e.g. `final.mp3` from Merge FFmpeg), adjust per-source volume, then mux into `<video>_dubbed.mp4`. Functions live just after `open_compress_folder` (`load_mux_video` @6052, `_parse_volume` @6101, `_run_mux_thread` @6115, `start_mux_video` @6232); globals `MUX_VIDEO_FILE` / `MUX_AUDIO_FILE` / `MUX_OUTPUT_DIR` next to the `COMPRESS_*` globals.
+"Ghép Audio Final vào Video" (in the "video" page) — pick a video + a final audio track (e.g. `final.mp3` from Merge FFmpeg), adjust per-source volume, then mux into `<video>_dubbed.mp4`. Functions live just after `open_compress_folder` (`load_mux_video` @6579, `_parse_volume` @6628, `_run_mux_thread` @6642, `start_mux_video` @6759); globals `MUX_VIDEO_FILE` / `MUX_AUDIO_FILE` / `MUX_OUTPUT_DIR` next to the `COMPRESS_*` globals.
 
 - **Volume controls** (`mux_video_vol_var` / `mux_audio_vol_var`): `_parse_volume()` accepts `1.0`, `0.5`, `150%`, `0` → ffmpeg `volume=` factor.
 - **Keep-original-audio checkbox** (`mux_keep_orig_var`): when checked **and** the video has an audio track, both streams are `amix`-ed (`amix=inputs=2:duration=longest:normalize=0`); otherwise the final audio replaces the original. Falls back to replace-mode with a warning if the video has no audio.
@@ -427,7 +431,7 @@ Row `_brow7` — "Ghép Audio Final vào Video": pick a video + a final audio tr
 
 ## Edit Studio (`open_edit_studio`)
 
-A Toplevel preview/verify window (`open_edit_studio` ~9657) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
+A Toplevel preview/verify window (`open_edit_studio` ~10723) that plays video frames (ffmpeg raw-frame pipe → PIL → Canvas) with MCI audio as the master clock. State lives in the `es` dict; all playback runs through the audio thread (`_audio_loop`) + `seek_to()`.
 
 Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-line `line_*.mp3`, timeline-placed), **Load Audio File**, **Load nhiều Audio** (sequential playlist).
 
@@ -485,7 +489,7 @@ Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Li
 
 ## SRT / PDF Translation to Vietnamese (LLM)
 
-Row 8 (`_brow8`) — translate SRT / PDF / **Word `.docx` / `.txt`** to natural Vietnamese via Claude / Gemini / OpenAI / Offline. Three buttons (`btn_translate_srt` / `btn_translate_pdf` / `btn_translate_doc`), toggled together by `_set_translate_buttons()`. **Decoupled from `set_mode()`**: always enabled (no entry in any disable sweep) and self-lock only during their own run (re-enabled in `finally`). They operate on a freshly file-dialog-picked file, NOT `subtitles_cache`/`PDF_CHUNKS`, so they never conflict with a running TTS job.
+The "translate" page — translate SRT / PDF / **Word `.docx` / `.txt`** to natural Vietnamese via Claude / Gemini / OpenAI / Offline. Three buttons (`btn_translate_srt` / `btn_translate_pdf` / `btn_translate_doc`), toggled together by `_set_translate_buttons()`. **Decoupled from `set_mode()`**: always enabled (no entry in any disable sweep) and self-lock only during their own run (re-enabled in `finally`). They operate on a freshly file-dialog-picked file, NOT `subtitles_cache`/`PDF_CHUNKS`, so they never conflict with a running TTS job.
 
 | Piece | Detail |
 |---|---|
@@ -494,11 +498,11 @@ Row 8 (`_brow8`) — translate SRT / PDF / **Word `.docx` / `.txt`** to natural 
 | `_translate_segments(segments, context, …)` | Batches `_TRANSLATE_BATCH` (40) lines/call using `[[n]] text` markers; parses back with `_parse_marked`; **any missing/empty line → per-line fallback retry**, then keeps source text if still failing (never drops content) |
 | `translate_srt()` | Parses `.srt`, translates `clean_text(content)`, writes `<name>_vi.srt` preserving timestamps |
 | `translate_pdf()` | Extracts chunks via `pdf_helper.py` (same as `load_pdf`), writes `<name>_vi.{txt\|pdf\|docx}` via `_write_translated_doc()` (Row-8 `translate_pdf_format_var` dropdown, label "Ra (PDF/Word/TXT)" — shared by PDF + Word/TXT). PDF output = reflowed text only (no original layout) using `fpdf2` + a Windows Unicode TTF (`_find_unicode_font`, Arial/Segoe/Times); DOCX uses `python-docx`. Missing lib → auto-fallback to `.txt`. `fpdf2`+`python-docx` added to build_all.bat pip line + spec `hiddenimports` (`fpdf`, `docx`) |
-| `translate_doc()` | Translates **Word `.docx` / `.txt`** input. `.docx` → paragraphs via `python-docx`; `.txt` → non-empty lines via `_read_text_smart` (handles UTF-16/BOM). Same translate + `_write_translated_doc` output pipeline, format dropdown, pause/stop, and `_reveal_output` as `translate_pdf`. Button `btn_translate_doc` in row `_brow8` |
+| `translate_doc()` | Translates **Word `.docx` / `.txt`** input. `.docx` → paragraphs via `python-docx`; `.txt` → non-empty lines via `_read_text_smart` (handles UTF-16/BOM). Same translate + `_write_translated_doc` output pipeline, format dropdown, pause/stop, and `_reveal_output` as `translate_pdf`. Button `btn_translate_doc` in the "translate" page |
 
 **Bilingual mode** (`translate_bilingual_var` checkbox): SRT line becomes `original\ntranslated`; PDF writes both. **Context field** (`translate_context_var`) feeds the system prompt for consistent pronouns/xưng hô — the single biggest quality lever for VN subtitles (online providers only).
 
-### Pause / Resume / Stop (row `_brow8b`)
+### Pause / Resume / Stop (translate controls)
 
 Three controls (`btn_tr_pause`/`btn_tr_resume`/`btn_tr_stop`) drive module flags `TRANSLATE_PAUSED` / `TRANSLATE_STOP` (enabled only while a translate job runs, toggled via `_translate_set_controls`). **Online**: `_translate_segments` checks the flags between each 40-line batch (waits while paused, breaks on stop). **Offline**: the flags can't reach the running subprocess, so the controls also send `PAUSE`/`RESUME`/`STOP` lines to `translate_helper.py` via its **stdin** (`_translate_send_proc`, using the stored `_TRANSLATE_PROC`); the helper runs a daemon stdin-reader thread (`_CTRL`) and checks it between batches. On stop, **partial output is still saved** — untranslated tail keeps the source text (both the helper and the online path back-fill `None`/missing with the original), so the file stays valid. Stop → no fireworks but still reveals the file; normal finish → fireworks + reveal. Progress shows in both the bar and the logbox (`_make_translate_progress_cb`, throttled to 10% steps); on finish the output folder opens via `_reveal_output` (`explorer /select,`).
 

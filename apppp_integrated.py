@@ -1342,14 +1342,16 @@ ctk.CTkCheckBox(
     font=("Arial", 11),
 ).place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=10)
 
-# Nut an/hien Console (đặt cạnh "Luôn trên cùng"); toggle_console() định nghĩa sau → lambda
+# Nút mũi tên THU/MỞ Console — thay cho nút "Ẩn Console". Đặt ở góc TRÁI-TRÊN
+# vùng nội dung (luôn thấy dù console ẩn hay hiện). toggle_console() định nghĩa sau.
 btn_toggle_console = ctk.CTkButton(
-    _root, text="\U0001F5A5  Ẩn Console", width=118, height=26,
-    font=("Arial", 11), corner_radius=6,
-    fg_color="#2b3340", hover_color="#363f4e", text_color="#c7d0db",
+    _root, text="⌄", width=34, height=28,
+    font=("Arial", 16), corner_radius=8,
+    fg_color="#222a3a", hover_color="#7c5cff", text_color="#c7d0db",
+    border_width=1, border_color="#3a4254",
     command=lambda: toggle_console(),
 )
-btn_toggle_console.place(relx=1.0, rely=0.0, anchor="ne", x=-150, y=11)
+btn_toggle_console.place(relx=0.0, rely=0.0, anchor="nw", x=48, y=11)
 
 # Nút ẩn/hiện SIDEBAR (☰) — đặt góc trái trên, luôn thấy dù sidebar ẩn hay hiện.
 _sidebar_visible = {"on": True}
@@ -3762,7 +3764,7 @@ def toggle_console():
         except Exception:
             pass
         _console_visible["on"] = False
-        btn_toggle_console.configure(text="\U0001F5A5   Hiện Console")
+        btn_toggle_console.configure(text="⌃")
     else:
         try:
             _rc_body.grid_rowconfigure(0, weight=2)
@@ -3770,7 +3772,7 @@ def toggle_console():
         except Exception:
             pass
         _console_visible["on"] = True
-        btn_toggle_console.configure(text="\U0001F5A5   Ẩn Console")
+        btn_toggle_console.configure(text="⌄")
 
 # Vung danh sach nav CO THE CUON (khi cua so thap khong bi che mat muc cuoi)
 ws_nav_scroll = ctk.CTkScrollableFrame(ws_nav, fg_color="transparent")
