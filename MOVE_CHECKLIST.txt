@@ -140,24 +140,41 @@
      - OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano  → ⚠ BẮT BUỘC cho VoxCPM
      - charactr/vocos-mel-24khz                 → ⚠ BẮT BUỘC cho F5-TTS (vocoder)
      - VieNeu model (pnnbao-ump/...)            → cho VieNeu-TTS
-     - Systran/faster-whisper-* (small→large-v3)→ cho STT / video-STT
+     - splendor1811/omnivoice-vietnamese        → cho OmniVoice
+     - Systran/faster-whisper-* (small→large-v3)→ cho STT / video-STT /
+                                                  căn SRT (VAD). BẤT KỲ bản
+                                                  nào (small/medium/large-v3)
+                                                  có cache là đủ chạy.
      - facebook/nllb-200-distilled-600M,
-       VietAI/envit5-translation, opus-mt-en-vi → cho dịch offline
-     - Silero VAD                               → torch.hub (SRT align)
-     - Demucs / noisereduce                     → đã có trong voxcpm_env
+       VietAI/envit5-translation, opus-mt-en-vi → cho dịch offline (tùy chọn)
+     - Silero VAD  → KHÔNG cần tải riêng: nằm SẴN trong gói faster-whisper
+                     (faster_whisper.vad) — chỉ cần có faster-whisper là đủ.
+
+ CACHE Ở TORCH HUB (KHÁC chỗ — KHÔNG nằm trong .cache\huggingface):
+   %USERPROFILE%\.cache\torch\hub\checkpoints\
+     - Demucs htdemucs (file 955717e8-*.th, ~84 MB) → nút "Tách nhạc" khi
+       xử lý audio mẫu. Gói demucs có trong voxcpm_env nhưng TRỌNG SỐ model
+       tải runtime về torch-hub cache này (hay bị quên khi copy offline).
+
+ MODEL NẰM TRONG THƯ MỤC VideOCR CLI (không phải cache):
+     - PaddleOCR.PP-OCRv5.support.files → cho "Tách Sub Cứng (OCR)". Tự tải
+       lần đầu nếu CÓ net; máy KHÔNG net phải copy kèm thư mục VideOCR CLI.
 
  ┌────────────────────────────────────────────────────────────────────┐
  │ MÁY MỚI CÓ INTERNET   → tự tải lần đầu mỗi model (chờ tải). KHÔNG    │
  │                         cần copy gì ở mục [4].                       │
- │ MÁY MỚI KHÔNG INTERNET → PHẢI copy cả thư mục                       │
- │     C:\Users\<user_máy_gốc>\.cache\huggingface\                     │
- │   sang                                                               │
- │     C:\Users\<user_máy_mới>\.cache\huggingface\                     │
- │   Nếu KHÔNG: VoxCPM lỗi (thiếu MOSS tokenizer) & F5-TTS lỗi (thiếu  │
- │   vocos) DÙ đã copy đủ env + model. Đây là lỗi HAY GẶP & KHÓ ĐOÁN.  │
+ │ MÁY MỚI KHÔNG INTERNET → PHẢI copy CẢ HAI thư mục cache:            │
+ │     C:\Users\<user_máy_gốc>\.cache\huggingface\   (HF models)       │
+ │     C:\Users\<user_máy_gốc>\.cache\torch\         (Demucs htdemucs) │
+ │   sang user tương ứng ở máy mới.                                    │
+ │   Nếu KHÔNG: VoxCPM lỗi (thiếu MOSS tokenizer), F5-TTS lỗi (thiếu   │
+ │   vocos), STT/Video-STT lỗi (thiếu faster-whisper), Tách nhạc lỗi   │
+ │   (thiếu htdemucs) DÙ đã copy đủ env + model. Lỗi HAY GẶP & KHÓ ĐOÁN.│
  └────────────────────────────────────────────────────────────────────┘
- (App sẽ tự kiểm tra & cảnh báo các model HF còn thiếu ở dòng
-  "KIỂM TRA HỆ THỐNG" trong logbox khi khởi động.)
+ (App TỰ kiểm tra & cảnh báo ĐẦY ĐỦ ở dòng "KIỂM TRA HỆ THỐNG" trong
+  logbox khi khởi động: MOSS, vocos, VieNeu, OmniVoice, faster-whisper,
+  Demucs htdemucs, PaddleOCR, và model dịch Offline — thiếu cái nào báo
+  vàng cái đó.)
 
 
 ==========================================================================

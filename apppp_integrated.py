@@ -1263,6 +1263,18 @@ ws_content = ctk.CTkScrollableFrame(_rc_body, fg_color="transparent")
 ws_content.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 button_frame = ws_content  # tuong thich nguoc
 
+def _hide_scrollbar(_sf):
+    """Ẩn thanh cuộn của một CTkScrollableFrame (vẫn cuộn bằng lăn chuột)."""
+    try:
+        _sf._scrollbar.configure(fg_color="transparent", button_color="transparent",
+                                 button_hover_color="transparent", width=0)
+    except Exception:
+        try:
+            _sf._scrollbar.grid_remove()
+        except Exception:
+            pass
+_hide_scrollbar(ws_content)
+
 # Trang "Giọng đọc & Voice Clone" (hiện như một mục trong sidebar, giống các
 # tính năng khác). voice_frame sẽ nằm trong trang này -> giữ bề ngang rộng.
 voice_page = ctk.CTkFrame(ws_content, fg_color="transparent")
@@ -3672,7 +3684,7 @@ ws_nav = ctk.CTkFrame(_left_col, fg_color=_WS_NAVBG, corner_radius=0)
 ws_nav.pack(side="top", fill="both", expand=True, padx=0, pady=(38, 0))
 
 # ws_content + voice_page đã được tạo SỚM ở trên (gần _rc_body).
-_WS_KEYS = ["tts", "voice", "textaudio", "doc", "extract", "translate", "video", "system"]
+_WS_KEYS = ["tts", "voice", "textaudio", "doc", "extract", "translate", "video", "editstudio", "tools", "system"]
 ws_pages = {_k: ctk.CTkFrame(ws_content, fg_color="transparent") for _k in _WS_KEYS}
 ws_pages["voice"] = voice_page   # trang Giọng đọc đã dựng sẵn (chứa voice_frame)
 
@@ -3719,6 +3731,24 @@ try:
 except Exception:
     pass
 
+# Them muc "Edit Studio" vao nhom TIEN ICH (ngay sau "video").
+try:
+    if "editstudio" not in [k for k, _ in _WS_NAV_ITEMS]:
+        _vk = [k for k, _ in _WS_NAV_ITEMS]
+        _pos = (_vk.index("video") + 1) if "video" in _vk else len(_WS_NAV_ITEMS)
+        _WS_NAV_ITEMS.insert(_pos, ("editstudio", "\U0001F39E️   Edit Studio"))
+except Exception:
+    pass
+
+# Them muc "Nhật ký & Reset" ngay TRUOC "Hệ thống".
+try:
+    if "tools" not in [k for k, _ in _WS_NAV_ITEMS]:
+        _tk = [k for k, _ in _WS_NAV_ITEMS]
+        _tp = _tk.index("system") if "system" in _tk else len(_WS_NAV_ITEMS)
+        _WS_NAV_ITEMS.insert(_tp, ("tools", "\U0001F9F9   Nhật ký & Reset"))
+except Exception:
+    pass
+
 # Nut an/hien Console o DAY sidebar (co dinh, luon thay) - tao truoc de pack bottom
 _console_visible = {"on": True}
 def toggle_console():
@@ -3745,6 +3775,7 @@ def toggle_console():
 # Vung danh sach nav CO THE CUON (khi cua so thap khong bi che mat muc cuoi)
 ws_nav_scroll = ctk.CTkScrollableFrame(ws_nav, fg_color="transparent")
 ws_nav_scroll.pack(side="top", fill="both", expand=True, padx=0, pady=(4, 0))
+_hide_scrollbar(ws_nav_scroll)
 
 for _key, _label in _WS_NAV_ITEMS:
     if _key.startswith("__cap"):
@@ -3801,21 +3832,26 @@ def _sec_sublabel(parent, text):
 
 # Nhom 1
 _sec1 = _make_section("SRT → Lồng tiếng (TTS)", "Nạp phụ đề → tạo giọng → ghép vào video", "#7c5cff", ws="tts")
-_sec_sublabel(_sec1, "TẠO")
-_g1_create = _sec_row(_sec1)
-_sec_sublabel(_sec1, "ĐIỀU KHIỂN TIẾN TRÌNH")
-_g1_ctrl = _sec_row(_sec1)
-_sec_sublabel(_sec1, "CHỈNH SỬA & ĐẦU RA")
-_g1_io = _sec_row(_sec1)
+# Bố cục 3 CỘT: Tạo | Điều khiển tiến trình | Chỉnh sửa & đầu ra
+# (mỗi cột có tiêu đề riêng, các nút xếp DỌC bên dưới)
+_g1_cols   = _sec_row(_sec1)
+_g1_create = _sec_col(_g1_cols)
+_g1_ctrl   = _sec_col(_g1_cols)
+_g1_io     = _sec_col(_g1_cols)
+_sec_sublabel(_g1_create, "TẠO")
+_sec_sublabel(_g1_ctrl,   "ĐIỀU KHIỂN TIẾN TRÌNH")
+_sec_sublabel(_g1_io,     "CHỈNH SỬA & ĐẦU RA")
 
 # Nhom 2
 _sec2 = _make_section("Tài liệu → Audio (PDF / Word / TXT)", "Đọc tài liệu thành giọng nói", "#36c5ff", ws="doc")
-_sec_sublabel(_sec2, "NẠP & ĐỌC")
-_g2_load = _sec_row(_sec2)
-_sec_sublabel(_sec2, "SỬA & GHÉP")
-_g2_edit = _sec_row(_sec2)
-_sec_sublabel(_sec2, "OUTPUT")
-_g2_out = _sec_row(_sec2)
+# Bố cục 3 CỘT: Nạp & Đọc | Sửa & ghép | Output (nút xếp DỌC)
+_g2_cols = _sec_row(_sec2)
+_g2_load = _sec_col(_g2_cols)
+_g2_edit = _sec_col(_g2_cols)
+_g2_out  = _sec_col(_g2_cols)
+_sec_sublabel(_g2_load, "NẠP & ĐỌC")
+_sec_sublabel(_g2_edit, "SỬA & GHÉP")
+_sec_sublabel(_g2_out,  "OUTPUT")
 
 # Nhom 3
 _sec3 = _make_section("Video → Phụ đề", "Trích phụ đề từ video: OCR (sub cứng) hoặc STT (giọng nói)", "#2dd4a7", ws="extract")
@@ -3835,10 +3871,15 @@ _g3_stt_opt = _sec_row(_g3_stt_col)
 _sec4 = _make_section("Dịch thuật AI", "Dịch phụ đề & tài liệu sang tiếng Việt bằng LLM", "#ffb020", ws="translate")
 _sec_sublabel(_sec4, "TUỲ CHỌN DỊCH")
 _g4_opt = _sec_row(_sec4)
-_sec_sublabel(_sec4, "DỊCH & ĐIỀU KHIỂN")
-_g4_run = _sec_row(_sec4)
-_sec_sublabel(_sec4, "OUTPUT")
-_g4_out = _sec_row(_sec4)
+# 3 CỘT: Dịch | Điều khiển | Output (nút xếp DỌC). "Tùy chọn dịch" giữ ở trên.
+_g4_cols = _sec_row(_sec4)
+_g4_dich = _sec_col(_g4_cols)
+_g4_ctrl = _sec_col(_g4_cols)
+_g4_out  = _sec_col(_g4_cols)
+_g4_run  = _g4_dich   # nút Dịch SRT/PDF/Word vẫn trỏ _g4_run -> cột Dịch
+_sec_sublabel(_g4_dich, "DỊCH")
+_sec_sublabel(_g4_ctrl, "ĐIỀU KHIỂN")
+_sec_sublabel(_g4_out,  "OUTPUT")
 
 # Nhom 5
 _sec5 = _make_section("Công cụ Video", "Sửa lỗi · nén dung lượng · ghép audio vào video", "#8b93a8", ws="video")
@@ -3859,10 +3900,15 @@ _sec_sublabel(_g5_mux_col, "GHÉP AUDIO VÀO VIDEO")
 _g5_mux1 = _sec_row(_g5_mux_col)
 _g5_mux2 = _sec_row(_g5_mux_col)
 _g5_mux3 = _sec_row(_g5_mux_col)
-_sec_sublabel(_sec5, "BIÊN TẬP")
-_g5_studio = _sec_row(_sec5)
+# Edit Studio -> TRANG RIÊNG trên sidebar (ws="editstudio"), không nằm trong Công cụ Video nữa
+_sec_es = _make_section("Edit Studio", "Xem trước & kiểm tra video kèm audio đã lồng tiếng", "#36c5ff", ws="editstudio")
+_g5_studio = _sec_row(_sec_es)
 
 # Nhom 6
+# Trang "Nhật ký & Reset" — mục riêng trên sidebar (Clear Log + Reset Mode)
+_sec_tools = _make_section("Nhật ký & Reset", "Xóa log · đặt lại trạng thái giao diện", "#5a6478", ws="tools")
+_g_tools = _sec_row(_sec_tools)
+
 _sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#5a6478", ws="system")
 _g6 = _sec_row(_sec6)
 
@@ -12803,39 +12849,39 @@ def start_clean_noaudio():
 
 # ── Row 0: SRT / TTS controls ────────────────────────────────────────────────
 btn_load = ctk.CTkButton(_g1_create, text="Load SRT", command=load_subtitles, height=36, font=("Arial", 13))
-btn_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_load.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_tts = ctk.CTkButton(_g1_create, text="Generate TTS", command=start_tts, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
-btn_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_tts.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_pause = ctk.CTkButton(_g1_ctrl, text="⏸ Pause", command=pause_tts, height=36, font=("Arial", 13), fg_color="#B8860B", hover_color="#946c09")
-btn_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_pause.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_resume = ctk.CTkButton(_g1_ctrl, text="▶ Resume", command=resume_tts, height=36, font=("Arial", 13), fg_color="#1E6B3C", hover_color="#145229")
-btn_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_resume.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_stop = ctk.CTkButton(_g1_ctrl, text="⏹ Stop", command=stop_tts, height=36, font=("Arial", 13), fg_color="#8B2020", hover_color="#5e1616")
-btn_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_stop.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_restart = ctk.CTkButton(_g1_ctrl, text="↺ Start Over", command=restart_tts, height=36, font=("Arial", 13), fg_color="#414b5a", hover_color="#4c5667")
-btn_restart.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_restart.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_merge = ctk.CTkButton(_g1_create, text="Merge FFmpeg", command=start_merge, height=36, font=("Arial", 13))
-btn_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_merge.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_open_se = ctk.CTkButton(_g1_io, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
-btn_open_se.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_open_se.pack(side="top", fill="x", padx=4, pady=4)
 btn_open_se.bind("<Enter>", lambda e: btn_open_se.configure(fg_color="#8B5CF6"))
 btn_open_se.bind("<Leave>", lambda e: btn_open_se.configure(fg_color=["#3B8ED0", "#1F6AA5"]))
 
 btn_edit = ctk.CTkButton(_g1_io, text="Regenerate Line", command=ask_line_edit, height=36, font=("Arial", 13))
-btn_edit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_edit.pack(side="top", fill="x", padx=4, pady=4)
 
-btn_exit = ctk.CTkButton(_g6, text="🚪 Logout", command=lambda: on_logout(), height=36, font=("Arial", 13), fg_color="#9a3b3b", hover_color="#cc0000")
-btn_exit.pack(side="right", padx=4, pady=4)
+btn_exit = ctk.CTkButton(_left_col, text="🚪 Logout", command=lambda: on_logout(), height=36, font=("Arial", 13), fg_color="#9a3b3b", hover_color="#cc0000")
+btn_exit.pack(side="bottom", fill="x", padx=10, pady=(6, 2))
 
 # ── Row 1: Log / mode / output ───────────────────────────────────────────────
-btn_clear = ctk.CTkButton(_g6, text="Clear Log", command=clear_log, height=36, font=("Arial", 13))
+btn_clear = ctk.CTkButton(_g_tools, text="Clear Log", command=clear_log, height=36, font=("Arial", 13))
 btn_clear.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # btn_reset_mode packed here (defined later after set_mode)
@@ -12845,10 +12891,10 @@ btn_choose_video = ctk.CTkButton(_g5_rep0, text="🎞 Choose Video Files", comma
 btn_choose_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 btn_choose_output = ctk.CTkButton(_g1_io, text="Choose Output Folder", command=choose_output_folder, height=36, font=("Arial", 13))
-btn_choose_output.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_choose_output.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_open_folder = ctk.CTkButton(_g1_io, text="Open Output Folder", command=open_output_folder, height=36, font=("Arial", 13))
-btn_open_folder.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_open_folder.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_settings = ctk.CTkButton(_g6, text="⚙ Cài đặt", command=show_settings_dialog, height=36, font=("Arial", 13))
 btn_settings.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -12916,25 +12962,25 @@ btn_clean_video.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 3: PDF TTS ───────────────────────────────────────────────────────────
 btn_load_pdf = ctk.CTkButton(_g2_load, text="Load PDF", command=load_pdf, height=36, font=("Arial", 13))
-btn_load_pdf.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_load_pdf.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_load_doc_tts = ctk.CTkButton(_g2_load, text="Load Word/TXT", command=load_doc_tts, height=36, font=("Arial", 13))
-btn_load_doc_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_load_doc_tts.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_pdf_tts = ctk.CTkButton(_g2_load, text="Đọc (TTS)", command=start_pdf_tts, height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
-btn_pdf_tts.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_pdf_tts.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_pdf_merge = ctk.CTkButton(_g2_edit, text="Merge Audio", command=merge_pdf_audio, height=36, font=("Arial", 13), state="disabled")
-btn_pdf_merge.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_pdf_merge.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_pdf_regen = ctk.CTkButton(_g2_edit, text="Regenerate đoạn", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
-btn_pdf_regen.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_pdf_regen.pack(side="top", fill="x", padx=4, pady=4)
 
 # Output cho Tài liệu -> Audio (dùng chung OUTPUT_DIR)
 btn_pdf_choose_out = ctk.CTkButton(_g2_out, text="\U0001F4C1 Chọn Output Folder", command=choose_output_folder, height=36, font=("Arial", 13))
-btn_pdf_choose_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_pdf_choose_out.pack(side="top", fill="x", padx=4, pady=4)
 btn_pdf_open_out = ctk.CTkButton(_g2_out, text="\U0001F4C2 Open Output Folder", command=open_output_folder, height=36, font=("Arial", 13))
-btn_pdf_open_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_pdf_open_out.pack(side="top", fill="x", padx=4, pady=4)
 
 # ── Row 4: Video OCR ──────────────────────────────────────────────────────────
 btn_videocr_load = ctk.CTkButton(_g3_ocr, text="Chọn Video OCR", command=load_videocr_video, height=36, font=("Arial", 13))
@@ -13076,35 +13122,35 @@ translate_pdf_format_menu = ctk.CTkOptionMenu(
 translate_pdf_format_menu.pack(side="left", padx=(0, 6))
 
 btn_translate_srt = ctk.CTkButton(_g4_run, text="Dịch SRT", command=translate_srt, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
-btn_translate_srt.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_translate_srt.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_translate_pdf = ctk.CTkButton(_g4_run, text="Dịch PDF", command=translate_pdf, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
-btn_translate_pdf.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_translate_pdf.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_translate_doc = ctk.CTkButton(_g4_run, text="Dịch Word/TXT", command=translate_doc, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
-btn_translate_doc.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_translate_doc.pack(side="top", fill="x", padx=4, pady=4)
 
 # Hàng điều khiển dịch: Tạm dừng / Tiếp tục / Dừng hẳn (bật khi đang dịch)
-btn_tr_pause = ctk.CTkButton(_g4_run, text="⏸ Tạm dừng dịch", command=_translate_pause,
+btn_tr_pause = ctk.CTkButton(_g4_ctrl, text="⏸ Tạm dừng dịch", command=_translate_pause,
                              height=32, font=("Arial", 13), state="disabled",
                              fg_color="#B8860B", hover_color="#946c09")
-btn_tr_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_tr_pause.pack(side="top", fill="x", padx=4, pady=4)
 
-btn_tr_resume = ctk.CTkButton(_g4_run, text="▶ Tiếp tục dịch", command=_translate_resume,
+btn_tr_resume = ctk.CTkButton(_g4_ctrl, text="▶ Tiếp tục dịch", command=_translate_resume,
                               height=32, font=("Arial", 13), state="disabled",
                               fg_color="#1E6B3C", hover_color="#145229")
-btn_tr_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_tr_resume.pack(side="top", fill="x", padx=4, pady=4)
 
-btn_tr_stop = ctk.CTkButton(_g4_run, text="⏹ Dừng hẳn", command=_translate_stop,
+btn_tr_stop = ctk.CTkButton(_g4_ctrl, text="⏹ Dừng hẳn", command=_translate_stop,
                             height=32, font=("Arial", 13), state="disabled",
                             fg_color="#8B2020", hover_color="#5e1616")
-btn_tr_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_tr_stop.pack(side="top", fill="x", padx=4, pady=4)
 
 # Output cho Dịch thuật (rỗng = lưu cạnh file gốc)
 btn_tr_choose_out = ctk.CTkButton(_g4_out, text="\U0001F4C1 Chọn Output Folder", command=choose_translate_output_folder, height=36, font=("Arial", 13))
-btn_tr_choose_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_tr_choose_out.pack(side="top", fill="x", padx=4, pady=4)
 btn_tr_open_out = ctk.CTkButton(_g4_out, text="\U0001F4C2 Open Output Folder", command=open_translate_output_folder, height=36, font=("Arial", 13))
-btn_tr_open_out.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_tr_open_out.pack(side="top", fill="x", padx=4, pady=4)
 
 
 # =========================
@@ -13507,7 +13553,7 @@ def set_mode(mode):
 
 
 btn_reset_mode = ctk.CTkButton(
-    _g6,
+    _g_tools,
     text="Reset Mode",
     command=lambda: set_mode("reset"),
     height=36,
@@ -14273,6 +14319,45 @@ def _hf_cache_has(repo_id):
     return False
 
 
+def _hf_cache_has_prefix(prefix):
+    """True nếu CÓ ÍT NHẤT MỘT repo HF trong cache khớp tiền tố 'org/name'.
+    Dùng cho faster-whisper (small/medium/large-v3 — bất kỳ bản nào đủ chạy)."""
+    folder_prefix = "models--" + prefix.replace("/", "--")
+    for d in _hf_cache_dirs():
+        try:
+            for name in os.listdir(d):
+                if name.startswith(folder_prefix):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _torch_hub_dirs():
+    """Các thư mục cache torch.hub checkpoints có thể có (demucs htdemucs, Silero VAD)."""
+    dirs = []
+    th = os.environ.get("TORCH_HOME")
+    if th:
+        dirs.append(os.path.join(th, "hub", "checkpoints"))
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        dirs.append(os.path.join(xdg, "torch", "hub", "checkpoints"))
+    dirs.append(os.path.join(os.path.expanduser("~"), ".cache", "torch", "hub", "checkpoints"))
+    return dirs
+
+
+def _torch_hub_has(prefix):
+    """True nếu có file checkpoint torch.hub khớp tiền tố tên (vd 'htdemucs' → '955717e8-*.th')."""
+    for d in _torch_hub_dirs():
+        try:
+            for name in os.listdir(d):
+                if name.startswith(prefix):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
 def _run_startup_diagnostics():
     """Kiểm tra phụ thuộc runtime hệ thống + tính năng lúc khởi động.
     Ghi kết quả ra logbox; trả về list tên runtime QUAN TRỌNG bị thiếu."""
@@ -14359,9 +14444,22 @@ def _run_startup_diagnostics():
         log_color("⚠ VoxCPM model: chưa chọn thư mục — trỏ tại ⚙ Cài đặt",
                   _YEL, force_color=True)
 
-    # 9. VideOCR CLI
+    # 9. VideOCR CLI (+ model PaddleOCR PP-OCRv5 nằm BÊN TRONG thư mục CLI)
     if VIDEOCR_CLI_DIR and os.path.isdir(VIDEOCR_CLI_DIR):
         log_color("✅ VideOCR CLI: OK (tách sub cứng OCR)", _OK)
+        # PaddleOCR model files — videocr_helper.py dò 'PaddleOCR.PP-OCRv5.support.files'
+        # trong: VIDEOCR_INSTALL_DIR → thư mục CLI → Program Files\VideOCR.
+        _ocr_roots = [VIDEOCR_CLI_DIR,
+                      os.environ.get("VIDEOCR_INSTALL_DIR", "").strip(),
+                      r"C:\Program Files\VideOCR"]
+        _ocr_ok = any(r and os.path.isdir(os.path.join(r, "PaddleOCR.PP-OCRv5.support.files"))
+                      for r in _ocr_roots)
+        if _ocr_ok:
+            log_color("✅ PaddleOCR PP-OCRv5 model: OK", _OK)
+        else:
+            log_color("⚠ PaddleOCR PP-OCRv5 model chưa có (PaddleOCR.PP-OCRv5.support.files) — "
+                      "OCR sẽ tự tải lần đầu nếu CÓ net; máy KHÔNG net phải copy thư mục model vào VideOCR CLI",
+                      _YEL, force_color=True)
     else:
         log_color("⚠ VideOCR CLI: chưa tìm thấy — Tách Sub Cứng tắt. Trỏ tại ⚙ Cài đặt",
                   _YEL, force_color=True)
@@ -14423,6 +14521,41 @@ def _run_startup_diagnostics():
         log_color("   → Máy CÓ internet: tự tải lần đầu. Máy KHÔNG net: copy "
                   "%USERPROFILE%\\.cache\\huggingface\\ từ máy gốc sang",
                   _YEL, force_color=True)
+
+    # 12b. faster-whisper (STT + Video→SRT) — bất kỳ bản nào (small/medium/large-v3) là đủ.
+    #      Nằm trong HF cache; helper chạy bằng voxcpm_env. Hay bị quên trên máy mới.
+    if _hf_cache_has_prefix("Systran/faster-whisper"):
+        log_color("✅ faster-whisper cache: OK (STT / Video→SRT)", _OK)
+    else:
+        log_color("⚠ faster-whisper chưa có cache (Systran/faster-whisper-*) — STT & Video→SRT sẽ lỗi. "
+                  "Máy CÓ net: tự tải lần đầu; máy KHÔNG net: copy %USERPROFILE%\\.cache\\huggingface\\",
+                  _YEL, force_color=True)
+
+    # 12c. Demucs htdemucs (tách nhạc trong 'Xử lý Audio') — cache ở TORCH HUB, không phải HF.
+    #      File: ~/.cache/torch/hub/checkpoints/955717e8-*.th
+    if _torch_hub_has("955717e8"):
+        log_color("✅ Demucs htdemucs cache: OK (tách nhạc khỏi audio mẫu)", _OK)
+    else:
+        log_color("⚠ Demucs htdemucs chưa có cache — nút 'Tách nhạc' khi xử lý audio mẫu sẽ lỗi. "
+                  "Máy CÓ net: tự tải lần đầu; máy KHÔNG net: copy %USERPROFILE%\\.cache\\torch\\hub\\checkpoints\\",
+                  _YEL, force_color=True)
+
+    # 12d. Model dịch Offline (NLLB / envit5 / opus-mt) — CHỈ cần khi dùng provider 'Offline'.
+    #      Có thể là thư mục local HOẶC một HF id (org/name). Chỉ kiểm tra khi đã cấu hình
+    #      hoặc đang chọn provider Offline — tránh nhiễu cho người chỉ dùng dịch online.
+    _tr_model = (LOCAL_TRANSLATE_MODEL_DIR or "").strip()
+    if TRANSLATE_PROVIDER == "Offline" or _tr_model:
+        if not _tr_model:
+            log_color("⚠ Dịch Offline: chưa trỏ model (NLLB/envit5) — trỏ tại ⚙ Cài đặt",
+                      _YEL, force_color=True)
+        elif os.path.isdir(_tr_model):
+            log_color("✅ Model dịch Offline: OK (thư mục local)", _OK)
+        elif "/" in _tr_model and _hf_cache_has(_tr_model):
+            log_color("✅ Model dịch Offline: OK (HF cache)", _OK)
+        else:
+            log_color(f"⚠ Model dịch Offline chưa có: {_tr_model} — máy CÓ net tự tải lần đầu; "
+                      "máy KHÔNG net copy %USERPROFILE%\\.cache\\huggingface\\ hoặc trỏ thư mục local",
+                      _YEL, force_color=True)
 
     if critical_missing:
         log_color("⛔ THIẾU RUNTIME QUAN TRỌNG: " + ", ".join(critical_missing),

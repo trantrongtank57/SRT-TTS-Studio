@@ -549,7 +549,14 @@ The MSI installs everything bundled. These components are too large to bundle an
 - `Systran/faster-whisper-large-v3` (+ medium/small) — STT (`whisper_stt.py`) and Video-STT (`video_stt_helper.py`), pulled into `voxcpm_env`'s cache
 - `demucs htdemucs` (torch hub `checkpoints/955717e8-*.th`) — audio-enhance "Tách nhạc" (`audio_enhancer.py`)
 
-`_run_startup_diagnostics()` (#12, `_hf_checks` list) only probes the first four via `_hf_cache_has()`; whisper/demucs are not surfaced in the logbox. When adding a new engine with a runtime HF download, add its repo id to `_hf_checks` so the startup logbox flags it.
+`_run_startup_diagnostics()` surfaces **all** of these in the logbox:
+- The four strict HF models above via `_hf_checks` + `_hf_cache_has()` (#12).
+- **faster-whisper** (#12b) via `_hf_cache_has_prefix("Systran/faster-whisper")` — passes if **any** size (small/medium/large-v3) is cached.
+- **Demucs htdemucs** (#12c) via `_torch_hub_has("955717e8")` — this model lives in the **torch hub** cache (`~/.cache/torch/hub/checkpoints/955717e8-*.th`), **not** HF cache, so `_hf_cache_has` can't see it; `_torch_hub_dirs()` checks `TORCH_HOME`/`XDG_CACHE_HOME`/`~/.cache/torch/...`.
+- **Model dịch Offline** (#12d) — only checked when `TRANSLATE_PROVIDER == "Offline"` or `LOCAL_TRANSLATE_MODEL_DIR` is set (a local dir → `isdir`, or an HF id → `_hf_cache_has`).
+- **PaddleOCR PP-OCRv5** (#9, nested under the VideOCR check) — `PaddleOCR.PP-OCRv5.support.files` searched in the VideOCR CLI dir / `VIDEOCR_INSTALL_DIR` / `C:\Program Files\VideOCR`.
+
+(Silero VAD for SRT-align needs no separate check — `srt_align_helper.py` uses `faster_whisper.vad`, which ships inside the faster-whisper package, so #12b covers it.) When adding a new engine with a runtime HF download, add its repo id to `_hf_checks` (or a dedicated check if it caches outside HF) so the startup logbox flags it.
 
 ### Relative auto-detect (added) — copy beside the exe, no Settings needed
 
