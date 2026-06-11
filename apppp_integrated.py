@@ -2532,6 +2532,166 @@ def _apply_voice_exclusivity():
         _set_state(_f5tts_all_ctrls, "normal")
         _set_state(_omnivoice_all_ctrls, "normal")
 
+# ── Voice Profiles (Hồ sơ giọng) ─────────────────────────────────────────────
+# Lưu toàn bộ cấu hình giọng hiện tại (provider/engine + model + ref audio +
+# speed/emotion...) thành hồ sơ có tên, chọn lại bằng 1 dropdown.
+# File riêng (voice_profiles.json) để _save_settings() không ghi đè mất.
+_VOICE_PROFILES_FILE = os.path.join(
+    os.path.dirname(_SETTINGS_FILE) or ".", "voice_profiles.json")
+
+def _voice_profiles_load():
+    try:
+        if os.path.isfile(_VOICE_PROFILES_FILE):
+            with open(_VOICE_PROFILES_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                return d
+    except Exception:
+        pass
+    return {}
+
+def _voice_profiles_write(d):
+    try:
+        with open(_VOICE_PROFILES_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        log(f"[Hồ sơ giọng] ❌ Không ghi được {_VOICE_PROFILES_FILE}: {e}")
+        return False
+
+def _voice_profile_capture():
+    """Chụp toàn bộ cấu hình giọng hiện tại thành 1 dict."""
+    if RVC_ENABLED:        eng = "rvc"
+    elif VOXCPM_ENABLED:   eng = "voxcpm"
+    elif VIENEU_ENABLED:   eng = "vieneu"
+    elif F5TTS_ENABLED:    eng = "f5tts"
+    elif OMNIVOICE_ENABLED: eng = "omnivoice"
+    else:                  eng = "provider"
+    return {
+        "engine":   eng,
+        "provider": provider_var.get(),
+        "voice":    voice_var.get(),
+        "rvc_model": rvc_model_var.get(),  "rvc_index": rvc_index_var.get(),
+        "rvc_pitch": rvc_pitch_var.get(),  "rvc_algo":  rvc_algo_var.get(),
+        "voxcpm_ckpt": voxcpm_ckpt_var.get(), "voxcpm_ref": voxcpm_ref_var.get(),
+        "voxcpm_reftext": voxcpm_reftext_var.get(),
+        "voxcpm_steps": voxcpm_steps_var.get(), "voxcpm_cfg": voxcpm_cfg_var.get(),
+        "vieneu_model": vieneu_model_var.get(), "vieneu_ref": vieneu_ref_var.get(),
+        "vieneu_reftext": vieneu_reftext_var.get(),
+        "vieneu_voice": vieneu_voice_var.get(), "vieneu_emotion": vieneu_emotion_var.get(),
+        "f5tts_model": f5tts_model_var.get(), "f5tts_ref": f5tts_ref_var.get(),
+        "f5tts_reftext": f5tts_reftext_var.get(), "f5tts_speed": f5tts_speed_var.get(),
+        "omnivoice_model": omnivoice_model_var.get(), "omnivoice_ref": omnivoice_ref_var.get(),
+        "omnivoice_reftext": omnivoice_reftext_var.get(),
+    }
+
+def _voice_profile_apply(p):
+    """Áp dụng 1 hồ sơ giọng vào toàn bộ UI vars + bật đúng engine."""
+    try:
+        # 1) Điền các trường (kể cả engine đang tắt — vô hại)
+        if p.get("provider"): set_provider(p["provider"]); provider_var.set(p["provider"])
+        if p.get("voice"):    voice_var.set(p["voice"]);   set_voice(p["voice"])
+        for key, var in (
+            ("rvc_model", rvc_model_var), ("rvc_index", rvc_index_var),
+            ("rvc_pitch", rvc_pitch_var), ("rvc_algo", rvc_algo_var),
+            ("voxcpm_ckpt", voxcpm_ckpt_var), ("voxcpm_ref", voxcpm_ref_var),
+            ("voxcpm_reftext", voxcpm_reftext_var),
+            ("voxcpm_steps", voxcpm_steps_var), ("voxcpm_cfg", voxcpm_cfg_var),
+            ("vieneu_model", vieneu_model_var), ("vieneu_ref", vieneu_ref_var),
+            ("vieneu_reftext", vieneu_reftext_var),
+            ("vieneu_voice", vieneu_voice_var), ("vieneu_emotion", vieneu_emotion_var),
+            ("f5tts_model", f5tts_model_var), ("f5tts_ref", f5tts_ref_var),
+            ("f5tts_reftext", f5tts_reftext_var), ("f5tts_speed", f5tts_speed_var),
+            ("omnivoice_model", omnivoice_model_var), ("omnivoice_ref", omnivoice_ref_var),
+            ("omnivoice_reftext", omnivoice_reftext_var),
+        ):
+            if key in p:
+                var.set(p.get(key) or "")
+        # 2) Bật đúng engine, tắt các engine khác (toggle tự pack/unpack panel)
+        eng = p.get("engine", "provider")
+        rvc_enable_var.set(eng == "rvc")
+        voxcpm_enable_var.set(eng == "voxcpm")
+        vieneu_enable_var.set(eng == "vieneu")
+        f5tts_enable_var.set(eng == "f5tts")
+        omnivoice_enable_var.set(eng == "omnivoice")
+        _toggle_rvc_panel()
+        _toggle_voxcpm_panel()
+        _toggle_vieneu_panel()
+        _toggle_f5tts_panel()
+        _toggle_omnivoice_panel()
+        _apply_voice_exclusivity()
+    except Exception as e:
+        log(f"[Hồ sơ giọng] ❌ Lỗi áp dụng hồ sơ: {e}")
+
+_VP_EMPTY = "(chưa có hồ sơ)"
+
+def _voice_profiles_names():
+    names = sorted(_voice_profiles_load().keys())
+    return names if names else [_VP_EMPTY]
+
+def _voice_profiles_refresh_menu(select=None):
+    names = _voice_profiles_names()
+    voice_profile_menu.configure(values=names)
+    if select and select in names:
+        voice_profile_var.set(select)
+    elif voice_profile_var.get() not in names:
+        voice_profile_var.set(names[0])
+
+def _voice_profile_save_current():
+    dlg = ctk.CTkInputDialog(text="Tên hồ sơ giọng (vd: Nữ thuyết minh):",
+                             title="Lưu hồ sơ giọng")
+    name = (dlg.get_input() or "").strip()
+    if not name:
+        return
+    profiles = _voice_profiles_load()
+    profiles[name] = _voice_profile_capture()
+    if _voice_profiles_write(profiles):
+        _voice_profiles_refresh_menu(select=name)
+        log(f"[Hồ sơ giọng] ✅ Đã lưu hồ sơ: {name} (engine: {profiles[name]['engine']})")
+
+def _voice_profile_delete_selected():
+    name = voice_profile_var.get()
+    if name == _VP_EMPTY:
+        return
+    if not msg.askyesno("Xóa hồ sơ giọng", f"Xóa hồ sơ '{name}'?"):
+        return
+    profiles = _voice_profiles_load()
+    profiles.pop(name, None)
+    if _voice_profiles_write(profiles):
+        _voice_profiles_refresh_menu()
+        log(f"[Hồ sơ giọng] Đã xóa hồ sơ: {name}")
+
+def _voice_profile_on_select(name):
+    if name == _VP_EMPTY:
+        return
+    p = _voice_profiles_load().get(name)
+    if not p:
+        log(f"[Hồ sơ giọng] ❌ Không tìm thấy hồ sơ: {name}")
+        return
+    _voice_profile_apply(p)
+    log(f"[Hồ sơ giọng] ✅ Đã áp dụng hồ sơ: {name} (engine: {p.get('engine','provider')})")
+
+# UI: 1 row cuối voice_frame — dropdown hồ sơ + Lưu/Xóa
+voice_profile_row = ctk.CTkFrame(voice_frame, fg_color="transparent")
+voice_profile_row.pack(fill="x", padx=2, pady=(2, 4))
+ctk.CTkLabel(voice_profile_row, text="Hồ sơ giọng:", font=("Arial", 13)).pack(side="left", padx=(10, 4))
+voice_profile_var = ctk.StringVar(value=_voice_profiles_names()[0])
+voice_profile_menu = ctk.CTkOptionMenu(
+    voice_profile_row, variable=voice_profile_var,
+    values=_voice_profiles_names(), width=240,
+    command=_voice_profile_on_select,
+)
+voice_profile_menu.pack(side="left", padx=(0, 8))
+ctk.CTkButton(
+    voice_profile_row, text="💾 Lưu giọng hiện tại", width=150,
+    command=_voice_profile_save_current,
+).pack(side="left", padx=(0, 6))
+ctk.CTkButton(
+    voice_profile_row, text="🗑 Xóa", width=70,
+    command=_voice_profile_delete_selected,
+    fg_color="#8a3344", hover_color="#a04055",
+).pack(side="left")
+
 # ── Quick TTS row ─────────────────────────────────────────────────────────────
 # Quick TTS: widget UI duoc tao o workspace "Text -> Audio" (xem phia duoi)
 quick_tts_var = ctk.StringVar(value="")
@@ -2563,12 +2723,30 @@ def _quick_tts_open_output():
 
 # (nut Output -> workspace "Text -> Audio")
 
-def _quick_tts_run():
+def _play_audio_file(path):
+    """Phát 1 file audio (mp3/wav) ngay trong app qua MCI — dùng cho Nghe thử."""
+    try:
+        import ctypes
+        winmm = ctypes.windll.winmm
+        def _mci(c):
+            winmm.mciSendStringW(c, None, 0, None)
+        _mci('close qt_preview')
+        _mci(f'open "{path}" type mpegvideo alias qt_preview')
+        _mci('play qt_preview')
+    except Exception as e:
+        log(f"[Nghe thử] ❌ Không phát được audio: {e}")
+
+def _quick_tts_run(preview=False):
+    """preview=True → sinh ra file tạm và phát ngay (Nghe thử), không hỏi nơi lưu."""
     text = quick_tts_var.get().strip()
     if not text:
         msg.showwarning("Quick TTS", "Vui lòng nhập text trước khi tạo audio.")
         return
-    out = _quick_tts_output_var.get().strip()
+    if preview:
+        import tempfile
+        out = os.path.join(tempfile.gettempdir(), "srt_tts_preview.mp3")
+    else:
+        out = _quick_tts_output_var.get().strip()
     if not out:
         out = filedialog.asksaveasfilename(
             title="Chọn file audio output",
@@ -2801,9 +2979,14 @@ def _quick_tts_run():
                         return
             log(f"[Quick TTS] ✅ Hoàn tất: {os.path.basename(out)}")
             update_progress(100, 100)
-            app.after(0, show_fireworks)
-            if os.path.isfile(out):
-                subprocess.Popen(["explorer", "/select,", os.path.abspath(out)])
+            if preview:
+                if os.path.isfile(out):
+                    log("[Nghe thử] ▶ Đang phát audio thử...")
+                    _play_audio_file(out)
+            else:
+                app.after(0, show_fireworks)
+                if os.path.isfile(out):
+                    subprocess.Popen(["explorer", "/select,", os.path.abspath(out)])
         except Exception as e:
             log(f"[Quick TTS] ❌ Lỗi: {e}")
 
@@ -3966,6 +4149,11 @@ ctk.CTkButton(
 ctk.CTkButton(
     _qt_row2, text="📂 Mở Output", command=_quick_tts_open_output,
     height=40, font=("Arial", 13),
+).pack(side="left", expand=True, fill="x", padx=4, pady=2)
+ctk.CTkButton(
+    _qt_row2, text="🎧 Nghe thử", command=lambda: _quick_tts_run(preview=True),
+    height=40, font=("Arial", 13, "bold"),
+    fg_color="#7c5cff", hover_color="#9277ff",
 ).pack(side="left", expand=True, fill="x", padx=4, pady=2)
 ctk.CTkButton(
     _qt_row2, text="🔊 Gen Audio", command=_quick_tts_run,
@@ -5147,6 +5335,9 @@ def translate_srt():
                 app.after(0, lambda: log(f"✅ Đã lưu: {out_path}"))
                 app.after(0, show_fireworks)
             app.after(0, lambda: _reveal_output(out_path))
+            # Pipeline gộp: Dịch xong → nạp file _vi.srt và lồng tiếng luôn
+            if not TRANSLATE_STOP and translate_then_tts_var.get():
+                app.after(500, lambda p=out_path: _chain_translate_to_tts(p))
         except Exception as e:
             err = str(e)
             app.after(0, lambda: log(f"❌ Lỗi dịch SRT: {err}"))
@@ -5155,6 +5346,26 @@ def translate_srt():
             app.after(0, lambda: _translate_set_controls(False))
 
     threading.Thread(target=_worker, daemon=True).start()
+
+
+def _chain_translate_to_tts(srt_path):
+    """Nạp file SRT vừa dịch vào pipeline TTS và chạy luôn (chạy trên main thread)."""
+    global SRT_FILE, current_index
+    try:
+        if translate_bilingual_var.get():
+            log("⚠ Song ngữ đang bật — TTS sẽ đọc CẢ 2 ngôn ngữ. "
+                "Tắt 'Song ngữ' nếu chỉ muốn đọc bản dịch.")
+        SRT_FILE = srt_path
+        current_index = 0
+        load_subtitles(force_select=False)
+        if not subtitles_cache:
+            log("❌ Không nạp được file SRT đã dịch — dừng pipeline.")
+            return
+        set_mode("srt")
+        log(f"🔗 Dịch xong → bắt đầu lồng tiếng: {os.path.basename(srt_path)}")
+        start_tts()
+    except Exception as e:
+        log(f"❌ Không tự chạy được TTS sau dịch: {e}")
 
 
 def translate_pdf():
@@ -5470,6 +5681,82 @@ def choose_output_folder():
     OUTPUT_DIR = selected
 
     log(f"OUTPUT -> {OUTPUT_DIR}")
+    _session_save()
+
+
+# =========================
+# RESUME SESSION — nhớ file & tiến độ qua các lần mở app
+# =========================
+_SESSION_FILE = os.path.join(os.path.dirname(_SETTINGS_FILE) or ".", "session.json")
+
+def _session_save():
+    """Lưu trạng thái phiên (file đang làm + thư mục output + tiến độ)."""
+    try:
+        data = {
+            "srt_file":   SRT_FILE or "",
+            "output_dir": OUTPUT_DIR or "",
+            "current_index": current_index,
+            "mode": "srt" if SRT_FILE else "",
+            "ts": time.time(),
+        }
+        with open(_SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _session_check_on_startup():
+    """Khi mở app: nếu có phiên cũ còn dở (file SRT vẫn tồn tại) → gợi ý khôi phục."""
+    try:
+        if not os.path.isfile(_SESSION_FILE):
+            return
+        with open(_SESSION_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        srt_path = data.get("srt_file", "")
+        if not srt_path or not os.path.isfile(srt_path):
+            return
+        out_dir = data.get("output_dir", "")
+        # Đếm số file đã sinh để biết còn dở bao nhiêu
+        done = 0
+        if out_dir and os.path.isdir(out_dir):
+            try:
+                done = len([f for f in os.listdir(out_dir)
+                            if re.match(r"^line_\d{4}\.mp3$", f)])
+            except Exception:
+                done = 0
+        log_color("━━━ PHIÊN LÀM VIỆC TRƯỚC ━━━", "#36c5ff")
+        log(f"  • File SRT: {os.path.basename(srt_path)}")
+        if out_dir:
+            log(f"  • Output:   {out_dir} ({done} dòng đã tạo)")
+        log("  • Nhấn '↩ Khôi phục phiên' (tab SRT) để nạp lại và tiếp tục (Resume).")
+    except Exception:
+        pass
+
+def restore_session():
+    """Nạp lại file SRT + output dir của phiên trước rồi sẵn sàng Resume."""
+    global SRT_FILE, OUTPUT_DIR, current_index
+    try:
+        if not os.path.isfile(_SESSION_FILE):
+            log("[Phiên] Không có phiên nào để khôi phục.")
+            return
+        with open(_SESSION_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        srt_path = data.get("srt_file", "")
+        if not srt_path or not os.path.isfile(srt_path):
+            log("[Phiên] ❌ File SRT của phiên trước không còn tồn tại.")
+            return
+        out_dir = data.get("output_dir", "")
+        if out_dir and os.path.isdir(out_dir):
+            OUTPUT_DIR = out_dir
+            log(f"[Phiên] OUTPUT -> {OUTPUT_DIR}")
+        SRT_FILE = srt_path
+        current_index = 0   # generate_tts tự SKIP các dòng đã có file
+        load_subtitles(force_select=False)
+        if subtitles_cache:
+            set_mode("srt")
+            log(f"[Phiên] ✅ Đã khôi phục: {os.path.basename(srt_path)} "
+                f"({len(subtitles_cache)} dòng). Nhấn TTS/Resume để tiếp tục.")
+    except Exception as e:
+        log(f"[Phiên] ❌ Lỗi khôi phục phiên: {e}")
 
 
 def open_output_folder():
@@ -5637,6 +5924,7 @@ def load_subtitles(force_select=True):
     subtitle_list.configure(state="disabled")
 
     log(f"Loaded {len(subtitles_cache)} subtitles")
+    _session_save()
 
     # Chỉ chuyển mode khi người dùng chủ động chọn file (không gọi khi load nội bộ)
     if force_select:
@@ -7580,6 +7868,113 @@ def _sanitize_tts_text(text):
     t = re.sub(r"\s{2,}", " ", t).strip()
     t = re.sub(r"(,\s*){2,}", ", ", t)        # gộp ", , ," → ", "
     return t or text                          # tránh trả chuỗi rỗng
+
+
+# =========================
+# QC DASHBOARD — báo cáo audio lỗi + regenerate hàng loạt
+# =========================
+# _rename_bad_audio đã đổi tên các file lỗi thành line_XXXX_<reason>.mp3 —
+# dashboard quét thư mục output nên hoạt động với MỌI luồng (SRT/PDF, mọi engine),
+# kể cả sau khi đóng mở lại app.
+_QC_BAD_RE = re.compile(r"^(line_|pdf_line_)(\d{4})_(novoice|toolong|tooshort)\.mp3$")
+
+def _qc_scan_bad_files():
+    """Quét OUTPUT_DIR tìm audio bị QC đánh dấu lỗi → [(prefix, idx, reason, path)]."""
+    bad = []
+    try:
+        for fn in os.listdir(OUTPUT_DIR):
+            m = _QC_BAD_RE.match(fn)
+            if m:
+                bad.append((m.group(1), int(m.group(2)), m.group(3),
+                            os.path.join(OUTPUT_DIR, fn)))
+    except Exception:
+        pass
+    return sorted(bad, key=lambda x: (x[0], x[1]))
+
+def qc_show_report():
+    """In tổng kết QC vào logbox: bao nhiêu dòng lỗi, loại gì, dòng số mấy."""
+    bad = _qc_scan_bad_files()
+    log("━━━ BÁO CÁO CHẤT LƯỢNG AUDIO (QC) ━━━")
+    if not bad:
+        log("✅ Không có file audio lỗi trong thư mục output.")
+        return
+    by_reason = {}
+    for prefix, idx, reason, _path in bad:
+        by_reason.setdefault(reason, []).append((prefix, idx))
+    for reason in ("novoice", "toolong", "tooshort"):
+        items = by_reason.get(reason, [])
+        if not items:
+            continue
+        nums = ", ".join((("PDF " if p == "pdf_line_" else "") + str(i))
+                         for p, i in items)
+        log(f"  • {len(items)} dòng {_BAD_AUDIO_DESC[reason]}: {nums}")
+    log(f"Tổng cộng {len(bad)} dòng lỗi — nhấn '🔁 Regen dòng lỗi' để tạo lại tất cả.")
+
+_QC_REGEN_RUNNING = [False]
+
+def qc_regen_bad_lines():
+    """Tạo lại toàn bộ các dòng audio lỗi (đi qua đúng pipeline regenerate_line /
+    regenerate_pdf_line: engine hiện tại + QC + retry). Tự khóa khi đang chạy."""
+    if _QC_REGEN_RUNNING[0]:
+        log("[QC] Đang chạy regenerate — vui lòng đợi xong.")
+        return
+    bad = _qc_scan_bad_files()
+    if not bad:
+        log("[QC] ✅ Không có dòng lỗi để tạo lại.")
+        return
+    need_srt = any(p == "line_" for p, _i, _r, _f in bad)
+    need_pdf = any(p == "pdf_line_" for p, _i, _r, _f in bad)
+    if need_srt and not subtitles_cache:
+        log("[QC] ❌ Có dòng SRT lỗi nhưng chưa Load SRT — hãy Load đúng file SRT trước.")
+        return
+    if need_pdf and not PDF_CHUNKS:
+        log("[QC] ❌ Có đoạn PDF lỗi nhưng chưa nạp tài liệu — hãy Load lại PDF/Word trước.")
+        return
+
+    def _run():
+        _QC_REGEN_RUNNING[0] = True
+        try:
+            done = fail = 0
+            total = len(bad)
+            log(f"[QC] Bắt đầu tạo lại {total} dòng lỗi...")
+            for n, (prefix, idx, _reason, path) in enumerate(bad, 1):
+                if prefix == "line_":
+                    if idx >= len(subtitles_cache):
+                        log(f"[QC] ⚠ Dòng {idx}: vượt quá số dòng SRT đang nạp — bỏ qua")
+                        fail += 1
+                        continue
+                    text = clean_text(subtitles_cache[idx].content)
+                    target = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.mp3")
+                else:
+                    if idx >= len(PDF_CHUNKS):
+                        log(f"[QC] ⚠ Đoạn PDF {idx}: vượt quá số đoạn đang nạp — bỏ qua")
+                        fail += 1
+                        continue
+                    text = PDF_CHUNKS[idx].strip()
+                    target = os.path.join(OUTPUT_DIR, f"pdf_line_{idx:04d}.mp3")
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+                try:
+                    if prefix == "line_":
+                        asyncio.run(regenerate_line(idx, text))
+                    else:
+                        asyncio.run(regenerate_pdf_line(idx, text))
+                except Exception as e:
+                    log(f"[QC] ❌ Lỗi khi tạo lại dòng {idx}: {e}")
+                if os.path.isfile(target):
+                    done += 1
+                else:
+                    fail += 1
+                update_progress(n, total)
+            log(f"[QC] ━━━ Hoàn tất: {done} OK, {fail} lỗi / {total} dòng ━━━")
+            if done and not fail:
+                app.after(0, show_fireworks)
+        finally:
+            _QC_REGEN_RUNNING[0] = False
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _check_rvc_preflight():
@@ -9818,6 +10213,7 @@ def start_tts():
 
     paused = False
     stop_requested = False
+    _session_save()
 
     if VOXCPM_ENABLED:
         # VoxCPM chạy local — không cần internet
@@ -9850,6 +10246,159 @@ def start_tts():
 
 
 # =========================
+# HÀNG ĐỢI BATCH — chạy nhiều file SRT lần lượt (qua đêm)
+# =========================
+QUEUE_FILES = []
+_QUEUE_RUNNING = [False]
+
+def _dispatch_tts_blocking():
+    """Chạy đúng engine đang chọn cho subtitles_cache hiện tại, CHỜ tới khi xong.
+    Dùng trong hàng đợi (worker thread đã có sẵn)."""
+    global paused, stop_requested
+    paused = False
+    stop_requested = False
+    if VOXCPM_ENABLED:    _run_voxcpm_batch()
+    elif VIENEU_ENABLED:  _run_vieneu_batch()
+    elif F5TTS_ENABLED:   _run_f5tts_batch()
+    elif OMNIVOICE_ENABLED: _run_omnivoice_batch()
+    else:                 asyncio.run(generate_tts())
+
+def run_queue_batch(do_merge=True):
+    """Xử lý tuần tự từng file SRT trong QUEUE_FILES; mỗi file ghi vào thư mục
+    con <tên>_tts riêng, tùy chọn Merge thành final ngay sau khi tạo xong."""
+    global SRT_FILE, OUTPUT_DIR, current_index
+    if _QUEUE_RUNNING[0]:
+        log("[Hàng đợi] Đang chạy — vui lòng đợi.")
+        return
+    files = list(QUEUE_FILES)
+    if not files:
+        log("[Hàng đợi] ❌ Hàng đợi trống — bấm '➕ Thêm SRT' trước.")
+        return
+
+    def _run():
+        global SRT_FILE, OUTPUT_DIR, current_index
+        _QUEUE_RUNNING[0] = True
+        try:
+            n = len(files)
+            log_color(f"━━━ HÀNG ĐỢI: {n} file SRT ━━━", "#36c5ff")
+            for k, path in enumerate(files, 1):
+                if stop_requested:
+                    log("[Hàng đợi] Đã dừng.")
+                    break
+                if not os.path.isfile(path):
+                    log(f"[Hàng đợi] ⚠ ({k}/{n}) Bỏ qua, không thấy file: {path}")
+                    continue
+                base = os.path.splitext(path)[0]
+                out_dir = base + "_tts"
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                except Exception as e:
+                    log(f"[Hàng đợi] ❌ Không tạo được thư mục output: {e}")
+                    continue
+                SRT_FILE = path
+                OUTPUT_DIR = out_dir
+                current_index = 0
+                log_color(f"▶ ({k}/{n}) {os.path.basename(path)} → {out_dir}", "#7c5cff")
+                app.after(0, lambda p=path: load_subtitles(force_select=False))
+                # chờ load_subtitles chạy xong trên main thread
+                _ev = threading.Event()
+                app.after(0, _ev.set)
+                _ev.wait(timeout=10)
+                if not subtitles_cache:
+                    log(f"[Hàng đợi] ⚠ ({k}/{n}) File rỗng/không đọc được — bỏ qua.")
+                    continue
+                try:
+                    _dispatch_tts_blocking()
+                except Exception as e:
+                    log(f"[Hàng đợi] ❌ Lỗi TTS file {os.path.basename(path)}: {e}")
+                    continue
+                if do_merge:
+                    try:
+                        log(f"[Hàng đợi] 🎬 Merge → {os.path.basename(out_dir)}/final...")
+                        merge_ffmpeg()
+                    except Exception as e:
+                        log(f"[Hàng đợi] ⚠ Merge lỗi: {e}")
+            log_color("━━━ HÀNG ĐỢI HOÀN TẤT ━━━", _OK if '_OK' in globals() else "#2dd4a7")
+            app.after(0, show_fireworks)
+        finally:
+            _QUEUE_RUNNING[0] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+
+def open_queue_dialog():
+    """Cửa sổ quản lý hàng đợi nhiều SRT."""
+    win = ctk.CTkToplevel(app)
+    win.title("📚 Hàng đợi nhiều SRT")
+    win.geometry("600x460")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    ctk.CTkLabel(win, text="Chạy tuần tự nhiều file SRT (lồng tiếng + merge tự động).\n"
+                           "Mỗi file ghi vào thư mục con <tên>_tts cạnh file SRT.",
+                 font=("Arial", 12), justify="left").pack(pady=(10, 6))
+
+    lst_frame = ctk.CTkScrollableFrame(win, height=240)
+    lst_frame.pack(fill="both", expand=True, padx=10, pady=4)
+
+    def _refresh():
+        for w in lst_frame.winfo_children():
+            w.destroy()
+        if not QUEUE_FILES:
+            ctk.CTkLabel(lst_frame, text="(hàng đợi trống)",
+                         font=("Arial", 12), text_color="#888").pack(pady=10)
+            return
+        for i, p in enumerate(QUEUE_FILES):
+            row = ctk.CTkFrame(lst_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=f"{i+1}. {os.path.basename(p)}",
+                         font=("Arial", 12), anchor="w").pack(side="left", fill="x", expand=True)
+            ctk.CTkButton(row, text="✕", width=30, fg_color="#8a3344",
+                          hover_color="#a04055",
+                          command=lambda idx=i: (_remove(idx))).pack(side="left", padx=2)
+
+    def _remove(idx):
+        try:
+            QUEUE_FILES.pop(idx)
+        except Exception:
+            pass
+        _refresh()
+
+    def _add():
+        paths = filedialog.askopenfilenames(
+            title="Chọn các file SRT thêm vào hàng đợi",
+            filetypes=[("SRT files", "*.srt")])
+        for p in paths:
+            if p not in QUEUE_FILES:
+                QUEUE_FILES.append(p)
+        _refresh()
+
+    def _clear():
+        QUEUE_FILES.clear()
+        _refresh()
+
+    merge_after_var = ctk.BooleanVar(value=True)
+
+    btns = ctk.CTkFrame(win, fg_color="transparent")
+    btns.pack(fill="x", padx=10, pady=(2, 4))
+    ctk.CTkButton(btns, text="➕ Thêm SRT", command=_add, width=110).pack(side="left", padx=3)
+    ctk.CTkButton(btns, text="🗑 Xóa hết", command=_clear, width=90,
+                  fg_color="#8a3344", hover_color="#a04055").pack(side="left", padx=3)
+    ctk.CTkCheckBox(btns, text="Merge sau mỗi file", variable=merge_after_var,
+                    font=("Arial", 12)).pack(side="left", padx=8)
+
+    run_row = ctk.CTkFrame(win, fg_color="transparent")
+    run_row.pack(fill="x", padx=10, pady=(0, 10))
+    def _run_now():
+        win.destroy()
+        run_queue_batch(do_merge=merge_after_var.get())
+    ctk.CTkButton(run_row, text="🎬 Chạy hàng đợi", command=_run_now,
+                  fg_color="#2fa572", hover_color="#37b87f", height=40,
+                  font=("Arial", 14, "bold")).pack(fill="x")
+
+    _refresh()
+
+
+# =========================
 # FFMPEG
 # =========================
 
@@ -9861,6 +10410,15 @@ def start_tts():
 # trước khi câu kế tiếp bắt đầu → không còn đè/chồng giọng.
 _DUB_MAX_SPEED = 2.0    # tăng tốc tối đa (giữ độ rõ); câu vẫn dài hơn sẽ được cảnh báo
 _DUB_GAP_MS    = 50     # khe hở an toàn giữa 2 câu (ms)
+_DUB_CENTER_MAX_S = 0.8 # dịch tối đa khi căn giữa câu ngắn vào khe lặng (giây)
+
+# Định dạng output cho Merge FFmpeg: tên file + codec args
+_MERGE_FORMATS = {
+    "mp3":  ("final.mp3",  '-c:a libmp3lame -q:a 2'),
+    "wav":  ("final.wav",  '-c:a pcm_s16le'),
+    "m4a":  ("final.m4a",  '-c:a aac -b:a 192k'),
+    "opus": ("final.opus", '-c:a libopus -b:a 128k'),
+}
 
 
 def _probe_duration_sec(path):
@@ -9909,6 +10467,11 @@ def merge_ffmpeg():
 
     stretched = []   # các dòng (1-based) bị tăng tốc cho khớp khe
     overflow  = []   # các dòng vẫn dài hơn khe dù đã tăng tốc tối đa
+    centered  = []   # các dòng ngắn được căn giữa khe lặng
+
+    center_on = bool(merge_center_var.get())
+    out_name, codec_args = _MERGE_FORMATS.get(
+        merge_format_var.get(), _MERGE_FORMATS["mp3"])
 
     log("Phân tích thời lượng để khớp timeline (chống đè giọng)...")
 
@@ -9944,6 +10507,14 @@ def merge_ffmpeg():
                     stretched.append(i + 1)
                     if raw > _DUB_MAX_SPEED + 1e-3:
                         overflow.append(i + 1)
+                elif (center_on and actual > 0
+                      and target - actual > 0.3):
+                    # Câu ngắn hơn khe nhiều → đẩy vào giữa khe lặng cho
+                    # tự nhiên (giới hạn dịch tối đa _DUB_CENTER_MAX_S giây
+                    # để không lệch xa mốc phụ đề gốc)
+                    start_ms += int(min((target - actual) / 2.0,
+                                        _DUB_CENTER_MAX_S) * 1000)
+                    centered.append(i + 1)
 
         inputs.append(f'-i "{rel_name}"')
 
@@ -9970,6 +10541,8 @@ def merge_ffmpeg():
 
     if stretched:
         log(f"⏩ Đã tăng tốc {len(stretched)} câu cho khớp khe thời gian (chống đè giọng).")
+    if centered:
+        log(f"🎯 Đã căn giữa {len(centered)} câu ngắn vào khe lặng (tự nhiên hơn).")
     if overflow:
         dedup   = sorted(set(overflow))
         preview = ", ".join(str(x) for x in dedup[:20])
@@ -9992,7 +10565,7 @@ def merge_ffmpeg():
     bat_cmd = (
         f'"{FFMPEG}" {" ".join(inputs)} '
         f'-filter_complex_script "filter.txt" '
-        f'"final.mp3" -y'
+        f'{codec_args} "{out_name}" -y'
     )
 
     bat_path = os.path.join(OUTPUT_DIR, "run_ffmpeg.bat")
@@ -10054,7 +10627,7 @@ def merge_ffmpeg():
 
     if result_code == 0:
         update_progress(1, 1)
-        log("DONE -> final.mp3")
+        log(f"DONE -> {out_name}")
         app.after(0, show_fireworks)
         app.after(200, open_output_folder)
     else:
@@ -10564,6 +11137,208 @@ async def regenerate_pdf_line(index, text):
         log(f"[PDF] FAILED {index}")
     else:
         log(f"[PDF] FAILED {index}")
+
+
+# =========================
+# MULTI-VOICE CASTING — gán hồ sơ giọng theo dải dòng SRT
+# =========================
+# CASTING_RULES: list các {"from":int0based, "to":int0based, "profile":str}
+# Dòng nào không khớp rule nào → dùng cấu hình giọng đang chọn trên UI.
+CASTING_RULES = []
+_MULTIVOICE_RUNNING = [False]
+
+def _casting_resolve(idx):
+    """Trả về tên hồ sơ cho dòng idx (rule khớp sau cùng thắng), None nếu không có."""
+    name = None
+    for r in CASTING_RULES:
+        if r["from"] <= idx <= r["to"]:
+            name = r["profile"]
+    return name
+
+def _apply_profile_blocking(profile_name, timeout=15):
+    """Áp dụng 1 hồ sơ giọng trên main thread (chờ xong) — gọi từ worker thread."""
+    p = _voice_profiles_load().get(profile_name)
+    if not p:
+        log(f"[Phân vai] ❌ Không tìm thấy hồ sơ: {profile_name}")
+        return False
+    ev = threading.Event()
+    def _do():
+        try:
+            _voice_profile_apply(p)
+        finally:
+            ev.set()
+    app.after(0, _do)
+    ev.wait(timeout=timeout)
+    return True
+
+def run_multivoice_batch():
+    """Lồng tiếng đa giọng: mỗi dải dòng đọc bằng hồ sơ giọng riêng.
+    Gom dòng theo hồ sơ để hạn chế số lần đổi engine, mỗi dòng đi qua
+    regenerate_line (engine + QC + retry đầy đủ)."""
+    if _MULTIVOICE_RUNNING[0]:
+        log("[Phân vai] Đang chạy — vui lòng đợi xong.")
+        return
+    if not subtitles_cache:
+        load_subtitles(force_select=False)
+    if not subtitles_cache:
+        log("[Phân vai] ❌ Chưa Load SRT.")
+        return
+    if not CASTING_RULES:
+        log("[Phân vai] ❌ Chưa có luật phân vai nào — bấm '🎭 Phân vai' để thêm.")
+        return
+
+    total = len(subtitles_cache)
+    # idx → profile (None = giọng UI hiện tại). Gom theo profile, giữ thứ tự xuất hiện.
+    plan = {}
+    order = []
+    for idx in range(total):
+        prof = _casting_resolve(idx)
+        plan.setdefault(prof, []).append(idx)
+        if prof not in order:
+            order.append(prof)
+
+    def _run():
+        _MULTIVOICE_RUNNING[0] = True
+        app.after(0, lambda: set_mode("tts_running"))
+        try:
+            done = fail = skipped = 0
+            processed = 0
+            for prof in order:
+                idxs = plan[prof]
+                if prof is not None:
+                    log(f"[Phân vai] 🎭 Đổi sang hồ sơ '{prof}' cho {len(idxs)} dòng...")
+                    if not _apply_profile_blocking(prof):
+                        log(f"[Phân vai] ⚠ Bỏ qua {len(idxs)} dòng (hồ sơ lỗi).")
+                        fail += len(idxs)
+                        processed += len(idxs)
+                        update_progress(processed, total)
+                        continue
+                else:
+                    log(f"[Phân vai] 🎙 {len(idxs)} dòng dùng giọng đang chọn trên UI.")
+                for idx in idxs:
+                    if stop_requested:
+                        log("[Phân vai] PROCESS STOPPED")
+                        return
+                    text = clean_text(subtitles_cache[idx].content)
+                    if not text:
+                        skipped += 1
+                        processed += 1
+                        update_progress(processed, total)
+                        continue
+                    target = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.mp3")
+                    try:
+                        if os.path.isfile(target):
+                            os.remove(target)
+                    except Exception:
+                        pass
+                    try:
+                        asyncio.run(regenerate_line(idx, text))
+                    except Exception as e:
+                        log(f"[Phân vai] ❌ Lỗi dòng {idx}: {e}")
+                    if os.path.isfile(target):
+                        done += 1
+                    else:
+                        fail += 1
+                    processed += 1
+                    update_progress(processed, total)
+            log(f"[Phân vai] ━━━ Hoàn tất: {done} OK, {fail} lỗi, "
+                f"{skipped} rỗng / {total} dòng ━━━")
+            log("[Phân vai] 💡 Bấm 'Merge FFmpeg' để ghép thành final.")
+            if done and not fail:
+                app.after(0, show_fireworks)
+        finally:
+            _MULTIVOICE_RUNNING[0] = False
+            app.after(0, lambda: set_mode("tts_done"))
+
+    threading.Thread(target=_run, daemon=True).start()
+
+def open_casting_dialog():
+    """Cửa sổ quản lý luật phân vai: từ dòng – đến dòng – hồ sơ giọng."""
+    if not subtitles_cache:
+        msg.showinfo("Phân vai", "Hãy Load SRT trước để biết tổng số dòng.")
+        return
+    profiles = sorted(_voice_profiles_load().keys())
+    if not profiles:
+        msg.showinfo("Phân vai",
+                     "Chưa có hồ sơ giọng nào. Vào tab Giọng nói → cấu hình → "
+                     "'💾 Lưu giọng hiện tại' để tạo hồ sơ trước.")
+        return
+    total = len(subtitles_cache)
+    win = ctk.CTkToplevel(app)
+    win.title("🎭 Phân vai đa giọng (Multi-voice)")
+    win.geometry("560x520")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    ctk.CTkLabel(win, text=f"SRT đang nạp: {total} dòng (đánh số 0..{total-1})",
+                 font=("Arial", 13, "bold")).pack(pady=(10, 2))
+    ctk.CTkLabel(win, text="Mỗi luật: từ dòng – đến dòng (gồm cả hai) → hồ sơ giọng.\n"
+                           "Dòng không thuộc luật nào sẽ dùng giọng đang chọn trên tab Giọng nói.",
+                 font=("Arial", 11), justify="left").pack(pady=(0, 6))
+
+    rows_frame = ctk.CTkScrollableFrame(win, height=300)
+    rows_frame.pack(fill="both", expand=True, padx=10, pady=4)
+    _rule_widgets = []
+
+    def _add_rule_row(frm=0, to=0, profile=None):
+        row = ctk.CTkFrame(rows_frame, fg_color="transparent")
+        row.pack(fill="x", pady=3)
+        ctk.CTkLabel(row, text="Từ", font=("Arial", 12)).pack(side="left", padx=(2, 2))
+        v_from = ctk.StringVar(value=str(frm))
+        ctk.CTkEntry(row, textvariable=v_from, width=60).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(row, text="Đến", font=("Arial", 12)).pack(side="left", padx=(0, 2))
+        v_to = ctk.StringVar(value=str(to))
+        ctk.CTkEntry(row, textvariable=v_to, width=60).pack(side="left", padx=(0, 6))
+        v_prof = ctk.StringVar(value=profile or profiles[0])
+        ctk.CTkOptionMenu(row, variable=v_prof, values=profiles, width=170).pack(side="left", padx=(0, 6))
+        def _del():
+            row.destroy()
+            _rule_widgets.remove(entry)
+        ctk.CTkButton(row, text="✕", width=30, fg_color="#8a3344",
+                      hover_color="#a04055", command=_del).pack(side="left")
+        entry = (v_from, v_to, v_prof)
+        _rule_widgets.append(entry)
+
+    # Nạp lại các luật đã có
+    for r in CASTING_RULES:
+        _add_rule_row(r["from"], r["to"], r["profile"])
+    if not CASTING_RULES:
+        _add_rule_row(0, max(0, total - 1), profiles[0])
+
+    btn_row = ctk.CTkFrame(win, fg_color="transparent")
+    btn_row.pack(fill="x", padx=10, pady=(4, 8))
+    ctk.CTkButton(btn_row, text="➕ Thêm luật", command=lambda: _add_rule_row(0, 0, profiles[0]),
+                  width=120).pack(side="left", padx=4)
+
+    def _save_rules():
+        new_rules = []
+        for v_from, v_to, v_prof in _rule_widgets:
+            try:
+                a = int(v_from.get()); b = int(v_to.get())
+            except ValueError:
+                continue
+            a = max(0, min(a, total - 1))
+            b = max(0, min(b, total - 1))
+            if a > b:
+                a, b = b, a
+            new_rules.append({"from": a, "to": b, "profile": v_prof.get()})
+        CASTING_RULES.clear()
+        CASTING_RULES.extend(new_rules)
+        log(f"[Phân vai] Đã lưu {len(new_rules)} luật phân vai.")
+        return new_rules
+
+    def _save_and_close():
+        _save_rules()
+        win.destroy()
+
+    def _save_and_run():
+        _save_rules()
+        win.destroy()
+        run_multivoice_batch()
+
+    ctk.CTkButton(btn_row, text="💾 Lưu", command=_save_and_close, width=100).pack(side="left", padx=4)
+    ctk.CTkButton(btn_row, text="🎬 Lưu & Chạy lồng tiếng", command=_save_and_run,
+                  fg_color="#2fa572", hover_color="#37b87f", width=190).pack(side="left", padx=4)
 
 
 def ask_pdf_chunk_edit():
@@ -12868,8 +13643,33 @@ btn_stop.pack(side="top", fill="x", padx=4, pady=4)
 btn_restart = ctk.CTkButton(_g1_ctrl, text="↺ Start Over", command=restart_tts, height=36, font=("Arial", 13), fg_color="#414b5a", hover_color="#4c5667")
 btn_restart.pack(side="top", fill="x", padx=4, pady=4)
 
+btn_cast = ctk.CTkButton(_g1_create, text="🎭 Phân vai (đa giọng)", command=open_casting_dialog,
+                         height=36, font=("Arial", 13), fg_color="#7c5cff", hover_color="#9277ff")
+btn_cast.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_restore = ctk.CTkButton(_g1_create, text="↩ Khôi phục phiên", command=restore_session,
+                            height=36, font=("Arial", 13))
+btn_restore.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_queue = ctk.CTkButton(_g1_create, text="📚 Hàng đợi (nhiều SRT)", command=open_queue_dialog,
+                          height=36, font=("Arial", 13))
+btn_queue.pack(side="top", fill="x", padx=4, pady=4)
+
 btn_merge = ctk.CTkButton(_g1_create, text="Merge FFmpeg", command=start_merge, height=36, font=("Arial", 13))
 btn_merge.pack(side="top", fill="x", padx=4, pady=4)
+
+# Tùy chọn Merge: căn giữa khe lặng + định dạng output (mp3/wav/m4a/opus)
+_merge_opt_row = ctk.CTkFrame(_g1_create, fg_color="transparent")
+_merge_opt_row.pack(side="top", fill="x", padx=4, pady=(0, 4))
+merge_center_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(_merge_opt_row, text="Căn giữa khe lặng",
+                variable=merge_center_var, font=("Arial", 12),
+                width=140).pack(side="left", padx=(2, 8))
+ctk.CTkLabel(_merge_opt_row, text="Ra:", font=("Arial", 12)).pack(side="left", padx=(0, 3))
+merge_format_var = ctk.StringVar(value="mp3")
+ctk.CTkOptionMenu(_merge_opt_row, variable=merge_format_var,
+                  values=["mp3", "wav", "m4a", "opus"], width=80,
+                  font=("Arial", 12)).pack(side="left")
 
 btn_open_se = ctk.CTkButton(_g1_io, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="top", fill="x", padx=4, pady=4)
@@ -12878,6 +13678,16 @@ btn_open_se.bind("<Leave>", lambda e: btn_open_se.configure(fg_color=["#3B8ED0",
 
 btn_edit = ctk.CTkButton(_g1_io, text="Regenerate Line", command=ask_line_edit, height=36, font=("Arial", 13))
 btn_edit.pack(side="top", fill="x", padx=4, pady=4)
+
+# QC Dashboard: luôn bật (tự khóa khi đang chạy) — giống pattern nút Dịch
+btn_qc_report = ctk.CTkButton(_g1_io, text="📋 Báo cáo QC", command=qc_show_report,
+                              height=36, font=("Arial", 13))
+btn_qc_report.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_qc_regen = ctk.CTkButton(_g1_io, text="🔁 Regen dòng lỗi", command=qc_regen_bad_lines,
+                             height=36, font=("Arial", 13),
+                             fg_color="#b3771d", hover_color="#d18a22")
+btn_qc_regen.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_exit = ctk.CTkButton(_left_col, text="🚪 Logout", command=lambda: on_logout(), height=36, font=("Arial", 13), fg_color="#9a3b3b", hover_color="#cc0000")
 btn_exit.pack(side="bottom", fill="x", padx=10, pady=(6, 2))
@@ -13099,6 +13909,7 @@ translate_provider_var  = ctk.StringVar(value=TRANSLATE_PROVIDER)
 translate_context_var   = ctk.StringVar(value="")
 translate_bilingual_var = ctk.BooleanVar(value=False)
 translate_pdf_format_var = ctk.StringVar(value="txt")
+translate_then_tts_var = ctk.BooleanVar(value=False)   # Dịch SRT xong → tự lồng tiếng luôn
 
 ctk.CTkLabel(_g4_opt, text="Dịch (AI):", font=("Arial", 12)).pack(side="left", padx=(4, 2))
 translate_provider_menu = ctk.CTkOptionMenu(
@@ -13122,6 +13933,11 @@ translate_pdf_format_menu = ctk.CTkOptionMenu(
     _g4_opt, variable=translate_pdf_format_var, values=["txt", "pdf", "docx"],
     width=80, font=("Arial", 12))
 translate_pdf_format_menu.pack(side="left", padx=(0, 6))
+
+translate_then_tts_check = ctk.CTkCheckBox(
+    _g4_opt, text="Dịch xong đọc luôn (SRT)", variable=translate_then_tts_var,
+    width=170, font=("Arial", 12))
+translate_then_tts_check.pack(side="left", padx=(0, 6))
 
 btn_translate_srt = ctk.CTkButton(_g4_run, text="Dịch SRT", command=translate_srt, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
 btn_translate_srt.pack(side="top", fill="x", padx=4, pady=4)
@@ -14698,6 +15514,7 @@ def show_splash_then_auth():
         # Kiểm tra phụ thuộc runtime hệ thống (VC++/.NET/CUDA/GPU/ffmpeg/feature)
         app.after(200, _report_startup_diagnostics)
         app.after(100, run_auth)
+        app.after(1500, _session_check_on_startup)
 
     splash.after(3000, _close_splash)
     start_bg_music("chungtakhongthuocvenhau.wav")

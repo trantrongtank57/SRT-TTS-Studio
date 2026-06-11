@@ -170,7 +170,7 @@ Two ways to leave the running app — both live near the bottom of the file:
 
 ## Codebase Structure
 
-`apppp_integrated.py` (~14,740 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
+`apppp_integrated.py` (~15,550 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
 
 > **Line anchors below are approximate** — the single file grows with every feature, so `@NNNN` references drift. Treat them as hints; locate symbols by name (`grep -n "^def name" apppp_integrated.py`) rather than trusting the exact number.
 
@@ -412,13 +412,35 @@ Branch logic inside both (matching the batch flows): `VOXCPM_ENABLED` → `_voxc
 
 When adding a new per-line/per-chunk regenerate, register its button in `_pdf_btns`/`_srt_btns` (auto-disable sweep) AND the explicit disable spots in the SRT/`tts_running` modes (those toggle PDF buttons individually, not via the list).
 
+## Workflow features (Voice Profiles · Casting · QC Dashboard · Queue · Session · Preview)
+
+A cluster of features added 2026-06, all built on the existing single-line/batch primitives. They follow the **translate-button pattern**: always enabled, NOT registered in any `set_mode` disable sweep, self-locked while running via a `[False]` mutable flag (`_QC_REGEN_RUNNING` / `_MULTIVOICE_RUNNING` / `_QUEUE_RUNNING`).
+
+| Feature | Entry | Key functions | State file |
+|---|---|---|---|
+| **Voice Profiles** ("Hồ sơ giọng") | dropdown + 💾/🗑 row at the bottom of `voice_frame` | `_voice_profile_capture()` snapshots ALL voice vars + active engine; `_voice_profile_apply(p)` restores them and re-toggles the 5 engine panels + `_apply_voice_exclusivity()` | `voice_profiles.json` (separate file so `_save_settings()` can't wipe it) |
+| **Multi-voice casting** ("🎭 Phân vai") | `btn_cast` → `open_casting_dialog()` | `CASTING_RULES` = list of `{"from","to","profile"}` (0-based, last match wins, `_casting_resolve`); `run_multivoice_batch()` groups lines by profile (minimizes engine switches), applies each profile via `_apply_profile_blocking()` (main-thread + `threading.Event`), then per line deletes the mp3 and `asyncio.run(regenerate_line(...))` | — (in-memory only) |
+| **QC Dashboard** | `btn_qc_report` / `btn_qc_regen` (SRT page, io column) | `_qc_scan_bad_files()` scans `OUTPUT_DIR` for `_QC_BAD_RE` (`(line_|pdf_line_)NNNN_(novoice|toolong|tooshort).mp3` — i.e. `_rename_bad_audio` output, works across app restarts); `qc_show_report()` summarizes per reason; `qc_regen_bad_lines()` deletes each bad file then re-runs `regenerate_line`/`regenerate_pdf_line` (needs the matching SRT/PDF loaded — checks and refuses otherwise) | — |
+| **Queue** ("📚 Hàng đợi") | `btn_queue` → `open_queue_dialog()` | `QUEUE_FILES` list; `run_queue_batch(do_merge)` loops: per SRT sets `SRT_FILE`/`OUTPUT_DIR=<name>_tts/`, loads subs via `app.after` + Event wait, then `_dispatch_tts_blocking()` (same engine dispatch as `start_tts` but synchronous, for the queue's worker thread) and optionally `merge_ffmpeg()` | — |
+| **Session resume** | `btn_restore` + startup hint | `_session_save()` called from `load_subtitles` / `choose_output_folder` / `start_tts`; `_session_check_on_startup()` (scheduled `app.after(1500,...)` next to `run_auth`) logs the previous file + done-count; `restore_session()` reloads SRT+OUTPUT_DIR with `current_index=0` (the batch loop's existing SKIP-existing-files logic does the actual resume) | `session.json` |
+| **Quick TTS preview** ("🎧 Nghe thử") | button in `_qt_row2` | `_quick_tts_run(preview=True)` → writes `%TEMP%\srt_tts_preview.mp3`, plays via `_play_audio_file()` (winmm MCI `mpegvideo`), no save dialog / fireworks / explorer | — |
+
+Notes:
+- `voice_profiles.json` / `session.json` live next to `settings.json` (derived from `_SETTINGS_FILE` dirname). Do NOT fold them into `settings.json` — `_save_settings()` rewrites that file wholesale.
+- Casting and QC-regen spawn one helper subprocess per line for local engines (inherent to the single-line path) — slow but correct; the speed cost is expected, not a bug.
+- `merge_ffmpeg` reads `merge_center_var`/`merge_format_var` (defined in the UI block ~13180) at call time — safe because merges only run post-mainloop.
+
 ## Timeline Dubbing — anti voice-overlap (`merge_ffmpeg`)
 
 `merge_ffmpeg()` (~9897) is the **only** timeline-merge path: it places each `line_{i:04d}.mp3` at its subtitle start via `adelay={start_ms}` then `amix`-es all together into `final.mp3`. (PDF merge is a plain sequential `concat` — no timeline, no overlap problem.)
 
 **Root overlap bug (fixed):** TTS audio (esp. Vietnamese / Edge TTS) is often longer than a subtitle's time slot, so `amix` overlays adjacent lines → "đè giọng / chồng giọng" (voice stacking) + timeline drift.
 
-**Fix — time-stretch to fit the slot:** for each line, `slot = next_sub.start − this.start`; if the real duration (`_probe_duration_sec` via ffprobe) exceeds `slot − _DUB_GAP_MS`, prepend an `atempo` chain (`_atempo_chain`, capped at `_DUB_MAX_SPEED = 2.0×`) before `adelay`. Each line then ends before the next begins → no overlap, start times preserved. Lines that still overflow at max speed (or whose source subtitles already overlap) are collected and logged with their 1-based line numbers so the user can fix the SRT timing/text. `_DUB_MAX_SPEED` / `_DUB_GAP_MS` are module-level constants just above `merge_ffmpeg`.
+**Fix — time-stretch to fit the slot:** for each line, `slot = next_sub.start − this.start`; if the real duration (`_probe_duration_sec` via ffprobe) exceeds `slot − _DUB_GAP_MS`, prepend an `atempo` chain (`_atempo_chain`, capped at `_DUB_MAX_SPEED = 2.0×`) before `adelay`. Each line then ends before the next begins → no overlap, start times preserved. Lines that still overflow at max speed (or whose source subtitles already overlap) are collected and logged with their 1-based line numbers so the user can fix the SRT timing/text. `_DUB_MAX_SPEED` / `_DUB_GAP_MS` / `_DUB_CENTER_MAX_S` are module-level constants just above `merge_ffmpeg`.
+
+**Silence-centering (optional, `merge_center_var` checkbox "Căn giữa khe lặng")**: when a line is much *shorter* than its slot (`target − actual > 0.3s`), its `adelay` start is pushed forward by `min((target−actual)/2, _DUB_CENTER_MAX_S = 0.8s)` so the voice sits centered in the silence gap instead of hugging the slot start. Off by default (exact subtitle-start sync).
+
+**Output format (`merge_format_var` dropdown "Ra:")**: `_MERGE_FORMATS` maps `mp3/wav/m4a/opus` → (`final.<ext>`, codec args) and is substituted into the generated `run_ffmpeg.bat`. Other features that default to `final.mp3` (Mux, Edit Studio "Load Audio File") still work via their file pickers.
 
 ## Mux Audio → Video (`_run_mux_thread`)
 
@@ -467,7 +489,7 @@ All long-running helpers stream progress so the UI bar tracks them. Use `subproc
 
 ## Settings System (`settings.json`)
 
-Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Lives next to the exe.
+Loaded at startup via `_load_settings()`, saved via `show_settings_dialog()`. Lives next to the exe. Two sibling state files live in the same directory but are deliberately **separate** (because `_save_settings()` rewrites `settings.json` wholesale): `voice_profiles.json` (Voice Profiles) and `session.json` (Resume session) — see the Workflow-features section.
 
 | Key | Global | Overrides |
 |---|---|---|
@@ -501,6 +523,8 @@ The "translate" page — translate SRT / PDF / **Word `.docx` / `.txt`** to natu
 | `translate_doc()` | Translates **Word `.docx` / `.txt`** input. `.docx` → paragraphs via `python-docx`; `.txt` → non-empty lines via `_read_text_smart` (handles UTF-16/BOM). Same translate + `_write_translated_doc` output pipeline, format dropdown, pause/stop, and `_reveal_output` as `translate_pdf`. Button `btn_translate_doc` in the "translate" page |
 
 **Bilingual mode** (`translate_bilingual_var` checkbox): SRT line becomes `original\ntranslated`; PDF writes both. **Context field** (`translate_context_var`) feeds the system prompt for consistent pronouns/xưng hô — the single biggest quality lever for VN subtitles (online providers only).
+
+**Translate→TTS chaining** (`translate_then_tts_var` checkbox "Dịch xong đọc luôn (SRT)"): on successful (non-stopped) `translate_srt()`, `_chain_translate_to_tts(out_path)` runs on the main thread — sets `SRT_FILE` to the `_vi.srt`, resets `current_index`, `load_subtitles(force_select=False)`, `set_mode("srt")`, then `start_tts()`. Warns (but proceeds) if bilingual is on, since TTS would read both languages.
 
 ### Pause / Resume / Stop (translate controls)
 
