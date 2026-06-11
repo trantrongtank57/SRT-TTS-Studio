@@ -53,7 +53,7 @@ for exe in ("output/Portable/SRT_TTS_Studio_Portable.exe",
     hits = [n for n in names if "apppp_integrated" in n]
     assert hits == ["apppp_integrated.cp314-win_amd64.pyd"], (exe, hits)  # ONLY the .pyd, no .pyc
 ```
-Two repo-root helper scripts automate the post-build checks (re-run after every build): **`_verify_security.py`** verifies all 3 onefile exes (only `.pyd` in the CArchive, no `.pyc`) AND the onedir build (`.pyd` is a **loose file** in `dist\SRT_TTS_Studio\_internal\`, NOT in a CArchive — so it's checked by file presence + "no leaked `apppp_integrated*.pyc`", not via `CArchiveReader`), plus that `SRT_TTS_Studio_Secured.exe.integrity` matches the freshly-built exe's SHA-256. **`_audit_deps.py`** confirms every external dependency is resolvable *the way the app resolves it* (e.g. `voxcpm_env` is found by walking up from the VoxCPM model dir, not just beside the exe) and reports what `output\Portable\` still needs hand-copying for another machine.
+Two repo-root helper scripts automate the post-build checks (re-run after every build): **`_verify_security.py`** verifies all 3 onefile exes (only `.pyd` in the CArchive, no `.pyc`) AND the onedir build (`.pyd` is a **loose file** in `dist\SRT_TTS_Studio\_internal\`, NOT in a CArchive — so it's checked by file presence + "no leaked `apppp_integrated*.pyc`", not via `CArchiveReader`), plus that `SRT_TTS_Studio_Secured.exe.integrity` matches the freshly-built exe's SHA-256. **`_audit_deps.py`** confirms every external dependency is resolvable *the way the app resolves it* (e.g. `voxcpm_env` is found by walking up from the VoxCPM model dir, not just beside the exe) and reports what `output\Portable\` still needs hand-copying for another machine. **`_strings_audit.py`** is a manual forensic check — it scans the built `.pyd` (`dist\SRT_TTS_Studio\_internal\apppp_integrated.cp314-win_amd64.pyd`) for leaked ASCII runs (function names, the source filename, secret-like literals) to confirm Cython left nothing recoverable; run it ad-hoc after a build when auditing protection.
 
 **Cython is stricter than CPython — `py_compile` passing does NOT mean the build will compile.** The one that bites: a guarded reference to a never-assigned module global, e.g. `_OK if '_OK' in globals() else default`, is valid Python (the guard is runtime) but Cython rejects it at **compile time** with `undeclared name not builtin: _OK` and aborts step 5. Use `globals().get("_OK", default)` instead (never names the symbol). (`'__file__' in globals()` is fine — Cython knows `__file__`.) Always run the `cythonize(...)` one-liner above before kicking off a 10-minute `build_all.bat`.
 
@@ -182,7 +182,7 @@ Two ways to leave the running app — both live near the bottom of the file:
 
 ## Codebase Structure
 
-`apppp_integrated.py` (~15,550 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
+`apppp_integrated.py` (~16,400 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
 
 > **Line anchors below are approximate** — the single file grows with every feature, so `@NNNN` references drift. Treat them as hints; locate symbols by name (`grep -n "^def name" apppp_integrated.py`) rather than trusting the exact number.
 
@@ -217,6 +217,17 @@ The UI was **redesigned** into a sidebar-navigation + paged-workspace layout (~l
 - **Console toggle** — `toggle_console()` (~3756) hides/shows the `_vpane` row and reallocates grid weight to the function area.
 
 **To add a new feature button/group:** call `_make_section(..., ws="<page>")` to get a card body (pick the page it belongs to, or add a new key to `_WS_KEYS` + an entry to `_WS_NAV_ITEMS`), then pack widgets into `_sec_row`/`_sec_col` frames within it. **Widget variable names were kept identical across the redesign** — so existing handlers and `set_mode()` did not need changes.
+
+### Global title-bar controls (Pause/Resume/Stop/Start-Over + Output) — `_CTRL_GROUPS` / `_WS_OUTPUT`
+
+The per-page Pause/Resume/Stop/Start-Over rows and the per-page "Chọn/Mở Output" pairs were consolidated into **global icon buttons on the title bar** (`g_btn_pause`/`g_btn_resume`/`g_btn_stop`/`g_btn_restart`, `g_btn_choose_out`/`g_btn_open_out`, defined ~line 1395–1460). The original per-page buttons **still exist** — they're just `pack_forget`-hidden (~line 14676) and kept alive so `set_mode()` and the `pause_tts`/`_videocr_pause`/etc. logic need no changes. The global buttons are thin dispatchers over them:
+
+- **`_CTRL_GROUPS`** (populated ~line 14658, `[:]`-assigned after all `btn_` names are bound) — a list of dicts, one per running-job type (SRT TTS, Doc→Audio, Video OCR, Video STT, Video tools). Each maps `pause`/`resume`/`stop`/`restart` → the real handler fn and `pause_btn`/…/`restart_btn` → the (hidden) per-page button used to read enabled-state. `restart` is `None` for jobs with no Start-Over.
+- **`_g_dispatch(action, btn_key)`** finds the **first group whose hidden button is `state=="normal"`** (i.e. the job currently running) and calls its handler. `_g_pause/_g_resume/_g_stop/_g_restart` wrap it.
+- **`_sync_global_controls()`** enables each global button iff `_CURRENT_MODE` is in `_RUNNING_MODES` (`tts_running`, `videocr_running`, `video_stt_running`, `compressing`, `muxing`) AND some group's matching hidden button is enabled. `set_mode()` sets `_CURRENT_MODE` and calls it at the end; it's also called once at startup.
+- **`_WS_OUTPUT`** (populated ~line 14758) maps a workspace page key → `(choose_fn, open_fn)`; `_g_choose_output`/`_g_open_output` dispatch by the **current page** (`_ws_current["key"]`), and `_sync_output_buttons()` (called from `show_workspace`) enables/disables the 2 global buttons per page. Only pages with one clear output are registered (`tts`/`doc`/`textaudio`/`translate`); Video/Extract pages keep their own per-function Output buttons.
+
+**When adding a new long-running job:** add a dict to `_CTRL_GROUPS` mapping its pause/resume/stop/restart handlers + the (possibly hidden) per-page buttons, add its running-mode to `_RUNNING_MODES`, and (if it has a single output dir) register its page in `_WS_OUTPUT`. The translate controls (`btn_tr_*`) are deliberately **separate** — they're not in `_CTRL_GROUPS` because translate is decoupled from `set_mode`.
 
 ### set_mode() — UI state machine
 `set_mode(mode)` is the single function that enables/disables all buttons and controls. It must be called from the main thread (use `app.after(0, lambda: set_mode("..."))` from worker threads). Every new feature needs:
@@ -499,7 +510,7 @@ Toolbar load buttons: **Load SRT**, **Load Video**, **Load Audio Folder** (per-l
 | `pdf_helper.py` | any python with pypdf | PDF → JSON chunks |
 | `srt_align_helper.py` | voxcpm_env python | VAD-based SRT timing alignment |
 | `videocr_helper.py` | any python | Video OCR wrapper |
-| `video_stt_helper.py` | voxcpm_env python | faster-whisper STT (stdout: `PROGRESS:N:M`, `DONE:path`) |
+| `video_stt_helper.py` | voxcpm_env python | faster-whisper STT (stdout: `PROGRESS:N:M`, `DONE:path`). Helper always writes `_stt.srt` + `_stt.txt`; the app's `_stt_export_format(srt, txt, fmt, log_cb)` (@~6940) builds the user-chosen output format (`srt`/`txt`/`docx`/`pdf`) from the transcript TXT (Word via `python-docx`, PDF via `fpdf2`+`_find_unicode_font`) and returns the main file to open/preview. Video-STT also has pause/resume/stop (`_video_stt_pause`/`resume`/`stop`, wired into the global `_CTRL_GROUPS`) |
 | `translate_helper.py` | voxcpm_env python (torch+transformers+sentencepiece) | Offline translation → Vietnamese (NLLB/M2M/envit5/generic seq2seq auto-detect). Input JSON file `{"segments":[...]}`, stdout `PROGRESS:N:M` + `DONE:path` (+ `STOPPED`/`LOAD_ERR`/`BATCH_ERR`), JSON out `{"translations":[...], "stopped":bool}`. Reads `PAUSE`/`RESUME`/`STOP` control lines on **stdin** |
 
 **Onefile exes embed all 12 `.py` files** via `datas` in the specs — `sys._MEIPASS` is checked first so no loose `.py` files are needed next to the exe. Models (`hubert_base.pt`, `rmvpe.pt`) and `rvc_env\` are NOT embedded (too large) — they must be in the same directory as the exe.

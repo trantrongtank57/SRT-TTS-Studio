@@ -875,6 +875,11 @@ COMPRESS_OUTPUT_DIR = ""  # rỗng = dùng cùng thư mục file gốc
 MUX_VIDEO_FILE = ""       # video nguồn để ghép audio final
 MUX_AUDIO_FILE = ""       # file audio final cần ghép vào video
 MUX_OUTPUT_DIR = ""       # rỗng = dùng cùng thư mục video gốc
+# Điều khiển Công cụ Video (Nén / Ghép audio): tạm dừng / tiếp tục / dừng hẳn
+VIDEOTOOL_PAUSED = False
+VIDEOTOOL_STOP   = False
+_VIDEOTOOL_PROC  = None    # tiến trình ffmpeg đang chạy (nén hoặc ghép)
+_VIDEOTOOL_OUT   = ""      # file output đang tạo (để xóa khi dừng hẳn)
 def _install_dirs():
     """Thư mục gốc để dò phụ thuộc external (voxcpm_env, model VoxCPM, VideOCR CLI)
     nằm CẠNH app — ưu tiên thư mục exe (khi đã build) / thư mục script, rồi các parent.
@@ -915,6 +920,10 @@ VIDEOCR_CLI_DIR = _auto_find_dir(
 
 STT_VIDEO_FILE = ""   # video/audio đang chờ STT
 STT_OUTPUT_DIR = ""   # thư mục lưu kết quả STT
+# Điều khiển STT (Giọng nói → Văn bản): tạm dừng / tiếp tục / dừng hẳn
+VIDEO_STT_PAUSED = False
+VIDEO_STT_STOP   = False
+_VIDEO_STT_PROC  = None   # tiến trình STT đang chạy
 
 # Đường dẫn do user cấu hình — ghi đè auto-discovery
 SUBTITLE_EDIT_PATH  = ""   # path tới SubtitleEdit.exe; rỗng = tự tìm
@@ -1371,6 +1380,119 @@ btn_toggle_sidebar = ctk.CTkButton(
     text_color="#c7d0db", command=toggle_sidebar,
 )
 btn_toggle_sidebar.place(relx=0.0, rely=0.0, anchor="nw", x=8, y=11)
+
+# ── Bộ điều khiển CHUNG (Pause / Resume / Stop / Start Over) trên thanh tiêu đề ──
+# Gom các nút Tạm dừng/Tiếp tục/Dừng hẳn/Bắt đầu lại vốn lặp lại ở nhiều trang về
+# 4 nút biểu tượng duy nhất. Chúng tự điều phối tới job đang chạy
+# (TTS/OCR/STT/Nén/Ghép) và phản chiếu trạng thái bật/tắt từ các nút per-page
+# (đã ẩn). Danh sách job nạp vào _CTRL_GROUPS ở cuối phần dựng UI.
+_CTRL_GROUPS = []
+_CURRENT_MODE = "reset"   # mode hiện tại (set_mode cập nhật) — để biết job có đang chạy
+# Các mode mà 1 job đang thực sự CHẠY (Pause/Resume/Stop chỉ có nghĩa khi đang chạy)
+_RUNNING_MODES = {"tts_running", "videocr_running", "video_stt_running",
+                  "compressing", "muxing"}
+
+# ── 2 nút CHỌN / MỞ OUTPUT chung (theo trang đang mở) ────────────────────────
+# Gom các cặp "Chọn Output / Mở Output" lặp ở nhiều trang về 2 nút biểu tượng.
+# Điều phối theo TRANG workspace đang hiển thị (_ws_current["key"]).
+_WS_OUTPUT = {}   # ws_key -> (choose_fn|None, open_fn|None); nạp ở cuối phần UI
+
+def _g_choose_output():
+    fns = _WS_OUTPUT.get(_ws_current.get("key", ""))
+    if fns and fns[0]:
+        fns[0]()
+
+def _g_open_output():
+    fns = _WS_OUTPUT.get(_ws_current.get("key", ""))
+    if fns and fns[1]:
+        fns[1]()
+
+def _sync_output_buttons():
+    """Bật/tắt 2 nút Output chung theo trang hiện tại (có hàm Output hay không)."""
+    fns = _WS_OUTPUT.get(_ws_current.get("key", ""), (None, None))
+    try:
+        g_btn_choose_out.configure(state="normal" if fns[0] else "disabled")
+        g_btn_open_out.configure(state="normal" if fns[1] else "disabled")
+    except Exception:
+        pass
+
+def _sync_global_controls():
+    """Bật/tắt 4 nút điều khiển chung dựa trên trạng thái nút per-page tương ứng.
+    Pause/Resume/Stop chỉ bật khi đang ở mode CHẠY; Start Over bật bất cứ khi nào
+    nút Bắt đầu lại của TTS đang khả dụng (sau khi chạy xong/đã dừng)."""
+    running = _CURRENT_MODE in _RUNNING_MODES
+    def _any(key):
+        for g in _CTRL_GROUPS:
+            b = g.get(key)
+            if b is not None and str(b.cget("state")) == "normal":
+                return True
+        return False
+    try:
+        g_btn_pause.configure(state="normal" if (running and _any("pause_btn")) else "disabled")
+        g_btn_resume.configure(state="normal" if (running and _any("resume_btn")) else "disabled")
+        g_btn_stop.configure(state="normal" if (running and _any("stop_btn")) else "disabled")
+        g_btn_restart.configure(state="normal" if _any("restart_btn") else "disabled")
+    except Exception:
+        pass
+
+def _g_dispatch(action_key, btn_key):
+    """Gọi hàm điều khiển của job đang chạy (nút per-page tương ứng đang 'normal')."""
+    for g in _CTRL_GROUPS:
+        b = g.get(btn_key)
+        fn = g.get(action_key)
+        if b is not None and fn is not None and str(b.cget("state")) == "normal":
+            try:
+                fn()
+            except Exception as _e:
+                try:
+                    log(f"[Điều khiển] {_e}")
+                except Exception:
+                    pass
+            break
+    app.after(40, _sync_global_controls)
+
+def _g_pause():   _g_dispatch("pause",   "pause_btn")
+def _g_resume():  _g_dispatch("resume",  "resume_btn")
+def _g_stop():    _g_dispatch("stop",    "stop_btn")
+def _g_restart(): _g_dispatch("restart", "restart_btn")
+
+g_btn_pause = ctk.CTkButton(
+    _root, text="⏸", width=34, height=28, corner_radius=8,
+    font=("Arial", 15), fg_color="#B8860B", hover_color="#946c09",
+    text_color="#ffffff", state="disabled", command=_g_pause)
+g_btn_pause.place(relx=0.0, rely=0.0, anchor="nw", x=100, y=11)
+
+g_btn_resume = ctk.CTkButton(
+    _root, text="▶", width=34, height=28, corner_radius=8,
+    font=("Arial", 15), fg_color="#1E6B3C", hover_color="#145229",
+    text_color="#ffffff", state="disabled", command=_g_resume)
+g_btn_resume.place(relx=0.0, rely=0.0, anchor="nw", x=138, y=11)
+
+g_btn_stop = ctk.CTkButton(
+    _root, text="⏹", width=34, height=28, corner_radius=8,
+    font=("Arial", 15), fg_color="#8B2020", hover_color="#5e1616",
+    text_color="#ffffff", state="disabled", command=_g_stop)
+g_btn_stop.place(relx=0.0, rely=0.0, anchor="nw", x=176, y=11)
+
+g_btn_restart = ctk.CTkButton(
+    _root, text="↺", width=34, height=28, corner_radius=8,
+    font=("Arial", 16), fg_color="#414b5a", hover_color="#4c5667",
+    text_color="#ffffff", state="disabled", command=_g_restart)
+g_btn_restart.place(relx=0.0, rely=0.0, anchor="nw", x=214, y=11)
+
+# 2 nút Output chung (cách nhóm điều khiển 1 khoảng nhỏ). 📁 = chọn thư mục lưu,
+# 📂 = mở thư mục lưu — khớp đúng biểu tượng đã quen ở các nút per-page.
+g_btn_choose_out = ctk.CTkButton(
+    _root, text="📁", width=34, height=28, corner_radius=8,
+    font=("Arial", 15), fg_color="#2f5d8a", hover_color="#3a6ea3",
+    text_color="#ffffff", state="disabled", command=_g_choose_output)
+g_btn_choose_out.place(relx=0.0, rely=0.0, anchor="nw", x=262, y=11)
+
+g_btn_open_out = ctk.CTkButton(
+    _root, text="📂", width=34, height=28, corner_radius=8,
+    font=("Arial", 15), fg_color="#2f5d8a", hover_color="#3a6ea3",
+    text_color="#ffffff", state="disabled", command=_g_open_output)
+g_btn_open_out.place(relx=0.0, rely=0.0, anchor="nw", x=300, y=11)
 
 # Chip trạng thái GPU -> đặt ở CHÂN SIDEBAR TRÁI (gọn, không che tiêu đề)
 try:
@@ -2700,6 +2822,10 @@ _quick_tts_output_var = ctk.StringVar(value="")
 # xong muộn sẽ bị bỏ qua thay vì phát đè lên audio của lượt mới.
 _QT_PREVIEW_SEQ = [0]
 
+# Điều khiển Gen Audio (Text → Audio): tiến trình helper đang chạy + cờ dừng
+_QT_GEN_PROC = [None]    # subprocess engine đang chạy (để Dừng Gen)
+_QT_GEN_STOP = [False]   # cờ yêu cầu dừng tạo audio
+
 # ── Bộ gõ Telex tích hợp ──────────────────────────────────────────────────────
 # Unikey/EVKey hook đôi khi không tới được cửa sổ Tk (UIPI/hook bị chặn) → gõ
 # "chaof" ra nguyên chữ thay vì "chào". Engine Telex thuần Python dưới đây
@@ -2926,10 +3052,17 @@ def _qt_audio_send(*cmd):
             while True:
                 c = _QT_AUDIO_Q[0].get()
                 try:
-                    _mci('close qt_preview')
                     if c[0] == "play":
+                        _mci('close qt_preview')
                         _mci(f'open "{c[1]}" type mpegvideo alias qt_preview')
                         _mci('play qt_preview')
+                    elif c[0] == "stop":
+                        _mci('close qt_preview')
+                    elif c[0] == "pause":
+                        _mci('pause qt_preview')
+                    elif c[0] == "resume":
+                        # resume từ vị trí đã tạm dừng (play cũng tiếp tục được)
+                        _mci('resume qt_preview')
                 except Exception as e:
                     log(f"[Nghe thử] ❌ Không phát được audio: {e}")
 
@@ -2945,6 +3078,52 @@ def _quick_tts_stop_preview():
     _QT_PREVIEW_SEQ[0] += 1  # lượt đang gen (nếu có) thành stale → sẽ không phát
     _qt_preview_close()
     log("[Nghe thử] ⏹ Đã dừng phát")
+
+def _quick_tts_pause_preview():
+    """Nút ⏸ Tạm dừng nghe: tạm dừng audio Nghe thử đang phát."""
+    _qt_audio_send("pause")
+    log("[Nghe thử] ⏸ Tạm dừng phát")
+
+def _quick_tts_resume_preview():
+    """Nút ▶ Tiếp tục nghe: phát tiếp audio đã tạm dừng."""
+    _qt_audio_send("resume")
+    log("[Nghe thử] ▶ Tiếp tục phát")
+
+class _QTGenStopped(Exception):
+    """Người dùng bấm 'Dừng Gen' trong khi engine đang chạy."""
+    pass
+
+def _qt_run_proc(cmd):
+    """Chạy 1 subprocess engine cho Gen Audio, lưu lại để có thể Dừng giữa chừng.
+    Trả về object có .returncode / .stdout / .stderr (giống subprocess.run).
+    Nếu bị Dừng giữa chừng → raise _QTGenStopped để thoát sạch khỏi luồng gen."""
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        creationflags=CREATE_NO_WINDOW,
+    )
+    _QT_GEN_PROC[0] = proc
+    try:
+        out, err = proc.communicate()
+    finally:
+        _QT_GEN_PROC[0] = None
+    if _QT_GEN_STOP[0]:
+        raise _QTGenStopped()
+    class _R:
+        pass
+    r = _R()
+    r.returncode = proc.returncode
+    r.stdout = out or ""
+    r.stderr = err or ""
+    return r
+
+def _quick_tts_stop_gen():
+    """Nút ⏹ Dừng Gen: dừng tiến trình tạo audio đang chạy (local engine)."""
+    _QT_GEN_STOP[0] = True
+    p = _QT_GEN_PROC[0]
+    if p is not None:
+        _proc_tree_action(p, "kill")
+    log("[Quick TTS] ⏹ Đã yêu cầu dừng tạo audio")
 
 def _play_audio_file(path):
     """Phát 1 file audio (mp3/wav) ngay trong app qua MCI — dùng cho Nghe thử."""
@@ -2985,6 +3164,7 @@ def _quick_tts_run(preview=False):
         _quick_tts_output_var.set(out)
 
     def _run():
+        _QT_GEN_STOP[0] = False   # mỗi lượt gen mới → xóa cờ dừng cũ
         # ── Pre-flight kiểm tra trước khi chạy ──────────────────────────────
         if VOXCPM_ENABLED:
             _qt_ckpt = voxcpm_ckpt_var.get().strip()
@@ -3082,11 +3262,7 @@ def _quick_tts_run(preview=False):
                 ]
                 if ref_audio: cmd += ["--reference",      ref_audio]
                 if ref_text:  cmd += ["--reference-text", ref_text]
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
-                    creationflags=CREATE_NO_WINDOW,
-                )
+                proc = _qt_run_proc(cmd)
                 gen_wav = os.path.join(out_dir, "line_0000.wav")
                 if not os.path.isfile(gen_wav):
                     log(f"[Quick TTS] ❌ VoxCPM không tạo được file. stderr: {proc.stderr[-300:]}")
@@ -3110,11 +3286,7 @@ def _quick_tts_run(preview=False):
                 with open(tmp_json, "w", encoding="utf-8") as f:
                     _json.dump([{"index": 0, "text": text}], f, ensure_ascii=False)
                 cmd = _vieneu_build_cmd(_vieneu_py, _helper, tmp_json, out_dir, _model_dir)
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
-                    creationflags=CREATE_NO_WINDOW,
-                )
+                proc = _qt_run_proc(cmd)
                 gen_wav = os.path.join(out_dir, "line_0000.wav")
                 if not os.path.isfile(gen_wav):
                     log(f"[Quick TTS] ❌ VieNeu không tạo được file. stderr: {proc.stderr[-300:]}")
@@ -3139,11 +3311,7 @@ def _quick_tts_run(preview=False):
                 with open(tmp_json, "w", encoding="utf-8") as f:
                     _json.dump([{"index": 0, "text": text}], f, ensure_ascii=False)
                 cmd = _f5tts_build_cmd(_f5tts_py, _helper, tmp_json, out_dir, _model_dir)
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
-                    creationflags=CREATE_NO_WINDOW,
-                )
+                proc = _qt_run_proc(cmd)
                 gen_wav = os.path.join(out_dir, "line_0000.wav")
                 if not os.path.isfile(gen_wav):
                     log(f"[Quick TTS] ❌ F5-TTS không tạo được file. stderr: {proc.stderr[-300:]}")
@@ -3168,11 +3336,7 @@ def _quick_tts_run(preview=False):
                 with open(tmp_json, "w", encoding="utf-8") as f:
                     _json.dump([{"index": 0, "text": text}], f, ensure_ascii=False)
                 cmd = _omnivoice_build_cmd(_omni_py, _helper, tmp_json, out_dir, _model_dir)
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
-                    creationflags=CREATE_NO_WINDOW,
-                )
+                proc = _qt_run_proc(cmd)
                 gen_wav = os.path.join(out_dir, "line_0000.wav")
                 if not os.path.isfile(gen_wav):
                     log(f"[Quick TTS] ❌ OmniVoice không tạo được file. stderr: {proc.stderr[-300:]}")
@@ -3203,6 +3367,15 @@ def _quick_tts_run(preview=False):
                         log("  • Thử chuyển Device sang CPU")
                         log("  • Xem thêm log chi tiết bên trên để biết nguyên nhân cụ thể")
                         return
+            if _QT_GEN_STOP[0]:
+                # provider (edge_tts) không qua subprocess kill được → chặn tại đây
+                log("[Quick TTS] ⏹ Đã dừng tạo audio.")
+                try:
+                    if not preview and out and os.path.isfile(out):
+                        os.remove(out)
+                except Exception:
+                    pass
+                return
             log(f"[Quick TTS] ✅ Hoàn tất: {os.path.basename(out)}")
             update_progress(100, 100)
             if preview:
@@ -3217,6 +3390,13 @@ def _quick_tts_run(preview=False):
                 app.after(0, show_fireworks)
                 if os.path.isfile(out):
                     subprocess.Popen(["explorer", "/select,", os.path.abspath(out)])
+        except _QTGenStopped:
+            log("[Quick TTS] ⏹ Đã dừng tạo audio.")
+            try:
+                if not preview and out and os.path.isfile(out):
+                    os.remove(out)
+            except Exception:
+                pass
         except Exception as e:
             log(f"[Quick TTS] ❌ Lỗi: {e}")
 
@@ -4120,6 +4300,7 @@ def show_workspace(key):
         ws_content._parent_canvas.yview_moveto(0)
     except Exception:
         pass
+    _sync_output_buttons()   # cập nhật 2 nút Output chung theo trang vừa mở
 
 _WS_NAV_ITEMS = [
     ("__cap1",    "TẠO GIỌNG NÓI"),
@@ -4242,8 +4423,10 @@ def _sec_col(parent):
     return c
 
 def _sec_sublabel(parent, text):
-    ctk.CTkLabel(parent, text=text, font=("Arial", 10, "bold"),
-                 text_color=_SUB_FG, anchor="w").pack(fill="x", padx=5, pady=(7, 1))
+    _lbl = ctk.CTkLabel(parent, text=text, font=("Arial", 10, "bold"),
+                        text_color=_SUB_FG, anchor="w")
+    _lbl.pack(fill="x", padx=5, pady=(7, 1))
+    return _lbl
 
 # Nhom 1
 _sec1 = _make_section("SRT → Lồng tiếng (TTS)", "Nạp phụ đề → tạo giọng → ghép vào video", "#7c5cff", ws="tts")
@@ -4259,13 +4442,15 @@ _sec_sublabel(_g1_io,     "CHỈNH SỬA & ĐẦU RA")
 
 # Nhom 2
 _sec2 = _make_section("Tài liệu → Audio (PDF / Word / TXT)", "Đọc tài liệu thành giọng nói", "#36c5ff", ws="doc")
-# Bố cục 3 CỘT: Nạp & Đọc | Sửa & ghép | Output (nút xếp DỌC)
+# Bố cục 4 CỘT: Nạp & Đọc | Sửa & ghép | Điều khiển | Output (nút xếp DỌC)
 _g2_cols = _sec_row(_sec2)
 _g2_load = _sec_col(_g2_cols)
 _g2_edit = _sec_col(_g2_cols)
+_g2_ctrl = _sec_col(_g2_cols)
 _g2_out  = _sec_col(_g2_cols)
 _sec_sublabel(_g2_load, "NẠP & ĐỌC")
 _sec_sublabel(_g2_edit, "SỬA & GHÉP")
+_sec_sublabel(_g2_ctrl, "ĐIỀU KHIỂN")
 _sec_sublabel(_g2_out,  "OUTPUT")
 
 # Nhom 3
@@ -4281,6 +4466,7 @@ _g3_ocr_ctrl = _sec_row(_g3_ocr_col)
 _sec_sublabel(_g3_stt_col, "GIỌNG NÓI → VĂN BẢN (STT)")
 _g3_stt = _sec_row(_g3_stt_col)
 _g3_stt_opt = _sec_row(_g3_stt_col)
+_g3_stt_ctrl = _sec_row(_g3_stt_col)
 
 # Nhom 4
 _sec4 = _make_section("Dịch thuật AI", "Dịch phụ đề & tài liệu sang tiếng Việt bằng LLM", "#ffb020", ws="translate")
@@ -4315,6 +4501,9 @@ _sec_sublabel(_g5_mux_col, "GHÉP AUDIO VÀO VIDEO")
 _g5_mux1 = _sec_row(_g5_mux_col)
 _g5_mux2 = _sec_row(_g5_mux_col)
 _g5_mux3 = _sec_row(_g5_mux_col)
+# Hàng điều khiển chung cho Nén / Ghép (tiến trình ffmpeg dùng chung)
+_g5_ctrl_lbl = _sec_sublabel(_sec5, "ĐIỀU KHIỂN (Nén / Ghép)")
+_g5_ctrl = _sec_row(_sec5)
 # Edit Studio -> TRANG RIÊNG trên sidebar (ws="editstudio"), không nằm trong Công cụ Video nữa
 _sec_es = _make_section("Edit Studio", "Xem trước & kiểm tra video kèm audio đã lồng tiếng", "#36c5ff", ws="editstudio")
 _g5_studio = _sec_row(_sec_es)
@@ -4362,8 +4551,14 @@ videocr_align_check.pack(side="left", padx=(0, 4))
 _sec_qt = _make_section("Text → Audio", "Gõ hoặc dán văn bản bất kỳ để tạo một audio lẻ", "#7c5cff", ws="textaudio")
 _sec_sublabel(_sec_qt, "VĂN BẢN")
 _qt_row1 = _sec_row(_sec_qt)
-_sec_sublabel(_sec_qt, "TẠO AUDIO")
-_qt_row2 = _sec_row(_sec_qt)
+# Bố cục 3 CỘT: Tạo audio | Điều khiển | Output (nút xếp DỌC)
+_qt_cols   = _sec_row(_sec_qt)
+_qt_create = _sec_col(_qt_cols)
+_qt_ctrl   = _sec_col(_qt_cols)
+_qt_out    = _sec_col(_qt_cols)
+_sec_sublabel(_qt_create, "TẠO AUDIO")
+_sec_sublabel(_qt_ctrl,   "ĐIỀU KHIỂN")
+_sec_sublabel(_qt_out,    "OUTPUT")
 
 quick_tts_textbox = ctk.CTkTextbox(
     _qt_row1, height=140, font=("Arial", 14), wrap="word",
@@ -4376,29 +4571,49 @@ quick_tts_telex_check = ctk.CTkCheckBox(
 )
 quick_tts_telex_check.pack(side="left", padx=(6, 2))
 
+# ── Cột TẠO AUDIO: Nghe thử + Gen Audio ──────────────────────────────────────
 ctk.CTkButton(
-    _qt_row2, text="📁 Chọn Output", command=_quick_tts_choose_output,
-    height=40, font=("Arial", 13),
-).pack(side="left", expand=True, fill="x", padx=4, pady=2)
-ctk.CTkButton(
-    _qt_row2, text="📂 Mở Output", command=_quick_tts_open_output,
-    height=40, font=("Arial", 13),
-).pack(side="left", expand=True, fill="x", padx=4, pady=2)
-ctk.CTkButton(
-    _qt_row2, text="🎧 Nghe thử", command=lambda: _quick_tts_run(preview=True),
+    _qt_create, text="🎧 Nghe thử", command=lambda: _quick_tts_run(preview=True),
     height=40, font=("Arial", 13, "bold"),
     fg_color="#7c5cff", hover_color="#9277ff",
-).pack(side="left", expand=True, fill="x", padx=4, pady=2)
+).pack(side="top", fill="x", padx=4, pady=3)
 ctk.CTkButton(
-    _qt_row2, text="⏹ Dừng nghe", command=_quick_tts_stop_preview,
-    height=40, font=("Arial", 13, "bold"),
-    fg_color="#d9534f", hover_color="#e46763",
-).pack(side="left", expand=True, fill="x", padx=4, pady=2)
-ctk.CTkButton(
-    _qt_row2, text="🔊 Gen Audio", command=_quick_tts_run,
+    _qt_create, text="🔊 Gen Audio", command=_quick_tts_run,
     height=40, font=("Arial", 13, "bold"),
     fg_color="#2fa572", hover_color="#37b87f",
-).pack(side="left", expand=True, fill="x", padx=4, pady=2)
+).pack(side="top", fill="x", padx=4, pady=3)
+
+# ── Cột ĐIỀU KHIỂN: Tạm dừng / Tiếp tục / Dừng nghe / Dừng Gen Audio ──────────
+ctk.CTkButton(
+    _qt_ctrl, text="⏸ Tạm dừng nghe", command=_quick_tts_pause_preview,
+    height=40, font=("Arial", 13),
+    fg_color="#B8860B", hover_color="#946c09",
+).pack(side="top", fill="x", padx=4, pady=3)
+ctk.CTkButton(
+    _qt_ctrl, text="▶ Tiếp tục nghe", command=_quick_tts_resume_preview,
+    height=40, font=("Arial", 13),
+    fg_color="#1E6B3C", hover_color="#145229",
+).pack(side="top", fill="x", padx=4, pady=3)
+ctk.CTkButton(
+    _qt_ctrl, text="⏹ Dừng nghe", command=_quick_tts_stop_preview,
+    height=40, font=("Arial", 13),
+    fg_color="#d9534f", hover_color="#e46763",
+).pack(side="top", fill="x", padx=4, pady=3)
+ctk.CTkButton(
+    _qt_ctrl, text="⏹ Dừng Gen Audio", command=_quick_tts_stop_gen,
+    height=40, font=("Arial", 13),
+    fg_color="#8B2020", hover_color="#5e1616",
+).pack(side="top", fill="x", padx=4, pady=3)
+
+# ── Cột OUTPUT: Chọn Output + Mở Output ──────────────────────────────────────
+ctk.CTkButton(
+    _qt_out, text="📁 Chọn Output", command=_quick_tts_choose_output,
+    height=40, font=("Arial", 13),
+).pack(side="top", fill="x", padx=4, pady=3)
+ctk.CTkButton(
+    _qt_out, text="📂 Mở Output", command=_quick_tts_open_output,
+    height=40, font=("Arial", 13),
+).pack(side="top", fill="x", padx=4, pady=3)
 
 
 # =========================
@@ -5873,6 +6088,24 @@ def clear_log():
     subtitle_list.configure(state="disabled")
 
 
+def _refill_subtitle_list():
+    """Nạp lại khung hiển thị nội dung (subtitle_list) từ nguồn hiện tại:
+    PDF/Word/TXT (PDF_CHUNKS) khi đang ở chế độ tài liệu, ngược lại từ SRT
+    (subtitles_cache). Dùng sau clear_log() ở 'Bắt đầu lại' để không mất text."""
+    try:
+        subtitle_list.configure(state="normal")
+        subtitle_list.delete("1.0", "end")
+        if _pdf_mode_active and PDF_CHUNKS:
+            for i, chunk in enumerate(PDF_CHUNKS):
+                subtitle_list.insert("end", f"[{i}] {chunk}\n\n")
+        elif subtitles_cache:
+            for i, sub in enumerate(subtitles_cache):
+                subtitle_list.insert("end", f"[{i}] {clean_text(sub.content)}\n\n")
+        subtitle_list.configure(state="disabled")
+    except Exception:
+        pass
+
+
 
 def choose_video_files():
 
@@ -6671,9 +6904,104 @@ def _find_video_stt_helper():
     return None
 
 
+def _video_stt_pause():
+    global VIDEO_STT_PAUSED
+    if _VIDEO_STT_PROC is None:
+        return
+    VIDEO_STT_PAUSED = True
+    _proc_tree_action(_VIDEO_STT_PROC, "suspend")
+    btn_stt_pause.configure(state="disabled")
+    btn_stt_resume.configure(state="normal")
+    log("[STT] ⏸ Tạm dừng.")
+
+
+def _video_stt_resume():
+    global VIDEO_STT_PAUSED
+    VIDEO_STT_PAUSED = False
+    _proc_tree_action(_VIDEO_STT_PROC, "resume")
+    btn_stt_pause.configure(state="normal")
+    btn_stt_resume.configure(state="disabled")
+    log("[STT] ▶ Tiếp tục.")
+
+
+def _video_stt_stop():
+    global VIDEO_STT_STOP, VIDEO_STT_PAUSED
+    VIDEO_STT_STOP = True
+    if VIDEO_STT_PAUSED:                       # đang tạm dừng → resume trước khi kill
+        _proc_tree_action(_VIDEO_STT_PROC, "resume")
+        VIDEO_STT_PAUSED = False
+    _proc_tree_action(_VIDEO_STT_PROC, "kill")
+    btn_stt_pause.configure(state="disabled")
+    btn_stt_resume.configure(state="disabled")
+    btn_stt_stop.configure(state="disabled")
+    log("[STT] ⏹ Đang dừng...")
+
+
+def _stt_export_format(srt_path, txt_path, fmt, log_cb=None):
+    """Từ output STT (_stt.srt + _stt.txt) tạo thêm file theo định dạng chọn.
+    fmt ∈ {srt, txt, docx, pdf}. Trả về đường dẫn file chính để mở/preview.
+    SRT + TXT luôn có sẵn (helper đã ghi); Word/PDF dựng từ transcript TXT."""
+    log_cb = log_cb or (lambda m: None)
+    if fmt == "srt":
+        return srt_path
+    if fmt == "txt":
+        return txt_path if os.path.isfile(txt_path) else srt_path
+
+    # Word / PDF: đọc các dòng transcript từ TXT
+    lines = []
+    try:
+        with open(txt_path, encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+    except Exception as e:
+        log_cb(f"⚠️ Không đọc được transcript ({e}).")
+        return txt_path if os.path.isfile(txt_path) else srt_path
+
+    base = srt_path[:-4] if srt_path.lower().endswith(".srt") else srt_path
+
+    if fmt == "pdf":
+        try:
+            from fpdf import FPDF
+            font_path = _find_unicode_font()
+            if not font_path:
+                raise RuntimeError("không tìm thấy font Unicode")
+            pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.add_page()
+            pdf.add_font("uni", "", font_path)
+            pdf.set_font("uni", size=12)
+            for ln in lines:
+                pdf.multi_cell(0, 7, ln)
+                pdf.ln(2)
+            out_path = base + ".pdf"
+            pdf.output(out_path)
+            return out_path
+        except Exception as e:
+            log_cb(f"⚠️ Không tạo được PDF ({e}). Dùng .txt thay thế. "
+                   f"(Cài: pip install fpdf2)")
+            return txt_path if os.path.isfile(txt_path) else srt_path
+
+    if fmt == "docx":
+        try:
+            from docx import Document
+            doc = Document()
+            for ln in lines:
+                doc.add_paragraph(ln)
+            out_path = base + ".docx"
+            doc.save(out_path)
+            return out_path
+        except Exception as e:
+            log_cb(f"⚠️ Không tạo được DOCX ({e}). Dùng .txt thay thế. "
+                   f"(Cài: pip install python-docx)")
+            return txt_path if os.path.isfile(txt_path) else srt_path
+
+    return srt_path
+
+
 def _run_video_stt_thread():
-    global STT_OUTPUT_DIR
+    global STT_OUTPUT_DIR, _VIDEO_STT_PROC, VIDEO_STT_PAUSED, VIDEO_STT_STOP
     set_mode("video_stt_running")
+    VIDEO_STT_PAUSED = False
+    VIDEO_STT_STOP   = False
 
     py = _find_whisper_python()
     if not py:
@@ -6712,6 +7040,7 @@ def _run_video_stt_thread():
             creationflags=CREATE_NO_WINDOW,
         )
         RUNNING_PROCESSES.append(proc)
+        _VIDEO_STT_PROC = proc
     except Exception as e:
         log(f"[STT] ❌ Lỗi khởi chạy subprocess: {e}")
         app.after(0, lambda: set_mode("video_stt"))
@@ -6752,6 +7081,12 @@ def _run_video_stt_thread():
         RUNNING_PROCESSES.remove(proc)
     except ValueError:
         pass
+    _VIDEO_STT_PROC = None
+
+    if VIDEO_STT_STOP:
+        log("[STT] ⏹ Đã dừng theo yêu cầu.")
+        app.after(0, lambda: set_mode("video_stt"))
+        return
 
     if srt_result[0] and os.path.isfile(srt_result[0]):
         txt_path = srt_result[0].replace("_stt.srt", "_stt.txt")
@@ -6768,11 +7103,23 @@ def _run_video_stt_thread():
                     log(f"  {l}")
             except Exception:
                 pass
+        # Xuất thêm theo định dạng người dùng chọn (SRT/TXT/Word/PDF)
+        try:
+            fmt = _STT_FORMAT_MAP.get(stt_format_label_var.get(), "srt")
+        except Exception:
+            fmt = "srt"
+        main_out = srt_result[0]
+        if fmt in ("docx", "pdf"):
+            main_out = _stt_export_format(srt_result[0], txt_path, fmt, log_cb=log)
+            if main_out and main_out not in (srt_result[0], txt_path):
+                log(f"[STT] {fmt.upper()} → {os.path.basename(main_out)}")
+        elif fmt == "txt" and os.path.isfile(txt_path):
+            main_out = txt_path
         app.after(0, show_fireworks)
         app.after(0, lambda: set_mode("video_stt_done"))
-        # Mở thư mục output
+        # Mở thư mục output (chọn file theo định dạng đã chọn)
         try:
-            subprocess.Popen(["explorer", "/select,", os.path.abspath(srt_result[0])])
+            subprocess.Popen(["explorer", "/select,", os.path.abspath(main_out)])
         except Exception:
             pass
     else:
@@ -6973,8 +7320,44 @@ def choose_compress_output_folder():
     log(f"[Nén Video] Output folder: {COMPRESS_OUTPUT_DIR}")
 
 
+def _videotool_pause():
+    global VIDEOTOOL_PAUSED
+    if _VIDEOTOOL_PROC is None:
+        return
+    VIDEOTOOL_PAUSED = True
+    _proc_tree_action(_VIDEOTOOL_PROC, "suspend")
+    btn_vtool_pause.configure(state="disabled")
+    btn_vtool_resume.configure(state="normal")
+    log("[Công cụ Video] ⏸ Tạm dừng.")
+
+
+def _videotool_resume():
+    global VIDEOTOOL_PAUSED
+    VIDEOTOOL_PAUSED = False
+    _proc_tree_action(_VIDEOTOOL_PROC, "resume")
+    btn_vtool_pause.configure(state="normal")
+    btn_vtool_resume.configure(state="disabled")
+    log("[Công cụ Video] ▶ Tiếp tục.")
+
+
+def _videotool_stop():
+    global VIDEOTOOL_STOP, VIDEOTOOL_PAUSED
+    VIDEOTOOL_STOP = True
+    if VIDEOTOOL_PAUSED:                       # đang tạm dừng → resume trước khi kill
+        _proc_tree_action(_VIDEOTOOL_PROC, "resume")
+        VIDEOTOOL_PAUSED = False
+    _proc_tree_action(_VIDEOTOOL_PROC, "kill")
+    btn_vtool_pause.configure(state="disabled")
+    btn_vtool_resume.configure(state="disabled")
+    btn_vtool_stop.configure(state="disabled")
+    log("[Công cụ Video] ⏹ Đang dừng...")
+
+
 def _run_compress_thread():
-    global COMPRESS_VIDEO_FILE, COMPRESS_OUTPUT_DIR
+    global COMPRESS_VIDEO_FILE, COMPRESS_OUTPUT_DIR, _VIDEOTOOL_PROC, _VIDEOTOOL_OUT
+    global VIDEOTOOL_PAUSED, VIDEOTOOL_STOP
+    VIDEOTOOL_PAUSED = False
+    VIDEOTOOL_STOP   = False
 
     inp = COMPRESS_VIDEO_FILE
     if not inp or not os.path.isfile(inp):
@@ -7021,6 +7404,7 @@ def _run_compress_thread():
     app.after(0, lambda: log(f"[Nén Video] Encoder: {encoder_type} | CRF: {crf}"))
     app.after(0, lambda: log(f"[Nén Video] Output : {out_path}"))
     app.after(0, lambda: set_mode("compressing"))
+    _VIDEOTOOL_OUT = out_path
     update_progress(1, 100)
 
     cmd = [
@@ -7041,6 +7425,7 @@ def _run_compress_thread():
             errors="replace",
             creationflags=CREATE_NO_WINDOW
         )
+        _VIDEOTOOL_PROC = proc
 
         _last_pct  = [-1]
         _last_log_pct = [-1]
@@ -7059,8 +7444,18 @@ def _run_compress_thread():
                     app.after(0, lambda p=pct: log(f"[Nén Video] ⏳ {p}%"))
 
         proc.wait()
+        _VIDEOTOOL_PROC = None
 
-        if proc.returncode == 0 and os.path.isfile(out_path):
+        if VIDEOTOOL_STOP:
+            # Người dùng dừng hẳn → xóa file dở dang, không báo lỗi/fireworks
+            try:
+                if os.path.isfile(out_path):
+                    os.remove(out_path)
+            except Exception:
+                pass
+            app.after(0, lambda: log("[Nén Video] ⏹ Đã dừng theo yêu cầu."))
+            app.after(0, lambda: set_mode("compress_ready"))
+        elif proc.returncode == 0 and os.path.isfile(out_path):
             orig_mb = info["file_size_mb"]
             new_mb  = os.path.getsize(out_path) / (1024 * 1024)
             reduction = (1 - new_mb / orig_mb) * 100 if orig_mb else 0
@@ -7078,6 +7473,8 @@ def _run_compress_thread():
     except Exception as exc:
         app.after(0, lambda: log(f"[Nén Video] ❌ Exception: {exc}"))
         app.after(0, lambda: set_mode("compress_ready"))
+    finally:
+        _VIDEOTOOL_PROC = None
 
 
 def start_compress_video():
@@ -7167,7 +7564,10 @@ def _parse_volume(raw, default=1.0):
 
 
 def _run_mux_thread():
-    global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR
+    global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR, _VIDEOTOOL_PROC, _VIDEOTOOL_OUT
+    global VIDEOTOOL_PAUSED, VIDEOTOOL_STOP
+    VIDEOTOOL_PAUSED = False
+    VIDEOTOOL_STOP   = False
 
     vid = MUX_VIDEO_FILE
     aud = MUX_AUDIO_FILE
@@ -7223,6 +7623,7 @@ def _run_mux_thread():
     app.after(0, lambda: log(f"[Ghép Audio] Chế độ: {mode_desc}"))
     app.after(0, lambda: log(f"[Ghép Audio] Output: {out_path}"))
     app.after(0, lambda: set_mode("muxing"))
+    _VIDEOTOOL_OUT = out_path
     update_progress(1, 100)
 
     cmd = [
@@ -7248,6 +7649,7 @@ def _run_mux_thread():
             errors="replace",
             creationflags=CREATE_NO_WINDOW
         )
+        _VIDEOTOOL_PROC = proc
 
         _last_pct = [-1]
         _last_log_pct = [-1]
@@ -7266,8 +7668,17 @@ def _run_mux_thread():
                     app.after(0, lambda p=pct: log(f"[Ghép Audio] ⏳ {p}%"))
 
         proc.wait()
+        _VIDEOTOOL_PROC = None
 
-        if proc.returncode == 0 and os.path.isfile(out_path):
+        if VIDEOTOOL_STOP:
+            try:
+                if os.path.isfile(out_path):
+                    os.remove(out_path)
+            except Exception:
+                pass
+            app.after(0, lambda: log("[Ghép Audio] ⏹ Đã dừng theo yêu cầu."))
+            app.after(0, lambda: set_mode(_mux_ready_mode()))
+        elif proc.returncode == 0 and os.path.isfile(out_path):
             new_mb = os.path.getsize(out_path) / (1024 * 1024)
             update_progress(100, 100)
             app.after(0, lambda: log(f"[Ghép Audio] ✅ Hoàn tất! → {os.path.basename(out_path)} ({new_mb:.1f} MB)"))
@@ -7281,6 +7692,8 @@ def _run_mux_thread():
     except Exception as exc:
         app.after(0, lambda: log(f"[Ghép Audio] ❌ Exception: {exc}"))
         app.after(0, lambda: set_mode(_mux_ready_mode()))
+    finally:
+        _VIDEOTOOL_PROC = None
 
 
 def start_mux_video():
@@ -13115,7 +13528,9 @@ def pause_tts():
 
     app.after(0, lambda: (
         btn_pause.configure(state="disabled"),
-        btn_resume.configure(state="normal")
+        btn_resume.configure(state="normal"),
+        btn_doc_pause.configure(state="disabled"),
+        btn_doc_resume.configure(state="normal")
     ))
 
 
@@ -13129,7 +13544,9 @@ def resume_tts():
 
     app.after(0, lambda: (
         btn_resume.configure(state="disabled"),
-        btn_pause.configure(state="normal")
+        btn_pause.configure(state="normal"),
+        btn_doc_resume.configure(state="disabled"),
+        btn_doc_pause.configure(state="normal")
     ))
 
 
@@ -13164,6 +13581,7 @@ def restart_tts():
     current_index = 0
 
     clear_log()
+    _refill_subtitle_list()   # giữ lại nội dung text (PDF/Word/TXT hoặc SRT) sau khi xóa log
 
     btn_reset_mode.configure(state="disabled")
 
@@ -14060,6 +14478,19 @@ btn_pdf_merge.pack(side="top", fill="x", padx=4, pady=4)
 btn_pdf_regen = ctk.CTkButton(_g2_edit, text="Regenerate đoạn", command=ask_pdf_chunk_edit, height=36, font=("Arial", 13), state="disabled")
 btn_pdf_regen.pack(side="top", fill="x", padx=4, pady=4)
 
+# Cột điều khiển Tài liệu → Audio: Tạm dừng / Tiếp tục / Dừng hẳn / Bắt đầu lại (xếp DỌC)
+btn_doc_pause = ctk.CTkButton(_g2_ctrl, text="⏸ Tạm dừng", command=pause_tts, height=36, font=("Arial", 13), state="disabled", fg_color="#B8860B", hover_color="#946c09")
+btn_doc_pause.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_doc_resume = ctk.CTkButton(_g2_ctrl, text="▶ Tiếp tục", command=resume_tts, height=36, font=("Arial", 13), state="disabled", fg_color="#1E6B3C", hover_color="#145229")
+btn_doc_resume.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_doc_stop = ctk.CTkButton(_g2_ctrl, text="⏹ Dừng hẳn", command=stop_tts, height=36, font=("Arial", 13), state="disabled", fg_color="#8B2020", hover_color="#5e1616")
+btn_doc_stop.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_doc_restart = ctk.CTkButton(_g2_ctrl, text="🔄 Bắt đầu lại", command=restart_tts, height=36, font=("Arial", 13), state="disabled", fg_color="#3a4a6b", hover_color="#2c3850")
+btn_doc_restart.pack(side="top", fill="x", padx=4, pady=4)
+
 # Output cho Tài liệu -> Audio (dùng chung OUTPUT_DIR)
 btn_pdf_choose_out = ctk.CTkButton(_g2_out, text="\U0001F4C1 Chọn Output Folder", command=choose_output_folder, height=36, font=("Arial", 13))
 btn_pdf_choose_out.pack(side="top", fill="x", padx=4, pady=4)
@@ -14100,6 +14531,14 @@ videocr_instdir_var = ctk.StringVar(value="")  # dùng trong _run_videocr_thread
 # ── Row 5: Video STT ──────────────────────────────────────────────────────────
 stt_model_var = ctk.StringVar(value="large-v3")
 stt_lang_var  = ctk.StringVar(value="vi")
+# Định dạng đầu ra STT: nhãn hiển thị → mã (SRT luôn được tạo; TXT/Word/PDF tuỳ chọn)
+_STT_FORMAT_MAP = {
+    "SRT (phụ đề)": "srt",
+    "TXT (văn bản)": "txt",
+    "Word (.docx)": "docx",
+    "PDF": "pdf",
+}
+stt_format_label_var = ctk.StringVar(value="SRT (phụ đề)")
 
 btn_stt_load = ctk.CTkButton(_g3_stt, text="Chọn Video/Audio", command=lambda: load_stt_video(), height=36, font=("Arial", 13))
 btn_stt_load.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -14116,11 +14555,33 @@ stt_lang_menu = ctk.CTkOptionMenu(_g3_stt_opt, variable=stt_lang_var,
     width=80, font=("Arial", 12))
 stt_lang_menu.pack(side="left", padx=(0, 6))
 
+ctk.CTkLabel(_g3_stt_opt, text="Định dạng:", font=("Arial", 12)).pack(side="left", padx=(0, 2))
+stt_format_menu = ctk.CTkOptionMenu(_g3_stt_opt, variable=stt_format_label_var,
+    values=list(_STT_FORMAT_MAP.keys()),
+    width=130, font=("Arial", 12))
+stt_format_menu.pack(side="left", padx=(0, 6))
+
 btn_stt_run = ctk.CTkButton(_g3_stt, text="Video → Text (STT)", command=lambda: start_video_stt(), height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
 btn_stt_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 btn_stt_open = ctk.CTkButton(_g3_stt, text="Mở Thư Mục STT", command=lambda: open_stt_folder(), height=36, font=("Arial", 13), state="disabled")
 btn_stt_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# Hàng điều khiển STT: Tạm dừng / Tiếp tục / Dừng hẳn
+btn_stt_pause = ctk.CTkButton(_g3_stt_ctrl, text="⏸ Tạm dừng", command=_video_stt_pause,
+                              height=32, font=("Arial", 13), state="disabled",
+                              fg_color="#B8860B", hover_color="#946c09")
+btn_stt_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_stt_resume = ctk.CTkButton(_g3_stt_ctrl, text="▶ Tiếp tục", command=_video_stt_resume,
+                               height=32, font=("Arial", 13), state="disabled",
+                               fg_color="#1E6B3C", hover_color="#145229")
+btn_stt_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_stt_stop = ctk.CTkButton(_g3_stt_ctrl, text="⏹ Dừng hẳn", command=_video_stt_stop,
+                             height=32, font=("Arial", 13), state="disabled",
+                             fg_color="#8B2020", hover_color="#5e1616")
+btn_stt_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 # ── Row 6: Giảm dung lượng MP4 ───────────────────────────────────────────────
 btn_compress_load = ctk.CTkButton(_g5_comp1, text="Chọn Video (Nén)", command=load_compress_video, height=36, font=("Arial", 13))
@@ -14174,6 +14635,53 @@ btn_mux_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 btn_mux_open = ctk.CTkButton(_g5_mux3, text="Mở Thư Mục", command=open_mux_folder, height=36, font=("Arial", 13), state="disabled")
 btn_mux_open.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# Hàng điều khiển chung Nén / Ghép: Tạm dừng / Tiếp tục / Dừng hẳn
+btn_vtool_pause = ctk.CTkButton(_g5_ctrl, text="⏸ Tạm dừng", command=_videotool_pause,
+                                height=32, font=("Arial", 13), state="disabled",
+                                fg_color="#B8860B", hover_color="#946c09")
+btn_vtool_pause.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_vtool_resume = ctk.CTkButton(_g5_ctrl, text="▶ Tiếp tục", command=_videotool_resume,
+                                 height=32, font=("Arial", 13), state="disabled",
+                                 fg_color="#1E6B3C", hover_color="#145229")
+btn_vtool_resume.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+btn_vtool_stop = ctk.CTkButton(_g5_ctrl, text="⏹ Dừng hẳn", command=_videotool_stop,
+                               height=32, font=("Arial", 13), state="disabled",
+                               fg_color="#8B2020", hover_color="#5e1616")
+btn_vtool_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# ── Gom điều khiển về 4 nút CHUNG trên thanh tiêu đề ─────────────────────────
+# Mỗi "group" = 1 job có thể tạm dừng/tiếp tục/dừng (và bắt đầu lại với TTS).
+# Vì các job loại trừ lẫn nhau, tại một thời điểm chỉ 1 group có nút 'normal'.
+_CTRL_GROUPS[:] = [
+    # SRT TTS
+    {"pause": pause_tts, "resume": resume_tts, "stop": stop_tts, "restart": restart_tts,
+     "pause_btn": btn_pause, "resume_btn": btn_resume, "stop_btn": btn_stop, "restart_btn": btn_restart},
+    # Tài liệu → Audio (PDF/Word/TXT) — cùng hàm với SRT
+    {"pause": pause_tts, "resume": resume_tts, "stop": stop_tts, "restart": restart_tts,
+     "pause_btn": btn_doc_pause, "resume_btn": btn_doc_resume, "stop_btn": btn_doc_stop, "restart_btn": btn_doc_restart},
+    # Video OCR (không có Bắt đầu lại)
+    {"pause": _videocr_pause, "resume": _videocr_resume, "stop": _videocr_stop, "restart": None,
+     "pause_btn": btn_videocr_pause, "resume_btn": btn_videocr_resume, "stop_btn": btn_videocr_stop, "restart_btn": None},
+    # Video STT
+    {"pause": _video_stt_pause, "resume": _video_stt_resume, "stop": _video_stt_stop, "restart": None,
+     "pause_btn": btn_stt_pause, "resume_btn": btn_stt_resume, "stop_btn": btn_stt_stop, "restart_btn": None},
+    # Công cụ Video (Nén / Ghép)
+    {"pause": _videotool_pause, "resume": _videotool_resume, "stop": _videotool_stop, "restart": None,
+     "pause_btn": btn_vtool_pause, "resume_btn": btn_vtool_resume, "stop_btn": btn_vtool_stop, "restart_btn": None},
+]
+
+# Ẩn các hàng/cột điều khiển per-page (đã chuyển lên 4 nút chung trên thanh tiêu đề).
+# Giữ lại đối tượng nút (ẩn) để toàn bộ logic set_mode / pause_tts… không phải sửa.
+for _hide_w in (_g1_ctrl, _g2_ctrl, _g3_ocr_ctrl, _g3_stt_ctrl, _g5_ctrl, _g5_ctrl_lbl):
+    try:
+        _hide_w.pack_forget()
+    except Exception:
+        pass
+
+_sync_global_controls()   # đặt trạng thái ban đầu cho 4 nút chung
 
 # ── Row 8: Dịch phụ đề / PDF sang tiếng Việt (LLM) ────────────────────────────
 # Hàng độc lập với set_mode — luôn dùng được; chỉ tự khóa 2 nút khi đang chạy.
@@ -14242,6 +14750,27 @@ btn_tr_choose_out.pack(side="top", fill="x", padx=4, pady=4)
 btn_tr_open_out = ctk.CTkButton(_g4_out, text="\U0001F4C2 Open Output Folder", command=open_translate_output_folder, height=36, font=("Arial", 13))
 btn_tr_open_out.pack(side="top", fill="x", padx=4, pady=4)
 
+# ── Gom "Chọn/Mở Output" về 2 nút CHUNG trên thanh tiêu đề ───────────────────
+# Chỉ áp dụng cho các trang có MỘT đầu ra rõ ràng (TTS / Tài liệu / Text→Audio /
+# Dịch). Trang Video→Phụ đề và Công cụ Video có nhiều đầu ra riêng theo từng
+# chức năng (OCR/STT, Nén/Ghép) nên giữ nút Output riêng tại chỗ; 2 nút chung sẽ
+# tự tắt khi mở các trang đó.
+_WS_OUTPUT.update({
+    "tts":       (choose_output_folder,           open_output_folder),
+    "doc":       (choose_output_folder,           open_output_folder),
+    "textaudio": (_quick_tts_choose_output,       _quick_tts_open_output),
+    "translate": (choose_translate_output_folder, open_translate_output_folder),
+})
+
+# Ẩn các cặp nút "Chọn/Mở Output" per-page đã chuyển lên 2 nút chung.
+for _hide_o in (btn_choose_output, btn_open_folder, _g2_out, _qt_out, _g4_out):
+    try:
+        _hide_o.pack_forget()
+    except Exception:
+        pass
+
+_sync_output_buttons()   # đặt trạng thái 2 nút Output chung theo trang hiện tại
+
 
 # =========================
 # Mode switching
@@ -14253,7 +14782,8 @@ VIDEO_MODE_BUTTONS = []
 
 def set_mode(mode):
     """Quản lý trạng thái enable/disable của các nút theo mode."""
-    global _pdf_mode_active
+    global _pdf_mode_active, _CURRENT_MODE
+    _CURRENT_MODE = mode
 
     _srt_btns = [
         btn_load, btn_tts, btn_pause, btn_resume, btn_stop,
@@ -14280,6 +14810,11 @@ def set_mode(mode):
     btn_stt_load.configure(state="disabled")
     stt_model_menu.configure(state="disabled")
     stt_lang_menu.configure(state="disabled")
+    stt_format_menu.configure(state="disabled")
+    # Nút điều khiển STT: chỉ bật khi đang chạy (video_stt_running)
+    btn_stt_pause.configure(state="disabled")
+    btn_stt_resume.configure(state="disabled")
+    btn_stt_stop.configure(state="disabled")
     # Compress: run/open disabled by default
     btn_compress_run.configure(state="disabled")
     btn_compress_open.configure(state="disabled")
@@ -14291,6 +14826,13 @@ def set_mode(mode):
     mux_video_vol_entry.configure(state="disabled")
     mux_audio_vol_entry.configure(state="disabled")
     mux_keep_orig_check.configure(state="disabled")
+    # Điều khiển Công cụ Video (Nén/Ghép): chỉ bật khi đang chạy
+    btn_vtool_pause.configure(state="disabled")
+    btn_vtool_resume.configure(state="disabled")
+    btn_vtool_stop.configure(state="disabled")
+    # Điều khiển Tài liệu → Audio: disabled mặc định; mode cụ thể bật lại
+    for _b in (btn_doc_pause, btn_doc_resume, btn_doc_stop, btn_doc_restart):
+        _b.configure(state="disabled")
 
     # Helpers
     _rvc_voxcpm_ctrls = [
@@ -14382,6 +14924,8 @@ def set_mode(mode):
         btn_pdf_merge.configure(state="normal")
         btn_pdf_regen.configure(state="normal")
         btn_choose_output.configure(state="normal")
+        # Tài liệu → Audio: cho phép Bắt đầu lại (đọc lại từ đầu)
+        btn_doc_restart.configure(state="normal")
         btn_reset_mode.configure(state="normal")
         _enable_voice_settings()
 
@@ -14431,12 +14975,17 @@ def set_mode(mode):
             b.configure(state="normal")
         for b in _pdf_btns + _videocr_btns:
             b.configure(state="disabled")
+        # Tài liệu → Audio: bật Tạm dừng + Dừng hẳn khi đang đọc
+        btn_doc_pause.configure(state="normal")
+        btn_doc_stop.configure(state="normal")
         _disable_voice_settings()
 
     elif mode == "tts_stopped":
         for b in [btn_pause, btn_resume, btn_stop]:
             b.configure(state="disabled")
         btn_restart.configure(state="normal")
+        # Tài liệu → Audio: cho phép Bắt đầu lại sau khi dừng
+        btn_doc_restart.configure(state="normal")
         btn_reset_mode.configure(state="normal")
         for b in _pdf_btns:
             b.configure(state="disabled")
@@ -14545,15 +15094,20 @@ def set_mode(mode):
         btn_stt_open.configure(state="disabled")
         stt_model_menu.configure(state="normal")
         stt_lang_menu.configure(state="normal")
+        stt_format_menu.configure(state="normal")
         _disable_voice_settings()
         btn_reset_mode.configure(state="normal")
 
     elif mode == "video_stt_running":
-        # Đang nhận dạng — tắt hết
+        # Đang nhận dạng — tắt hết, chỉ bật Tạm dừng + Dừng hẳn
         for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns:
             b.configure(state="disabled")
         stt_model_menu.configure(state="disabled")
         stt_lang_menu.configure(state="disabled")
+        stt_format_menu.configure(state="disabled")
+        btn_stt_pause.configure(state="normal")
+        btn_stt_resume.configure(state="disabled")
+        btn_stt_stop.configure(state="normal")
         _disable_voice_settings()
         btn_reset_mode.configure(state="disabled")
 
@@ -14566,6 +15120,7 @@ def set_mode(mode):
         btn_stt_open.configure(state="normal")
         stt_model_menu.configure(state="normal")
         stt_lang_menu.configure(state="normal")
+        stt_format_menu.configure(state="normal")
         _disable_voice_settings()
         btn_reset_mode.configure(state="normal")
 
@@ -14582,11 +15137,14 @@ def set_mode(mode):
         btn_reset_mode.configure(state="normal")
 
     elif mode == "compressing":
-        # Đang nén — tắt hết
+        # Đang nén — tắt hết, chỉ bật Tạm dừng + Dừng hẳn
         for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns + _mux_btns:
             b.configure(state="disabled")
         compress_quality_menu.configure(state="disabled")
         compress_gpu_check.configure(state="disabled")
+        btn_vtool_pause.configure(state="normal")
+        btn_vtool_resume.configure(state="disabled")
+        btn_vtool_stop.configure(state="normal")
         _disable_voice_settings()
         btn_reset_mode.configure(state="disabled")
 
@@ -14617,9 +15175,12 @@ def set_mode(mode):
         btn_reset_mode.configure(state="normal")
 
     elif mode == "muxing":
-        # Đang ghép — tắt hết
+        # Đang ghép — tắt hết, chỉ bật Tạm dừng + Dừng hẳn
         for b in _srt_btns + _video_btns + _pdf_btns + _videocr_btns + _stt_btns + _compress_btns + _mux_btns:
             b.configure(state="disabled")
+        btn_vtool_pause.configure(state="normal")
+        btn_vtool_resume.configure(state="disabled")
+        btn_vtool_stop.configure(state="normal")
         _disable_voice_settings()
         btn_reset_mode.configure(state="disabled")
 
@@ -14640,6 +15201,9 @@ def set_mode(mode):
     # Giữ loại trừ Provider voice ↔ RVC ↔ VoxCPM cho các mode bật voice settings
     if mode in ("srt", "pdf", "pdf_tts_done", "tts_stopped", "tts_done", "reset"):
         _apply_voice_exclusivity()
+
+    # Cập nhật 4 nút điều khiển CHUNG trên thanh tiêu đề theo trạng thái vừa đặt
+    _sync_global_controls()
 
 
 btn_reset_mode = ctk.CTkButton(
