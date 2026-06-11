@@ -4,7 +4,32 @@ import os, hashlib, json
 
 failures = []
 
+import glob
+
+def _check_onedir(label):
+    """Onedir đóng .pyd thành FILE RỜI trong _internal\\ (không nằm trong CArchive),
+    nên không đọc bằng CArchiveReader. Kiểm tra: .pyd có mặt + KHÔNG có .pyc rò rỉ."""
+    root = "dist/SRT_TTS_Studio"
+    if not os.path.isdir(root):
+        failures.append(f"{label}: DIR MISSING ({root})")
+        print(f"[MISS] {label}: onedir not found")
+        return
+    pyd = glob.glob(os.path.join(root, "_internal", "apppp_integrated.cp*-win_amd64.pyd"))
+    leaked = glob.glob(os.path.join(root, "**", "apppp_integrated*.pyc"), recursive=True)
+    if pyd and not leaked:
+        print(f"[OK]   {label}: .pyd present in _internal, no leaked .pyc "
+              f"({os.path.basename(pyd[0])})")
+    else:
+        failures.append(f"{label}: pyd={bool(pyd)} leaked_pyc={leaked}")
+        print(f"[FAIL] {label}: pyd_present={bool(pyd)} leaked_pyc={leaked}")
+    helpers = glob.glob(os.path.join(root, "_internal", "*_helper.py"))
+    print(f"       companion .py in _internal: {len(helpers)}")
+
 def check_exe(path, label):
+    # Onedir build: .pyd là file rời → kiểm tra theo cách khác
+    if label.startswith("Onedir"):
+        _check_onedir(label)
+        return
     if not os.path.isfile(path):
         failures.append(f"{label}: FILE MISSING ({path})")
         print(f"[MISS] {label}: file not found")

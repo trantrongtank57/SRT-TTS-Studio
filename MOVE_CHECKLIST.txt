@@ -1,8 +1,40 @@
 ==========================================================================
  SRT TTS STUDIO — CHECKLIST CHUYỂN SANG MÁY MỚI
 ==========================================================================
- Cập nhật: 2026-06-08
+ Cập nhật: 2026-06-11
  Mục đích: Đảm bảo đầy đủ mô hình & phụ thuộc khi cài app sang máy khác.
+==========================================================================
+
+
+==========================================================================
+ ⚡ TÓM TẮT 30 GIÂY — VÌ SAO SANG MÁY KHÁC HAY THIẾU
+==========================================================================
+ build_all.bat CHỈ đóng gói: app.exe + rvc_env + hubert_base.pt + rmvpe.pt
+ + F5-TTS model. 7 THỨ DƯỚI ĐÂY KHÔNG đi theo build, phải copy TAY:
+
+   1. voxcpm_env\      (nguồn: E:\VoxCPM-1.5-VN\voxcpm_env)  ⚠ QUAN TRỌNG NHẤT
+                       → thiếu = gãy VoxCPM, STT, lọc audio, căn SRT,
+                         Video-STT, PDF, dịch offline (1 env, 7 tính năng)
+   2. vieneu_env\      (E:\vieneu_env)        → VieNeu-TTS
+   3. f5tts_env\       (E:\f5tts_env)         → F5-TTS
+   4. omnivoice_env\   (E:\omnivoice_env)     → OmniVoice
+   5. VoxCPM model     (E:\VoxCPM-1.5-VN)     → VoxCPM TTS
+   6. VideOCR CLI      (C:\Users\os\Downloads\...\VideOCR-1.5.1\...\CLI)
+                       → Tách sub cứng (OCR)
+   7. Cache HF + torch (C:\Users\<user>\.cache\huggingface + \.cache\torch)
+                       → 6 model auto-download. MÁY CÓ NET = bỏ qua (tự tải
+                         lần đầu). MÁY KHÔNG NET = phải copy 2 thư mục này.
+
+ ❗ LƯU Ý: KHÔNG có settings.json trong folder → máy khác dựa hoàn toàn vào
+   "auto-dò cạnh exe". Vì vậy CÁCH AN TOÀN NHẤT là đặt mục 1-6 NGAY CẠNH
+   file .exe với ĐÚNG TÊN folder (xem mục [3]). Đặt ổ/thư mục khác mà không
+   khai báo ⚙ Cài đặt = app trỏ vào path cứng E:\/C:\Users\os → fail.
+
+ ✅ KIỂM TRA TRƯỚC KHI ĐÓNG GÓI: chạy trên MÁY GỐC (Python hệ thống):
+       python _audit_deps.py
+   → in ✅/❌ từng món ở trên để biết folder nào còn chưa copy vào
+     output\Portable. (Trên máy ĐÍCH: mở app, xem dòng "KIỂM TRA HỆ THỐNG"
+     trong logbox — app tự báo thiếu cái nào.)
 ==========================================================================
 
 

@@ -7915,8 +7915,13 @@ _QC_REGEN_RUNNING = [False]
 def qc_regen_bad_lines():
     """Tạo lại toàn bộ các dòng audio lỗi (đi qua đúng pipeline regenerate_line /
     regenerate_pdf_line: engine hiện tại + QC + retry). Tự khóa khi đang chạy."""
+    global stop_requested
     if _QC_REGEN_RUNNING[0]:
         log("[QC] Đang chạy regenerate — vui lòng đợi xong.")
+        return
+    # Không chạy chồng lên các tiến trình ghi cùng OUTPUT_DIR khác
+    if _MULTIVOICE_RUNNING[0] or _QUEUE_RUNNING[0]:
+        log("[QC] ❌ Đang có tiến trình khác chạy (Phân vai / Hàng đợi) — đợi xong rồi thử lại.")
         return
     bad = _qc_scan_bad_files()
     if not bad:
@@ -7932,12 +7937,21 @@ def qc_regen_bad_lines():
         return
 
     def _run():
+        global stop_requested
         _QC_REGEN_RUNNING[0] = True
+        stop_requested = False
+        _stopped = False
+        # Khóa UI + bật nút Stop để người dùng có thể dừng giữa chừng
+        app.after(0, lambda: set_mode("tts_running"))
         try:
             done = fail = 0
             total = len(bad)
             log(f"[QC] Bắt đầu tạo lại {total} dòng lỗi...")
             for n, (prefix, idx, _reason, path) in enumerate(bad, 1):
+                if stop_requested:
+                    log("[QC] PROCESS STOPPED")
+                    _stopped = True
+                    break
                 if prefix == "line_":
                     if idx >= len(subtitles_cache):
                         log(f"[QC] ⚠ Dòng {idx}: vượt quá số dòng SRT đang nạp — bỏ qua")
@@ -7969,10 +7983,11 @@ def qc_regen_bad_lines():
                     fail += 1
                 update_progress(n, total)
             log(f"[QC] ━━━ Hoàn tất: {done} OK, {fail} lỗi / {total} dòng ━━━")
-            if done and not fail:
+            if done and not fail and not _stopped:
                 app.after(0, show_fireworks)
         finally:
             _QC_REGEN_RUNNING[0] = False
+            app.after(0, lambda s=_stopped: set_mode("tts_stopped" if s else "tts_done"))
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -10298,12 +10313,22 @@ def run_queue_batch(do_merge=True):
                 SRT_FILE = path
                 OUTPUT_DIR = out_dir
                 current_index = 0
+                # Xóa cache cũ TRƯỚC khi load: nếu file này hỏng/parse lỗi,
+                # load_subtitles raise và giữ nguyên cache file trước → sẽ lồng
+                # tiếng NHẦM nội dung. Clear trước để check "rỗng" bên dưới đúng.
+                subtitles_cache.clear()
                 log_color(f"▶ ({k}/{n}) {os.path.basename(path)} → {out_dir}", "#7c5cff")
-                app.after(0, lambda p=path: load_subtitles(force_select=False))
-                # chờ load_subtitles chạy xong trên main thread
                 _ev = threading.Event()
-                app.after(0, _ev.set)
-                _ev.wait(timeout=10)
+                def _load_one(p=path, ev=_ev):
+                    try:
+                        load_subtitles(force_select=False)
+                    except Exception as _le:
+                        log(f"[Hàng đợi] ⚠ Lỗi đọc {os.path.basename(p)}: {_le}")
+                    finally:
+                        ev.set()
+                app.after(0, _load_one)
+                # chờ load_subtitles chạy xong trên main thread
+                _ev.wait(timeout=15)
                 if not subtitles_cache:
                     log(f"[Hàng đợi] ⚠ ({k}/{n}) File rỗng/không đọc được — bỏ qua.")
                     continue
@@ -10318,7 +10343,9 @@ def run_queue_batch(do_merge=True):
                         merge_ffmpeg()
                     except Exception as e:
                         log(f"[Hàng đợi] ⚠ Merge lỗi: {e}")
-            log_color("━━━ HÀNG ĐỢI HOÀN TẤT ━━━", _OK if '_OK' in globals() else "#2dd4a7")
+            # Cython không cho tham chiếu tên chưa khai báo (dù có guard
+            # 'in globals()') → dùng globals().get thay vì _OK trực tiếp
+            log_color("━━━ HÀNG ĐỢI HOÀN TẤT ━━━", globals().get("_OK", "#2dd4a7"))
             app.after(0, show_fireworks)
         finally:
             _QUEUE_RUNNING[0] = False
@@ -11168,7 +11195,11 @@ def _apply_profile_blocking(profile_name, timeout=15):
         finally:
             ev.set()
     app.after(0, _do)
-    ev.wait(timeout=timeout)
+    if not ev.wait(timeout=timeout):
+        # Hết thời gian chờ mà chưa áp dụng xong → KHÔNG chạy tiếp với engine
+        # có thể sai, báo lỗi để dòng đó tính là fail thay vì sinh nhầm giọng.
+        log(f"[Phân vai] ❌ Quá thời gian áp dụng hồ sơ '{profile_name}' ({timeout}s).")
+        return False
     return True
 
 def run_multivoice_batch():
@@ -11199,6 +11230,7 @@ def run_multivoice_batch():
 
     def _run():
         _MULTIVOICE_RUNNING[0] = True
+        _stopped = False
         app.after(0, lambda: set_mode("tts_running"))
         try:
             done = fail = skipped = 0
@@ -11218,6 +11250,7 @@ def run_multivoice_batch():
                 for idx in idxs:
                     if stop_requested:
                         log("[Phân vai] PROCESS STOPPED")
+                        _stopped = True
                         return
                     text = clean_text(subtitles_cache[idx].content)
                     if not text:
@@ -11248,7 +11281,7 @@ def run_multivoice_batch():
                 app.after(0, show_fireworks)
         finally:
             _MULTIVOICE_RUNNING[0] = False
-            app.after(0, lambda: set_mode("tts_done"))
+            app.after(0, lambda s=_stopped: set_mode("tts_stopped" if s else "tts_done"))
 
     threading.Thread(target=_run, daemon=True).start()
 
