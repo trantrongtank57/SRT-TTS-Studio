@@ -18,6 +18,15 @@ build_msi_protected.bat
 :: Dev run (no build needed)
 python apppp_integrated.py
 
+:: Pre-build sanity: catch Cython compile errors WITHOUT a full 10-min build
+python -m py_compile apppp_integrated.py   :: fast, but LESS strict than Cython
+python -c "from Cython.Build import cythonize; cythonize('apppp_integrated.py', compiler_directives={'language_level':'3'}, build_dir='cython_build_test', quiet=True); print('CYTHON OK')"
+:: then clean: cython_build_test\ + apppp_integrated.c
+
+:: Post-build audit (these scripts live in repo root)
+python _verify_security.py   :: PYZ has only the .pyd, no .pyc; onedir .pyd present; .integrity matches exe
+python _audit_deps.py        :: every external env/model/cache resolvable on THIS machine
+
 :: Regenerate integrity manifest after modifying onedir dist
 python gen_integrity.py
 
@@ -44,6 +53,9 @@ for exe in ("output/Portable/SRT_TTS_Studio_Portable.exe",
     hits = [n for n in names if "apppp_integrated" in n]
     assert hits == ["apppp_integrated.cp314-win_amd64.pyd"], (exe, hits)  # ONLY the .pyd, no .pyc
 ```
+Two repo-root helper scripts automate the post-build checks (re-run after every build): **`_verify_security.py`** verifies all 3 onefile exes (only `.pyd` in the CArchive, no `.pyc`) AND the onedir build (`.pyd` is a **loose file** in `dist\SRT_TTS_Studio\_internal\`, NOT in a CArchive — so it's checked by file presence + "no leaked `apppp_integrated*.pyc`", not via `CArchiveReader`), plus that `SRT_TTS_Studio_Secured.exe.integrity` matches the freshly-built exe's SHA-256. **`_audit_deps.py`** confirms every external dependency is resolvable *the way the app resolves it* (e.g. `voxcpm_env` is found by walking up from the VoxCPM model dir, not just beside the exe) and reports what `output\Portable\` still needs hand-copying for another machine.
+
+**Cython is stricter than CPython — `py_compile` passing does NOT mean the build will compile.** The one that bites: a guarded reference to a never-assigned module global, e.g. `_OK if '_OK' in globals() else default`, is valid Python (the guard is runtime) but Cython rejects it at **compile time** with `undeclared name not builtin: _OK` and aborts step 5. Use `globals().get("_OK", default)` instead (never names the symbol). (`'__file__' in globals()` is fine — Cython knows `__file__`.) Always run the `cythonize(...)` one-liner above before kicking off a 10-minute `build_all.bat`.
 
 ## Build Pipeline (build_all.bat, steps 0–9)
 
