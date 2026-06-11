@@ -2694,9 +2694,190 @@ ctk.CTkButton(
 
 # ── Quick TTS row ─────────────────────────────────────────────────────────────
 # Quick TTS: widget UI duoc tao o workspace "Text -> Audio" (xem phia duoi)
-quick_tts_var = ctk.StringVar(value="")
-
 _quick_tts_output_var = ctk.StringVar(value="")
+
+# Token lượt Nghe thử: chỉ lượt MỚI NHẤT được phát — lượt cũ (text dài, gen lâu)
+# xong muộn sẽ bị bỏ qua thay vì phát đè lên audio của lượt mới.
+_QT_PREVIEW_SEQ = [0]
+
+# ── Bộ gõ Telex tích hợp ──────────────────────────────────────────────────────
+# Unikey/EVKey hook đôi khi không tới được cửa sổ Tk (UIPI/hook bị chặn) → gõ
+# "chaof" ra nguyên chữ thay vì "chào". Engine Telex thuần Python dưới đây
+# compose ngay trong Entry nên gõ tiếng Việt được bất kể IME ngoài.
+quick_tts_telex_var = ctk.BooleanVar(value=True)
+
+_TELEX_TONE_KEYS = {"s": 1, "f": 2, "r": 3, "x": 4, "j": 5}
+_TELEX_FAMILIES = {
+    "a": "aáàảãạ", "ă": "ăắằẳẵặ", "â": "âấầẩẫậ",
+    "e": "eéèẻẽẹ", "ê": "êếềểễệ",
+    "i": "iíìỉĩị",
+    "o": "oóòỏõọ", "ô": "ôốồổỗộ", "ơ": "ơớờởỡợ",
+    "u": "uúùủũụ", "ư": "ưứừửữự",
+    "y": "yýỳỷỹỵ",
+}
+# char → (base_char cùng case, tone_index)
+_TELEX_BASE = {}
+for _fb, _forms in _TELEX_FAMILIES.items():
+    for _ti, _fc in enumerate(_forms):
+        _TELEX_BASE[_fc] = (_fb, _ti)
+        _TELEX_BASE[_fc.upper()] = (_fb.upper(), _ti)
+
+def _telex_toned(base_char, tone):
+    fam = _TELEX_FAMILIES.get(base_char.lower())
+    if not fam:
+        return base_char
+    ch = fam[tone]
+    return ch.upper() if base_char.isupper() else ch
+
+def _telex_nucleus(base):
+    """Vị trí cụm nguyên âm cuối của từ (đã loại u trong 'qu', i trong 'gi')."""
+    run = []
+    for i in range(len(base) - 1, -1, -1):
+        if base[i] in _TELEX_BASE:
+            run.insert(0, i)
+        elif run:
+            break
+    if len(run) > 1:
+        first = run[0]
+        c0 = base[first].lower()
+        if first > 0:
+            prev = base[first - 1].lower()
+            if (c0 == "u" and prev == "q") or (c0 == "i" and prev == "g"):
+                run = run[1:]
+    return run
+
+def _telex_apply_tone(base, tone):
+    run = _telex_nucleus(base)
+    if not run:
+        return None
+    marked = [i for i in run
+              if _TELEX_BASE[base[i]][0].lower() in "ăâêôơư"]
+    if marked:
+        pos = marked[-1]
+    elif len(run) >= 2 and run[-1] == len(base) - 1:
+        pos = run[0]          # không có phụ âm cuối → dấu vào nguyên âm đầu cụm
+    else:
+        pos = run[-1]
+    b, old = _TELEX_BASE[base[pos]]
+    # gỡ dấu cũ trên cả cụm (1 từ chỉ 1 dấu thanh)
+    chars = list(base)
+    for i in run:
+        bb, tt = _TELEX_BASE[chars[i]]
+        if tt:
+            chars[i] = _telex_toned(bb, 0)
+    if old == tone:
+        # gõ lặp dấu → trả chữ gốc + ký tự thường (vd "clas s" kiểu Unikey)
+        return "".join(chars), True
+    chars[pos] = _telex_toned(b, tone)
+    return "".join(chars), False
+
+def _telex_remove_tone(base):
+    chars = list(base)
+    changed = False
+    for i in _telex_nucleus(base):
+        b, t = _TELEX_BASE[chars[i]]
+        if t:
+            chars[i] = _telex_toned(b, 0)
+            changed = True
+    return "".join(chars) if changed else None
+
+def _telex_apply_w(base):
+    if not base or base[-1] not in _TELEX_BASE:
+        return None
+    b, t = _TELEX_BASE[base[-1]]
+    m = {"a": "ă", "o": "ơ", "u": "ư"}
+    bl = b.lower()
+    if bl not in m:
+        return None
+    nb = m[bl].upper() if b.isupper() else m[bl]
+    out = base[:-1] + _telex_toned(nb, t)
+    # uo + w → ươ
+    if bl == "o" and len(base) >= 2 and base[-2] in _TELEX_BASE:
+        b2, t2 = _TELEX_BASE[base[-2]]
+        if b2.lower() == "u":
+            nu = "Ư" if b2.isupper() else "ư"
+            out = base[:-2] + _telex_toned(nu, t2) + _telex_toned(nb, t)
+    return out
+
+def _telex_apply_double(base, cl):
+    if not base or base[-1] not in _TELEX_BASE:
+        return None
+    b, t = _TELEX_BASE[base[-1]]
+    circ = {"a": "â", "e": "ê", "o": "ô"}[cl]
+    bl = b.lower()
+    if bl == cl:
+        nb = circ.upper() if b.isupper() else circ
+        return base[:-1] + _telex_toned(nb, t)
+    if bl == circ:
+        # ââ → revert "aa" + chữ vừa gõ (gõ 3 lần ra chữ đôi thường)
+        plain = cl.upper() if b.isupper() else cl
+        return base[:-1] + _telex_toned(plain, t) + plain
+    return None
+
+def _telex_transform(word):
+    """Nhận từ (ký tự vừa gõ nằm cuối) → từ đã compose; trả lại nguyên nếu không đổi."""
+    if len(word) < 2:
+        return word
+    base, c = word[:-1], word[-1]
+    cl = c.lower()
+    if cl in _TELEX_TONE_KEYS:
+        out = _telex_apply_tone(base, _TELEX_TONE_KEYS[cl])
+        if out is None:
+            return word
+        body, literal = out
+        return body + c if literal else body
+    if cl == "z":
+        out = _telex_remove_tone(base)
+        return out if out is not None else word
+    if cl == "w":
+        out = _telex_apply_w(base)
+        return out if out is not None else word
+    if cl in ("a", "e", "o"):
+        out = _telex_apply_double(base, cl)
+        return out if out is not None else word
+    if cl == "d" and base and base[-1] in "dD":
+        return base[:-1] + ("Đ" if base[-1] == "D" else "đ")
+    return word
+
+def _attach_telex_input(ctk_widget, enabled_var):
+    """Gắn bộ gõ Telex vào CTkEntry hoặc CTkTextbox (compose từ ngay trước con trỏ)."""
+    tk_w = getattr(ctk_widget, "_entry", None) or getattr(ctk_widget, "_textbox", None) or ctk_widget
+    is_text = hasattr(tk_w, "mark_set")  # tk.Text (CTkTextbox) vs tk.Entry
+
+    def _on_key(event):
+        if not enabled_var.get():
+            return
+        ch = event.char
+        if not ch or len(ch) != 1 or not ch.isalpha():
+            return
+        if event.state & 0x4:  # Ctrl đang giữ (vd Ctrl+V)
+            return
+        try:
+            if is_text:
+                _line, _c = tk_w.index("insert").split(".")
+                pos = int(_c)
+                s = tk_w.get(f"{_line}.0", f"{_line}.end")
+            else:
+                pos = tk_w.index("insert")
+                s = tk_w.get()
+        except Exception:
+            return
+        start = pos
+        while start > 0 and s[start - 1].isalpha():
+            start -= 1
+        word = s[start:pos]
+        new = _telex_transform(word)
+        if new != word:
+            if is_text:
+                tk_w.delete(f"{_line}.{start}", f"{_line}.{pos}")
+                tk_w.insert(f"{_line}.{start}", new)
+                tk_w.mark_set("insert", f"{_line}.{start + len(new)}")
+            else:
+                tk_w.delete(start, pos)
+                tk_w.insert(start, new)
+                tk_w.icursor(start + len(new))
+
+    tk_w.bind("<KeyRelease>", _on_key, add="+")
 
 def _quick_tts_choose_output():
     path = filedialog.asksaveasfilename(
@@ -2723,29 +2904,74 @@ def _quick_tts_open_output():
 
 # (nut Output -> workspace "Text -> Audio")
 
+# MCI mpegvideo là thread-affine: device gắn với thread đã `open` nó — nếu
+# thread đó thoát (mỗi lượt Nghe thử là 1 worker thread chết ngay sau `play`),
+# lệnh `close` từ thread khác âm thầm thất bại → audio cũ KHÔNG dừng được và
+# phát đè lên audio mới (+ file bị giữ → Errno 13). Fix: MỘT thread audio
+# thường trực sở hữu mọi lệnh MCI của Nghe thử (giống _audio_loop của Edit Studio).
+_QT_AUDIO_Q = [None]
+
+def _qt_audio_send(*cmd):
+    if _QT_AUDIO_Q[0] is None:
+        import queue as _queue
+        _QT_AUDIO_Q[0] = _queue.Queue()
+
+        def _worker():
+            import ctypes
+            winmm = ctypes.windll.winmm
+
+            def _mci(c):
+                return winmm.mciSendStringW(c, None, 0, None)
+
+            while True:
+                c = _QT_AUDIO_Q[0].get()
+                try:
+                    _mci('close qt_preview')
+                    if c[0] == "play":
+                        _mci(f'open "{c[1]}" type mpegvideo alias qt_preview')
+                        _mci('play qt_preview')
+                except Exception as e:
+                    log(f"[Nghe thử] ❌ Không phát được audio: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+    _QT_AUDIO_Q[0].put(cmd)
+
+def _qt_preview_close():
+    """Dừng audio Nghe thử + nhả file đang bị MCI giữ."""
+    _qt_audio_send("stop")
+
+def _quick_tts_stop_preview():
+    """Nút ⏹ Dừng nghe: dừng audio đang phát + hủy cả lượt Nghe thử đang gen dở."""
+    _QT_PREVIEW_SEQ[0] += 1  # lượt đang gen (nếu có) thành stale → sẽ không phát
+    _qt_preview_close()
+    log("[Nghe thử] ⏹ Đã dừng phát")
+
 def _play_audio_file(path):
     """Phát 1 file audio (mp3/wav) ngay trong app qua MCI — dùng cho Nghe thử."""
-    try:
-        import ctypes
-        winmm = ctypes.windll.winmm
-        def _mci(c):
-            winmm.mciSendStringW(c, None, 0, None)
-        _mci('close qt_preview')
-        _mci(f'open "{path}" type mpegvideo alias qt_preview')
-        _mci('play qt_preview')
-    except Exception as e:
-        log(f"[Nghe thử] ❌ Không phát được audio: {e}")
+    _qt_audio_send("play", path)
 
 def _quick_tts_run(preview=False):
     """preview=True → sinh ra file tạm và phát ngay (Nghe thử), không hỏi nơi lưu."""
-    text = quick_tts_var.get().strip()
+    text = quick_tts_textbox.get("1.0", "end").strip()
     if not text:
         msg.showwarning("Quick TTS", "Vui lòng nhập text trước khi tạo audio.")
         return
     if preview:
-        import tempfile
-        out = os.path.join(tempfile.gettempdir(), "srt_tts_preview.mp3")
+        import tempfile, glob
+        _qt_preview_close()  # dừng + nhả file preview cũ đang bị MCI giữ
+        _QT_PREVIEW_SEQ[0] += 1
+        _my_seq = _QT_PREVIEW_SEQ[0]
+        _tmpdir = tempfile.gettempdir()
+        # dọn các preview cũ (file đang bị giữ thì bỏ qua)
+        for _old in glob.glob(os.path.join(_tmpdir, "srt_tts_preview*.mp3")):
+            try:
+                os.remove(_old)
+            except OSError:
+                pass
+        # mỗi lượt một file riêng → lượt cũ đang gen dở không ghi đè lượt mới
+        out = os.path.join(_tmpdir, f"srt_tts_preview_{_my_seq}.mp3")
     else:
+        _my_seq = None
         out = _quick_tts_output_var.get().strip()
     if not out:
         out = filedialog.asksaveasfilename(
@@ -2980,6 +3206,10 @@ def _quick_tts_run(preview=False):
             log(f"[Quick TTS] ✅ Hoàn tất: {os.path.basename(out)}")
             update_progress(100, 100)
             if preview:
+                if _my_seq != _QT_PREVIEW_SEQ[0]:
+                    # đã có lượt Nghe thử mới hơn → bỏ qua, không phát đè
+                    log("[Nghe thử] ⏭ Bỏ qua audio cũ (đã bấm Nghe thử mới)")
+                    return
                 if os.path.isfile(out):
                     log("[Nghe thử] ▶ Đang phát audio thử...")
                     _play_audio_file(out)
@@ -4135,12 +4365,16 @@ _qt_row1 = _sec_row(_sec_qt)
 _sec_sublabel(_sec_qt, "TẠO AUDIO")
 _qt_row2 = _sec_row(_sec_qt)
 
-quick_tts_entry = ctk.CTkEntry(
-    _qt_row1, textvariable=quick_tts_var,
-    placeholder_text="Nhập hoặc dán text bất kỳ để tạo audio...",
-    height=40, font=("Arial", 13),
+quick_tts_textbox = ctk.CTkTextbox(
+    _qt_row1, height=140, font=("Arial", 14), wrap="word",
 )
-quick_tts_entry.pack(side="left", expand=True, fill="x", padx=(2, 2))
+quick_tts_textbox.pack(side="left", expand=True, fill="both", padx=(2, 2))
+_attach_telex_input(quick_tts_textbox, quick_tts_telex_var)
+quick_tts_telex_check = ctk.CTkCheckBox(
+    _qt_row1, text="Gõ Telex (VN)", variable=quick_tts_telex_var,
+    width=120, font=("Arial", 12),
+)
+quick_tts_telex_check.pack(side="left", padx=(6, 2))
 
 ctk.CTkButton(
     _qt_row2, text="📁 Chọn Output", command=_quick_tts_choose_output,
@@ -4154,6 +4388,11 @@ ctk.CTkButton(
     _qt_row2, text="🎧 Nghe thử", command=lambda: _quick_tts_run(preview=True),
     height=40, font=("Arial", 13, "bold"),
     fg_color="#7c5cff", hover_color="#9277ff",
+).pack(side="left", expand=True, fill="x", padx=4, pady=2)
+ctk.CTkButton(
+    _qt_row2, text="⏹ Dừng nghe", command=_quick_tts_stop_preview,
+    height=40, font=("Arial", 13, "bold"),
+    fg_color="#d9534f", hover_color="#e46763",
 ).pack(side="left", expand=True, fill="x", padx=4, pady=2)
 ctk.CTkButton(
     _qt_row2, text="🔊 Gen Audio", command=_quick_tts_run,
