@@ -875,6 +875,7 @@ COMPRESS_OUTPUT_DIR = ""  # rỗng = dùng cùng thư mục file gốc
 MUX_VIDEO_FILE = ""       # video nguồn để ghép audio final
 MUX_AUDIO_FILE = ""       # file audio final cần ghép vào video
 MUX_OUTPUT_DIR = ""       # rỗng = dùng cùng thư mục video gốc
+MUX_BURN_SRT   = ""       # đường dẫn SRT cần gắn cứng khi mux (wizard set; rỗng = không burn)
 # Điều khiển Công cụ Video (Nén / Ghép audio): tạm dừng / tiếp tục / dừng hẳn
 VIDEOTOOL_PAUSED = False
 VIDEOTOOL_STOP   = False
@@ -1586,6 +1587,29 @@ delay_max_entry = ctk.CTkEntry(voice_row1, textvariable=delay_max_var, width=52,
 delay_max_entry.pack(side="left")
 
 ctk.CTkLabel(voice_row1, text="giây", font=("Arial", 12)).pack(side="left", padx=(3, 6))
+
+# Row 1b: Tốc độ/Cao độ Edge TTS (trước đây hardcode rate="+10%") + tùy chọn batch
+voice_row1b = ctk.CTkFrame(voice_frame, fg_color="transparent")
+voice_row1b.pack(fill="x", padx=2, pady=(0, 2))
+
+ctk.CTkLabel(voice_row1b, text="Edge — Tốc độ:", font=("Arial", 12)).pack(side="left", padx=(10, 3))
+edge_rate_var = ctk.StringVar(value="+10%")
+ctk.CTkEntry(voice_row1b, textvariable=edge_rate_var, width=60,
+             justify="center").pack(side="left")
+ctk.CTkLabel(voice_row1b, text="Cao độ:", font=("Arial", 12)).pack(side="left", padx=(8, 3))
+edge_pitch_var = ctk.StringVar(value="+0Hz")
+ctk.CTkEntry(voice_row1b, textvariable=edge_pitch_var, width=64,
+             justify="center").pack(side="left")
+ctk.CTkLabel(voice_row1b, text="(vd +20% / -2Hz)", font=("Arial", 11),
+             text_color="#888").pack(side="left", padx=(4, 12))
+
+vi_num_var = ctk.BooleanVar(value=True)
+ctk.CTkCheckBox(voice_row1b, text="Đọc số tiền/ngày/giờ kiểu Việt",
+                variable=vi_num_var, font=("Arial", 12)).pack(side="left", padx=(0, 12))
+
+auto_retry_fail_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(voice_row1b, text="Tự tạo lại dòng FAIL khi xong",
+                variable=auto_retry_fail_var, font=("Arial", 12)).pack(side="left")
 
 
 # Row 2: API Key (ẩn khi dùng Edge TTS)
@@ -2693,6 +2717,7 @@ def _voice_profile_capture():
         "engine":   eng,
         "provider": provider_var.get(),
         "voice":    voice_var.get(),
+        "edge_rate": edge_rate_var.get(), "edge_pitch": edge_pitch_var.get(),
         "rvc_model": rvc_model_var.get(),  "rvc_index": rvc_index_var.get(),
         "rvc_pitch": rvc_pitch_var.get(),  "rvc_algo":  rvc_algo_var.get(),
         "voxcpm_ckpt": voxcpm_ckpt_var.get(), "voxcpm_ref": voxcpm_ref_var.get(),
@@ -2714,6 +2739,7 @@ def _voice_profile_apply(p):
         if p.get("provider"): set_provider(p["provider"]); provider_var.set(p["provider"])
         if p.get("voice"):    voice_var.set(p["voice"]);   set_voice(p["voice"])
         for key, var in (
+            ("edge_rate", edge_rate_var), ("edge_pitch", edge_pitch_var),
             ("rvc_model", rvc_model_var), ("rvc_index", rvc_index_var),
             ("rvc_pitch", rvc_pitch_var), ("rvc_algo", rvc_algo_var),
             ("voxcpm_ckpt", voxcpm_ckpt_var), ("voxcpm_ref", voxcpm_ref_var),
@@ -2843,17 +2869,153 @@ def _glossary_save():
     except Exception as e:
         log(f"[Từ điển] ❌ Không ghi được {_GLOSSARY_FILE}: {e}")
 
+# ── Đọc số kiểu Việt (tiền tệ / ngày tháng / giờ) ────────────────────────────
+# TTS đọc "1.500.000đ" / "20/11/2024" / "19h30" rất tệ — chuyển thành chữ
+# trước khi sinh audio. Pattern chọn lọc (cần đuôi đ/đồng, đủ dd/mm/yyyy,
+# NhMM) để tránh false-positive với phân số, tỷ số, mã số.
+_VI_DIGITS = ["không", "một", "hai", "ba", "bốn",
+              "năm", "sáu", "bảy", "tám", "chín"]
+
+def _vi_three(n, full):
+    """Đọc nhóm 3 chữ số 0..999. full=True → đọc đủ 'không trăm linh x'
+    (dùng cho nhóm đứng sau nhóm lớn hơn, vd 1.005.000)."""
+    tr, du = divmod(n, 100)
+    ch, dv = divmod(du, 10)
+    parts = []
+    if tr or full:
+        parts.append(_VI_DIGITS[tr] + " trăm")
+    if ch == 0:
+        if dv and (tr or full):
+            parts.append("linh " + _VI_DIGITS[dv])
+        elif dv:
+            parts.append(_VI_DIGITS[dv])
+    elif ch == 1:
+        parts.append("mười" + ("" if dv == 0 else
+                     " lăm" if dv == 5 else " " + _VI_DIGITS[dv]))
+    else:
+        s = _VI_DIGITS[ch] + " mươi"
+        if dv == 1:
+            s += " mốt"
+        elif dv == 5:
+            s += " lăm"
+        elif dv:
+            s += " " + _VI_DIGITS[dv]
+        parts.append(s)
+    return " ".join(parts)
+
+def _vi_int_words(n):
+    """Số nguyên không âm → chữ tiếng Việt (tới nghìn tỷ; lớn hơn giữ nguyên)."""
+    if n == 0:
+        return "không"
+    if n >= 10 ** 15:
+        return str(n)
+    units = ["", " nghìn", " triệu", " tỷ", " nghìn tỷ"]
+    gs = []
+    digits = str(n)
+    while digits:
+        gs.append(int(digits[-3:]))
+        digits = digits[:-3]
+    parts = []
+    started = False
+    for i in range(len(gs) - 1, -1, -1):
+        if gs[i] == 0:
+            continue
+        parts.append(_vi_three(gs[i], full=started) + units[i])
+        started = True
+    return " ".join(parts)
+
+def _vi_num_normalize(text):
+    """Chuyển tiền tệ / ngày dd/mm/yyyy / giờ NhMM trong text thành chữ Việt."""
+    def _money(m):
+        try:
+            return _vi_int_words(int(re.sub(r"[.,]", "", m.group(1)))) + " đồng"
+        except Exception:
+            return m.group(0)
+    text = re.sub(
+        r"\b(\d{1,3}(?:[.,]\d{3})+|\d+)\s*(?:đồng|vnđ|vnd|₫|đ)(?!\w)",
+        _money, text, flags=re.IGNORECASE)
+
+    def _date(m):
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not (1 <= d <= 31 and 1 <= mo <= 12 and 1000 <= y <= 9999):
+            return m.group(0)
+        pre = ("" if re.search(r"ngày\s*$", m.string[:m.start()], re.IGNORECASE)
+               else "ngày ")
+        return (f"{pre}{_vi_int_words(d)} tháng {_vi_int_words(mo)} "
+                f"năm {_vi_int_words(y)}")
+    text = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", _date, text)
+
+    def _time(m):
+        h = int(m.group(1))
+        if h > 23:
+            return m.group(0)
+        s = _vi_int_words(h) + " giờ"
+        if m.group(2) is not None:
+            mv = int(m.group(2))
+            if mv > 59:
+                return m.group(0)
+            if mv:
+                s += " " + _vi_int_words(mv) + " phút"
+        return s
+    text = re.sub(r"\b(\d{1,2})[hH](\d{2})?\b", _time, text)
+    return text
+
+
 def _apply_glossary(text):
-    """Thay các từ trong GLOSSARY bằng cách đọc — CHỈ dùng cho text đưa vào TTS."""
+    """Tiền xử lý text TRƯỚC khi đưa vào TTS (mọi engine, mọi luồng): từ điển
+    phát âm + (tùy chọn vi_num_var) đọc số tiền/ngày/giờ kiểu Việt.
+    KHÔNG ảnh hưởng file SRT, bản dịch hay text hiển thị."""
     rx = _GLOSSARY_RX[0]
-    if rx is None or not text:
-        return text
-    lmap = _GLOSSARY_LMAP[0]
-    return rx.sub(lambda m: lmap.get(m.group(0).lower(), m.group(0)), text)
+    if rx is not None and text:
+        lmap = _GLOSSARY_LMAP[0]
+        text = rx.sub(lambda m: lmap.get(m.group(0).lower(), m.group(0)), text)
+    try:
+        if text and vi_num_var.get():
+            text = _vi_num_normalize(text)
+    except Exception:
+        pass                      # chuẩn hóa số lỗi → giữ text gốc, không chặn TTS
+    return text
 
 def _glossary_items(items):
     """Bản sao items (payload texts-json cho helper local) với text đã áp từ điển."""
     return [dict(it, text=_apply_glossary(it.get("text") or "")) for it in items]
+
+def _glossary_suggest_terms():
+    """Quét SRT/PDF đang nạp tìm từ 'lạ' — token Latin không dấu (tên riêng,
+    thuật ngữ, viết tắt mà TTS hay đọc sai) → [(term, count)] xếp theo tần suất.
+    Heuristic: từ có chữ HOA / chữ số / ký hiệu (+ . -) là ứng viên ngay;
+    từ thường toàn chữ thường phải lặp ≥5 lần (lọc bớt từ tiếng Anh phổ thông)."""
+    texts = []
+    if subtitles_cache:
+        texts.extend(clean_text(s.content) for s in subtitles_cache)
+    if PDF_CHUNKS:
+        texts.extend(c or "" for c in PDF_CHUNKS)
+    if not texts:
+        return []
+    rx = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]{2,}")
+    groups = {}   # lower → {form: count}
+    for t in texts:
+        for w in rx.findall(t):
+            w = w.rstrip(".-")
+            if len(w) < 3 or w.isdigit():
+                continue
+            groups.setdefault(w.lower(), {})
+            groups[w.lower()][w] = groups[w.lower()].get(w, 0) + 1
+    lmap = _GLOSSARY_LMAP[0]
+    out = []
+    for low, forms in groups.items():
+        if low in lmap:
+            continue                      # đã có trong từ điển
+        total = sum(forms.values())
+        # dạng xuất hiện nhiều nhất làm đại diện
+        best = max(forms, key=forms.get)
+        notable = (any(ch.isupper() or ch.isdigit() for ch in best)
+                   or "+" in best or "." in best or "-" in best)
+        if notable or total >= 5:
+            out.append((best, total))
+    out.sort(key=lambda x: -x[1])
+    return out[:30]
+
 
 def open_glossary_dialog():
     """Cửa sổ soạn từ điển phát âm — mỗi dòng: từ = cách đọc."""
@@ -2883,9 +3045,10 @@ def open_glossary_dialog():
                 continue
             term, sep, repl = line.partition("=")
             term = term.strip()
-            if not sep or not term:
-                continue
-            new[term] = repl.strip()
+            repl = repl.split("#", 1)[0].strip()  # bỏ chú thích cuối dòng
+            if not sep or not term or not repl:
+                continue                          # chưa điền cách đọc → bỏ qua
+            new[term] = repl
         GLOSSARY.clear()
         GLOSSARY.update(new)
         _glossary_compile()
@@ -2893,8 +3056,32 @@ def open_glossary_dialog():
         log(f"[Từ điển] ✅ Đã lưu {len(GLOSSARY)} mục phát âm.")
         win.destroy()
 
+    def _suggest():
+        sugg = _glossary_suggest_terms()
+        if not sugg:
+            log("[Từ điển] Không tìm thấy từ lạ — hãy Load SRT/PDF trước rồi quét lại.")
+            return
+        # bỏ những từ đã có sẵn trong textbox (kể cả dòng người dùng đang soạn dở)
+        existing = set()
+        for line in box.get("1.0", "end").splitlines():
+            term = line.partition("=")[0].strip().lower()
+            if term:
+                existing.add(term)
+        new_terms = [(t, c) for t, c in sugg if t.lower() not in existing]
+        if not new_terms:
+            log("[Từ điển] Các từ lạ tìm thấy đều đã có trong từ điển.")
+            return
+        cur = box.get("1.0", "end").strip()
+        lines = [f"# ── Gợi ý từ SRT/PDF đang nạp (điền cách đọc, xóa dòng không cần) ──"]
+        lines += [f"{t} =        # xuất hiện {c} lần" for t, c in new_terms]
+        box.insert("end", ("\n" if cur else "") + "\n".join(lines) + "\n")
+        box.see("end")
+        log(f"[Từ điển] 🔍 Gợi ý {len(new_terms)} từ — điền cách đọc rồi nhấn Lưu.")
+
     btn_row = ctk.CTkFrame(win, fg_color="transparent")
     btn_row.pack(fill="x", padx=10, pady=(4, 10))
+    ctk.CTkButton(btn_row, text="🔍 Gợi ý từ (quét SRT/PDF)", command=_suggest,
+                  height=34).pack(side="left", expand=True, fill="x", padx=(0, 4))
     ctk.CTkButton(btn_row, text="💾 Lưu từ điển", command=_save,
                   height=34).pack(side="left", expand=True, fill="x", padx=(0, 4))
     ctk.CTkButton(btn_row, text="Đóng", command=win.destroy, height=34,
@@ -4130,10 +4317,16 @@ class _RedProgressBar(tk.Canvas):
                          fill=self.FILL_COLOR, outline=self.FILL_COLOR)
         self.create_oval(fx - ir, ty - ir, fx + ir, ty + ir,
                          fill="#ffffff", outline="#ffffff")
-        # % nổi phía trên núm, kẹp trong khung
+        # % nổi phía trên núm (kèm ETA nếu có), kẹp trong khung
         pct = int(round(self._value * 100))
-        tx = min(max(fx, x0 + 12), x1 - 12)
-        self.create_text(tx, ty - 21, text=f"{pct}%",
+        txt = f"{pct}%"
+        eta = getattr(self, "eta_text", "")
+        if eta and 0 < pct < 100:
+            txt += f" · {eta}"
+        # kẹp theo nửa bề rộng text ước lượng để chữ không tràn mép khung
+        margin = max(12, 4 * len(txt))
+        tx = min(max(fx, x0 + margin), x1 - margin)
+        self.create_text(tx, ty - 21, text=txt,
                          fill="#e8e8e8", font=("Arial", 11, "bold"))
 
 
@@ -4759,8 +4952,47 @@ def play_fireworks_sound():
     threading.Thread(target=_do, daemon=True).start()
 
 
+def _notify_windows(title, body):
+    """Bắn toast notification Windows (PowerShell WinRT, không cần lib ngoài).
+    Chỉ dùng khi app không ở foreground — gọi qua _notify_if_background().
+    Mọi lỗi nuốt im lặng (thông báo không bao giờ được làm hỏng luồng chính)."""
+    try:
+        import html as _html
+        t, b = _html.escape(title), _html.escape(body)
+        ps = (
+            "[Windows.UI.Notifications.ToastNotificationManager, "
+            "Windows.UI.Notifications, ContentType = WindowsRuntime] > $null\n"
+            "[Windows.Data.Xml.Dom.XmlDocument, "
+            "Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null\n"
+            "$x = New-Object Windows.Data.Xml.Dom.XmlDocument\n"
+            "$x.LoadXml('<toast><visual><binding template=\"ToastGeneric\">"
+            f"<text>{t}</text><text>{b}</text>"
+            "</binding></visual></toast>')\n"
+            "[Windows.UI.Notifications.ToastNotificationManager]::"
+            "CreateToastNotifier('SRT TTS Studio').Show("
+            "[Windows.UI.Notifications.ToastNotification]::new($x))"
+        )
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            creationflags=CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def _notify_if_background(body="✅ Hoàn tất!"):
+    """Toast khi cửa sổ đang thu nhỏ / mất focus (job nền xong mà người dùng
+    đang làm việc khác). App ở foreground → pháo hoa + âm thanh là đủ."""
+    try:
+        if app.state() == "iconic" or app.focus_displayof() is None:
+            _notify_windows("SRT TTS Studio", body)
+    except Exception:
+        pass
+
+
 def show_fireworks():
     """Hiển thị overlay pháo hoa toàn màn hình trong 3 giây, kèm âm thanh."""
+    _notify_if_background()
 
     def _play_sound():
         try:
@@ -6153,6 +6385,36 @@ _ERROR_LOG_MARKERS = (
     "returncode",                              # subprocess thất bại
 )
 
+# ── Ghi log ra file ──────────────────────────────────────────────────────────
+# Logbox chỉ nằm trong RAM — ghi song song mọi dòng ra logs/session_YYYY-MM-DD.txt
+# (cạnh settings.json) để còn dấu vết debug sau khi tắt app. Được gọi từ
+# _append_log / log_color._do (đều chạy main thread) nên không cần lock.
+# Lỗi ghi file nuốt im lặng — logging không bao giờ được làm sập app.
+_FILE_LOG = {"fh": None, "date": ""}
+
+def _file_log(text):
+    try:
+        day = time.strftime("%Y-%m-%d")
+        if _FILE_LOG["fh"] is None or _FILE_LOG["date"] != day:
+            try:
+                if _FILE_LOG["fh"] is not None:
+                    _FILE_LOG["fh"].close()
+            except Exception:
+                pass
+            log_dir = os.path.join(os.path.dirname(_SETTINGS_FILE) or ".", "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            _FILE_LOG["fh"] = open(
+                os.path.join(log_dir, f"session_{day}.txt"),
+                "a", encoding="utf-8")
+            _FILE_LOG["date"] = day
+            _FILE_LOG["fh"].write(
+                f"\n===== Phiên mới {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+        _FILE_LOG["fh"].write(f"[{time.strftime('%H:%M:%S')}] {text}\n")
+        _FILE_LOG["fh"].flush()
+    except Exception:
+        pass
+
+
 def log(text):
     app.after(0, lambda: _append_log(text))
     try:
@@ -6170,6 +6432,7 @@ def log_color(text, color="#ffdd00", blink=None, force_color=False):
       (không đỏ, không border-flash, không error.wav) — dùng cho dòng ⚠ cảnh báo."""
     is_err = (not force_color) and any(m in text for m in _ERROR_LOG_MARKERS)
     def _do():
+        _file_log(text)
         _log_err_tag_counter[0] += 1
         tag = f"colln{_log_err_tag_counter[0]}"
         logbox.configure(state="normal")
@@ -6395,6 +6658,20 @@ def _animate_progress():
     _progress_anim_id[0] = app.after(8, _animate_progress)
 
 
+# Ước lượng thời gian còn lại (ETA) cho thanh tiến trình: cửa sổ trượt các
+# mẫu (thời điểm, giá trị) gần nhất → tốc độ trung bình → ETA. Reset khi giá
+# trị tụt mạnh (job mới / chạy lại). Chỉ đọc/ghi trên main thread (_update).
+_ETA_SAMPLES = []   # [(time.monotonic(), value 0..1)]
+_ETA_LAST_V  = [0.0]
+
+def _eta_format(sec):
+    sec = int(sec)
+    if sec >= 3600:
+        return f"còn ~{sec // 3600}g{(sec % 3600) // 60:02d}p"
+    if sec >= 60:
+        return f"còn ~{sec // 60}p{sec % 60:02d}s"
+    return f"còn ~{sec}s"
+
 def update_progress(current, total):
 
     if total <= 0:
@@ -6411,6 +6688,22 @@ def update_progress(current, total):
                 pass
             _progress_hide_id[0] = None
         _show_progress_bar()
+
+        # ── ETA ──
+        now = time.monotonic()
+        if value < _ETA_LAST_V[0] - 0.05 or value >= 1.0:
+            _ETA_SAMPLES.clear()        # job mới / restart / xong → tính lại
+        _ETA_LAST_V[0] = value
+        _ETA_SAMPLES.append((now, value))
+        if len(_ETA_SAMPLES) > 30:
+            del _ETA_SAMPLES[:-30]
+        eta = ""
+        if len(_ETA_SAMPLES) >= 3 and value < 0.999:
+            t0, v0 = _ETA_SAMPLES[0]
+            dv, dt = value - v0, now - t0
+            if dv > 1e-6 and dt > 2.0:   # đủ dữ liệu mới hiện (tránh số nhảy loạn)
+                eta = _eta_format((1.0 - value) * dt / dv)
+        progress_bar.eta_text = eta
 
         # Đặt đích mới rồi để _animate_progress trượt dần thành nhiều đoạn nhỏ.
         _progress_target[0] = value
@@ -6445,6 +6738,7 @@ def _blink_log_tag(tag, c1="#ff3b30", c2="#ffffff", total_ms=5000, step_ms=300, 
 
 
 def _append_log(text):
+    _file_log(text)
     is_err = any(m in text for m in _ERROR_LOG_MARKERS)
     logbox.configure(state="normal")
     if is_err:
@@ -7677,6 +7971,14 @@ def _parse_volume(raw, default=1.0):
         return default
 
 
+def _ff_sub_filterpath(path):
+    """Escape đường dẫn Windows cho filter subtitles= của ffmpeg
+    (C:\\a\\b.srt → 'C\\:/a/b.srt' — slash xuôi + escape dấu hai chấm/nháy)."""
+    p = os.path.abspath(path).replace("\\", "/")
+    p = p.replace(":", "\\:").replace("'", "\\'")
+    return f"'{p}'"
+
+
 def _run_mux_thread():
     global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR, _VIDEOTOOL_PROC, _VIDEOTOOL_OUT
     global VIDEOTOOL_PAUSED, VIDEOTOOL_STOP
@@ -7734,6 +8036,20 @@ def _run_mux_thread():
             app.after(0, lambda: log("[Ghép Audio] ⚠ Video không có audio gốc — chỉ dùng audio final"))
         mode_desc = f"thay thế (audio×{aud_vol})"
 
+    # Gắn cứng phụ đề (wizard lồng tiếng set MUX_BURN_SRT): filter video phải
+    # nằm CÙNG filter_complex (ffmpeg cấm trộn -vf với -filter_complex) và
+    # buộc re-encode video (không -c:v copy được khi có filter).
+    burn_srt = MUX_BURN_SRT if (MUX_BURN_SRT and os.path.isfile(MUX_BURN_SRT)) else ""
+    if burn_srt:
+        filt = f"[0:v]subtitles={_ff_sub_filterpath(burn_srt)}[vout];" + filt
+        vmap = "[vout]"
+        vcodec = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast"]
+        app.after(0, lambda: log(f"[Ghép Audio] 📝 Gắn phụ đề cứng: {os.path.basename(burn_srt)} "
+                                 "(re-encode video — chậm hơn -c:v copy)"))
+    else:
+        vmap = "0:v:0"
+        vcodec = ["-c:v", "copy"]
+
     app.after(0, lambda: log(f"[Ghép Audio] Chế độ: {mode_desc}"))
     app.after(0, lambda: log(f"[Ghép Audio] Output: {out_path}"))
     app.after(0, lambda: set_mode("muxing"))
@@ -7745,9 +8061,9 @@ def _run_mux_thread():
         "-i", vid,
         "-i", aud,
         "-filter_complex", filt,
-        "-map", "0:v:0",
+        "-map", vmap,
         "-map", amap,
-        "-c:v", "copy",
+    ] + vcodec + [
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         out_path
@@ -8181,6 +8497,7 @@ async def _generate_pdf_tts():
     current_index = 0
     app.after(0, lambda: set_mode("pdf_tts_done"))
     app.after(200, open_output_folder)
+    _maybe_auto_retry_fail()
 
 
 def start_pdf_tts():
@@ -8495,15 +8812,34 @@ def _save_tts_minimax_sync(text, filename, voice, api_key):
 
 
 
+def _edge_rate():
+    """Tốc độ Edge TTS từ edge_rate_var, chuẩn hóa '+N%' — sai format → +10%."""
+    v = edge_rate_var.get().strip().replace(" ", "")
+    m = re.fullmatch(r"([+-]?)(\d{1,3})%", v)
+    if m:
+        return f"{m.group(1) or '+'}{m.group(2)}%"
+    return "+10%"
+
+
+def _edge_pitch():
+    """Cao độ Edge TTS từ edge_pitch_var, chuẩn hóa '+NHz' — sai format → +0Hz."""
+    v = edge_pitch_var.get().strip().replace(" ", "")
+    m = re.fullmatch(r"([+-]?)(\d{1,3})(hz)", v, re.IGNORECASE)
+    if m:
+        return f"{m.group(1) or '+'}{m.group(2)}Hz"
+    return "+0Hz"
+
+
 async def save_tts(text, filename):
-    text = _apply_glossary(text)  # từ điển phát âm — chỉ đổi text đưa vào TTS
+    text = _apply_glossary(text)  # tiền xử lý TTS: từ điển phát âm + đọc số kiểu Việt
     for attempt in range(3):
         try:
             if TTS_PROVIDER == "Edge TTS":
                 communicate = edge_tts.Communicate(
                     text=text,
                     voice=VOICE,
-                    rate="+10%"
+                    rate=_edge_rate(),
+                    pitch=_edge_pitch()
                 )
                 await communicate.save(filename)
             else:
@@ -8859,6 +9195,22 @@ def qc_retry_missing_lines():
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _maybe_auto_retry_fail():
+    """Checkbox 'Tự tạo lại dòng FAIL khi xong' bật + có FAIL → tự chạy
+    qc_retry_missing_lines() ngay sau batch (đỡ phải bấm 🧩 tay). KHÔNG chạy
+    trong các chuỗi wizard/hàng đợi/phân vai — chúng tự xử lý FAIL theo cách riêng."""
+    try:
+        if not auto_retry_fail_var.get() or FAIL_COUNT <= 0:
+            return
+    except Exception:
+        return
+    if (_AUTODUB_RUNNING[0] or _QUEUE_RUNNING[0]
+            or _MULTIVOICE_RUNNING[0] or _QC_REGEN_RUNNING[0]):
+        return
+    log(f"🧩 Tự động tạo lại {FAIL_COUNT} dòng FAIL (checkbox đang bật)...")
+    app.after(800, qc_retry_missing_lines)
+
+
 def _check_rvc_preflight():
     """Kiểm tra các thành phần RVC trước khi bắt đầu tiến trình.
     Trả về True nếu hợp lệ, False + log lỗi nếu không.
@@ -9010,6 +9362,106 @@ def _apply_rvc_sync(filename):
 # TTS
 # =========================
 
+# ── Edge TTS song song ────────────────────────────────────────────────────────
+# Edge TTS là API mạng miễn phí, mỗi dòng chủ yếu là chờ network → chạy đồng
+# thời _TTS_PARALLEL_N dòng nhanh hơn nhiều lần với SRT dài. CHỈ áp dụng cho
+# Edge TTS không kèm RVC: provider trả phí giữ tuần tự (tôn trọng rate-limit),
+# RVC giữ tuần tự (subprocess nặng, không chạy chồng). Giữ nguyên QC + retry
+# per-line, FAIL + continue, Pause/Stop, delay chống throttle (tính theo slot).
+_TTS_PARALLEL_N = 4
+
+async def _tts_par_one(idx, text, sem, state, dmin, dmax):
+    """Sinh 1 dòng (QC + retry, giống vòng tuần tự) trong chế độ song song."""
+    global FAIL_COUNT
+    async with sem:
+        # asyncio chạy 1 thread nên FAIL_COUNT/state không cần lock
+        if stop_requested or state["abort"]:
+            return
+        while paused and not stop_requested:
+            await asyncio.sleep(0.3)
+        if stop_requested or state["abort"]:
+            return
+        if not _net_was_online[0]:
+            state["netdown"] = True
+            state["abort"] = True
+            return
+        filename = os.path.join(OUTPUT_DIR, f"line_{idx:04d}.mp3")
+        log(f"Generating {filename}")
+        ok = False
+        _bad = False
+        _reason = ""
+        _detail = ""
+        for _qc_attempt in range(_QC_MAX_RETRIES + 1):
+            _gen_text = (_sanitize_tts_text(text)
+                         if _qc_attempt == _QC_MAX_RETRIES else text)
+            try:
+                ok = await save_tts(_gen_text, filename)
+            except QuotaExhaustedError as qe:
+                log(f"HẾT QUOTA: {qe}")
+                state["quota"] = True
+                state["abort"] = True
+                return
+            if not ok:
+                break
+            _loop = asyncio.get_event_loop()
+            _bad, _reason, _detail = await _loop.run_in_executor(
+                None, _audio_quality_check, filename, text)
+            if not _bad:
+                break
+            if _qc_attempt < _QC_MAX_RETRIES:
+                log(f"  ⚠ Dòng {idx}: audio {_reason} ({_detail}) — "
+                    f"tạo lại lần {_qc_attempt + 1}/{_QC_MAX_RETRIES}")
+                try:
+                    os.remove(filename)
+                except Exception:
+                    pass
+        if ok and not _bad:
+            log(f"OK {idx}")
+        elif ok and _bad:
+            _rename_bad_audio(filename, idx, _reason, _detail)
+            log(f"FAIL {idx}")
+            FAIL_COUNT += 1
+        else:
+            log(f"FAIL {idx}")
+            FAIL_COUNT += 1
+        state["done"] += 1
+        update_progress(state["pre_done"] + state["done"], state["total"])
+        # delay chống throttle giữ NGUYÊN theo slot (mỗi luồng vẫn nghỉ giữa
+        # 2 dòng của nó) — tốc độ tổng = N slot chạy xen kẽ
+        await asyncio.sleep(random.uniform(dmin, dmax))
+
+
+async def _generate_tts_parallel():
+    """Driver song song cho Edge TTS: gom các dòng còn thiếu rồi gather."""
+    total = len(subtitles_cache)
+    items = []
+    skipped = 0
+    for i in range(current_index, total):
+        text = clean_text(subtitles_cache[i].content)
+        if not text:
+            continue
+        if os.path.exists(os.path.join(OUTPUT_DIR, f"line_{i:04d}.mp3")):
+            skipped += 1
+            continue
+        items.append((i, text))
+    if skipped:
+        log(f"SKIP {skipped} dòng đã có audio")
+    state = {"done": 0, "abort": False, "netdown": False, "quota": False,
+             "total": total, "pre_done": total - len(items)}
+    if not items:
+        return state
+    try:
+        dmin = max(0.0, float(delay_min_var.get()))
+        dmax = max(dmin, float(delay_max_var.get()))
+    except ValueError:
+        dmin, dmax = TTS_DELAY_MIN, TTS_DELAY_MAX
+    log(f"⚡ Edge TTS song song ×{_TTS_PARALLEL_N} — {len(items)} dòng cần tạo")
+    sem = asyncio.Semaphore(_TTS_PARALLEL_N)
+    await asyncio.gather(*[
+        _tts_par_one(i, t, sem, state, dmin, dmax) for i, t in items])
+    return state
+
+
 async def generate_tts():
 
     global current_index
@@ -9033,6 +9485,31 @@ async def generate_tts():
     total = len(subtitles_cache)
 
     update_progress(current_index, total)
+
+    # ⚡ Nhánh song song: chỉ Edge TTS không RVC (xem chú thích _TTS_PARALLEL_N)
+    if TTS_PROVIDER == "Edge TTS" and not RVC_ENABLED and _TTS_PARALLEL_N > 1:
+        _st = await _generate_tts_parallel()
+        if stop_requested:
+            log("PROCESS STOPPED")
+            return
+        if _st["netdown"]:
+            log("❌ TTS: Mất kết nối Internet — dừng tiến trình. "
+                "Khôi phục mạng rồi nhấn Resume để tiếp tục.")
+            app.after(0, lambda: set_mode("tts_stopped"))
+            return
+        if _st["quota"]:
+            _provider = TTS_PROVIDER
+            app.after(0, lambda p=_provider: _show_quota_banner(p))
+            app.after(0, lambda: set_mode("tts_stopped"))
+            return
+        log("TTS DONE")
+        app.after(0, show_fireworks)
+        update_progress(total, total)
+        current_index = 0
+        app.after(0, lambda: set_mode("tts_done"))
+        app.after(200, open_output_folder)
+        _maybe_auto_retry_fail()
+        return
 
     while current_index < total:
 
@@ -9165,6 +9642,7 @@ async def generate_tts():
 
     app.after(0, lambda: set_mode("tts_done"))
     app.after(200, open_output_folder)
+    _maybe_auto_retry_fail()
 
 
 def _voxcpm_transcribe_audio():
@@ -11433,7 +11911,8 @@ def _autodub_translate(srt_path, out_dir):
         app.after(0, lambda: _translate_set_controls(False))
 
 
-def run_autodub_chain(video, stt_model, stt_lang, do_translate, keep_orig):
+def run_autodub_chain(video, stt_model, stt_lang, do_translate, keep_orig,
+                      burn_sub=False):
     """Chuỗi lồng tiếng tự động — preflight fail-sớm rồi chạy 5 bước trong 1 worker."""
     global SRT_FILE, OUTPUT_DIR, current_index
     if _AUTODUB_RUNNING[0]:
@@ -11488,7 +11967,7 @@ def run_autodub_chain(video, stt_model, stt_lang, do_translate, keep_orig):
 
     def _run():
         global SRT_FILE, OUTPUT_DIR, current_index
-        global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR
+        global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR, MUX_BURN_SRT
         _AUTODUB_RUNNING[0] = True
         try:
             log_color("━━━ LỒNG TIẾNG TỰ ĐỘNG ━━━", "#36c5ff")
@@ -11567,9 +12046,36 @@ def run_autodub_chain(video, stt_model, stt_lang, do_translate, keep_orig):
             MUX_VIDEO_FILE = video
             MUX_AUDIO_FILE = final_path
             MUX_OUTPUT_DIR = out_dir
-            _run_mux_thread()  # blocking; tự log/fireworks/mở thư mục khi xong
+            MUX_BURN_SRT = srt_path if burn_sub else ""
+            try:
+                _run_mux_thread()  # blocking; tự log/fireworks/mở thư mục khi xong
+            finally:
+                MUX_BURN_SRT = ""
+            dubbed_path = os.path.join(
+                out_dir,
+                os.path.splitext(os.path.basename(video))[0] + "_dubbed.mp4")
+            if not os.path.isfile(dubbed_path):
+                log("[Lồng tiếng] ❌ Bước ghép video không ra file — xem log Ghép Audio ở trên.")
+                return
+
+            # ── Tổng kết chuỗi ──
+            rep = dict(_LAST_MERGE_REPORT)
             log_color("━━━ LỒNG TIẾNG TỰ ĐỘNG: HOÀN TẤT ━━━",
                       globals().get("_OK", "#2dd4a7"))
+            log(f"[Lồng tiếng] 📊 Tổng kết: {rep.get('total', len(subtitles_cache))} dòng phụ đề"
+                f" → {rep.get('lines', 0)} dòng audio vào merge; {FAIL_COUNT} dòng FAIL.")
+            if rep.get("stretched"):
+                log(f"  • ⏩ {rep['stretched']} câu được tăng tốc cho khớp khe thời gian.")
+            if rep.get("centered"):
+                log(f"  • 🎯 {rep['centered']} câu ngắn được căn giữa khe lặng.")
+            _ov = rep.get("overflow") or []
+            if _ov:
+                _pv = ", ".join(str(x) for x in _ov[:20])
+                _more = "" if len(_ov) <= 20 else f" …(+{len(_ov) - 20})"
+                log(f"  • ⚠ {len(_ov)} câu vẫn tràn khe (sửa timing/text SRT các dòng: {_pv}{_more})")
+            if FAIL_COUNT:
+                log("  • 🧩 Vá dòng FAIL: '🧩 Tạo lại dòng thiếu' → Merge FFmpeg → Ghép Vào Video.")
+            log(f"[Lồng tiếng] 🎉 Video lồng tiếng: {dubbed_path}")
         except Exception as e:
             log(f"[Lồng tiếng] ❌ Lỗi chuỗi: {e}")
         finally:
@@ -11582,7 +12088,7 @@ def open_autodub_dialog():
     """Wizard 1 nút: chọn video → chuỗi STT → Dịch → TTS → Merge → Mux tự chạy."""
     win = ctk.CTkToplevel(app)
     win.title("🎬 Lồng tiếng tự động")
-    win.geometry("660x430")
+    win.geometry("660x480")
     win.transient(app); win.lift(); win.attributes("-topmost", True)
     win.after(300, lambda: win.attributes("-topmost", False))
 
@@ -11632,6 +12138,12 @@ def open_autodub_dialog():
     ctk.CTkCheckBox(row3, text="Giữ audio gốc (trộn nhạc/SFX dưới giọng đọc)",
                     variable=v_keep, font=("Arial", 12)).pack(side="left")
 
+    row4 = ctk.CTkFrame(win, fg_color="transparent")
+    row4.pack(fill="x", padx=14, pady=4)
+    v_burnsub = ctk.BooleanVar(value=False)
+    ctk.CTkCheckBox(row4, text="Gắn phụ đề cứng vào video (re-encode — chậm hơn)",
+                    variable=v_burnsub, font=("Arial", 12)).pack(side="left")
+
     ctk.CTkLabel(win, text="Có thể Tạm dừng/Dừng từng bước bằng các nút điều khiển sẵn có\n"
                            "(STT ở trang Tách Nội Dung; Dịch ở trang Dịch; TTS/Mux bằng nút chung trên thanh tiêu đề).",
                  font=("Arial", 11), text_color="#999",
@@ -11644,7 +12156,8 @@ def open_autodub_dialog():
             return
         win.destroy()
         run_autodub_chain(video, v_model.get(), v_lang.get(),
-                          bool(v_translate.get()), bool(v_keep.get()))
+                          bool(v_translate.get()), bool(v_keep.get()),
+                          burn_sub=bool(v_burnsub.get()))
 
     ctk.CTkButton(win, text="🎬 Bắt đầu lồng tiếng tự động", command=_start,
                   fg_color="#2fa572", hover_color="#37b87f", height=44,
@@ -11664,6 +12177,9 @@ def open_autodub_dialog():
 _DUB_MAX_SPEED = 2.0    # tăng tốc tối đa (giữ độ rõ); câu vẫn dài hơn sẽ được cảnh báo
 _DUB_GAP_MS    = 50     # khe hở an toàn giữa 2 câu (ms)
 _DUB_CENTER_MAX_S = 0.8 # dịch tối đa khi căn giữa câu ngắn vào khe lặng (giây)
+
+# Kết quả phân tích của lần merge gần nhất (wizard lồng tiếng đọc để tổng kết)
+_LAST_MERGE_REPORT = {}
 
 # Định dạng output cho Merge FFmpeg: tên file + codec args
 _MERGE_FORMATS = {
@@ -11803,11 +12319,24 @@ def merge_ffmpeg():
         log(f"⚠️ {len(dedup)} câu vẫn dài hơn khe dù đã tăng tốc {_DUB_MAX_SPEED}x — "
             f"nên sửa timing/nội dung phụ đề ở các dòng: {preview}{more}")
 
+    # Lưu kết quả phân tích cho báo cáo tổng kết (wizard lồng tiếng)
+    _LAST_MERGE_REPORT.clear()
+    _LAST_MERGE_REPORT.update({
+        "lines": real_index, "total": n_sub,
+        "stretched": len(stretched), "centered": len(centered),
+        "overflow": sorted(set(overflow)),
+    })
+
     filter_text = ";\n".join(filters)
     filter_text += (
         f';\n{"".join(mixes)}'
         f'amix=inputs={real_index}:normalize=0'
     )
+    if bool(merge_loudnorm_var.get()):
+        # Chuẩn hóa loudness final về -16 LUFS (chuẩn YouTube/podcast) — nối
+        # thẳng sau amix trong cùng chain nên không cần label trung gian.
+        filter_text += ',loudnorm=I=-16:TP=-1.5:LRA=11'
+        log("🔊 Loudnorm: chuẩn hóa âm lượng final về -16 LUFS (chuẩn YouTube).")
 
     filter_path = os.path.join(OUTPUT_DIR, "filter.txt")
 
@@ -14940,6 +15469,12 @@ ctk.CTkOptionMenu(_merge_opt_row, variable=merge_format_var,
                   values=["mp3", "wav", "m4a", "opus"], width=80,
                   font=("Arial", 12)).pack(side="left")
 
+_merge_opt_row2 = ctk.CTkFrame(_g1_create, fg_color="transparent")
+_merge_opt_row2.pack(side="top", fill="x", padx=4, pady=(0, 4))
+merge_loudnorm_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(_merge_opt_row2, text="Chuẩn hóa âm lượng (-16 LUFS, chuẩn YouTube)",
+                variable=merge_loudnorm_var, font=("Arial", 12)).pack(side="left", padx=(2, 0))
+
 btn_open_se = ctk.CTkButton(_g1_io, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="top", fill="x", padx=4, pady=4)
 btn_open_se.bind("<Enter>", lambda e: btn_open_se.configure(fg_color="#8B5CF6"))
@@ -16835,10 +17370,18 @@ def show_splash_then_auth():
     """Hiện splash screen với logo ở giữa màn hình, tắt sau 3s rồi chạy auth."""
     splash = tk.Toplevel()
     splash.overrideredirect(True)  # Không có thanh tiêu đề
-    splash.configure(bg="#1a1a2e")
+    # Màu "chìa khóa" để bo tròn 4 góc (vùng góc tô màu này sẽ trong suốt).
+    # Dùng hồng cánh sen — màu không xuất hiện trong ảnh, tránh key nhầm
+    # các pixel tóc đen gần #000000 (gây "chấm trắng li ti").
+    _KEY = "#FF00FF"
+    splash.configure(bg=_KEY)
+    try:
+        splash.wm_attributes("-transparentcolor", _KEY)
+    except Exception:
+        pass
 
-    # Kích thước splash
-    sw, sh = 400, 340
+    # Kích thước splash (vuông — ảnh nền bo góc + chữ đè lên)
+    sw, sh = 320, 320
 
     # Căn giữa màn hình
     screen_w = splash.winfo_screenwidth()
@@ -16849,48 +17392,70 @@ def show_splash_then_auth():
     splash.lift()
     splash.attributes("-topmost", True)
 
-    # Frame trung tâm — căn giữa toàn bộ nội dung
-    center = tk.Frame(splash, bg="#1a1a2e")
-    center.place(relx=0.5, rely=0.5, anchor="center")
+    # ===== Poster: ảnh nền phủ kín splash + chữ đè lên =====
+    # Canvas phủ toàn bộ splash để vừa hiển thị ảnh vừa vẽ chữ chồng lên
+    _sp_canvas = tk.Canvas(splash, width=sw, height=sh,
+                           bg=_KEY, highlightthickness=0, bd=0)
+    _sp_canvas.pack(fill="both", expand=True)
 
-    # Load và hiển thị logo
+    # Dựng ảnh nền: cover-fit ảnh vào khung + đổ tối dần ở dưới (scrim)
     try:
-        logo_path = get_resource_path("logo.ico")
-
-        img = Image.open(logo_path)
-        # Lấy frame lớn nhất nếu là multi-frame ICO
-        sizes = getattr(img, 'n_frames', 1)
-        best = img
-        if sizes > 1:
-            for i in range(sizes):
-                img.seek(i)
-                if img.size[0] > best.size[0]:
-                    best = img.copy()
-            img = best
-
-        # Resize giữ tỷ lệ, tối đa 160x160
-        img.thumbnail((160, 160), Image.LANCZOS)
-        logo_img = ImageTk.PhotoImage(img)
-
-        logo_label = tk.Label(center, image=logo_img, bg="#1a1a2e")
-        logo_label.image = logo_img  # Giữ reference
-        logo_label.pack(pady=(0, 12))
+        from PIL import ImageDraw
+        _logo_path = ""
+        for _cand in ("logo.png", "logo.ico"):
+            try:
+                _p = get_resource_path(_cand)
+                if os.path.isfile(_p):
+                    _logo_path = _p
+                    break
+            except Exception:
+                continue
+        base = Image.open(_logo_path)
+        # Frame lớn nhất nếu là ICO nhiều frame
+        if getattr(base, "n_frames", 1) > 1:
+            best = base
+            for i in range(base.n_frames):
+                base.seek(i)
+                if base.size[0] > best.size[0]:
+                    best = base.copy()
+            base = best
+        base = base.convert("RGBA")
+        # Cover-fit: scale phủ kín rồi crop giữa
+        scale = max(sw / base.width, sh / base.height)
+        nw, nh = max(1, int(base.width * scale)), max(1, int(base.height * scale))
+        base = base.resize((nw, nh), Image.LANCZOS)
+        left, top = (nw - sw) // 2, (nh - sh) // 2
+        base = base.crop((left, top, left + sw, top + sh))
+        # Scrim: trong suốt ở trên → tối đậm ở dưới để chữ dễ đọc
+        scrim = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        _d = ImageDraw.Draw(scrim)
+        _band = int(sh * 0.40)
+        for _yy in range(_band, sh):
+            _a = int(238 * (_yy - _band) / max(1, (sh - _band)))
+            _d.line([(0, _yy), (sw, _yy)], fill=(14, 14, 28, _a))
+        base = Image.alpha_composite(base, scrim)
+        # Bo tròn 4 góc: tô góc bằng màu _KEY để được key trong suốt
+        _radius = 32
+        _mask = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(_mask).rounded_rectangle(
+            [0, 0, sw - 1, sh - 1], radius=_radius, fill=255)
+        _rounded = Image.new("RGB", (sw, sh), (255, 0, 255))  # = _KEY #FF00FF
+        _rounded.paste(base.convert("RGB"), (0, 0), _mask)
+        poster_img = ImageTk.PhotoImage(_rounded)
+        _sp_canvas.create_image(0, 0, anchor="nw", image=poster_img)
+        _sp_canvas.image = poster_img  # Giữ reference
     except Exception:
-        # Nếu không load được logo, hiện tên app lớn thay thế
-        tk.Label(
-            center, text="🎬",
-            font=("Segoe UI", 48),
-            fg="white", bg="#1a1a2e"
-        ).pack(pady=(0, 12))
+        _sp_canvas.create_text(sw // 2, sh // 2 - 40, text="🎬",
+                               font=("Segoe UI", 48), fill="white")
 
-    # Tên app — màu cầu vồng chuyển động (giống title chính)
+    # Vị trí chữ (đè lên vùng tối phía dưới ảnh)
+    _ty_title = sh - 96
+    _ty_by = sh - 56
+    _ty_sub = sh - 30
+
+    # Tên app — màu cầu vồng chuyển động, có bóng cho dễ đọc trên ảnh
     _sp_text = "SRT TTS Studio"
-    _sp_font = tkFont.Font(family="Segoe UI", size=16, weight="bold")
-    _sp_w = _sp_font.measure(_sp_text) + 12
-    _sp_h = _sp_font.metrics("linespace") + 8
-    _sp_canvas = tk.Canvas(center, width=_sp_w, height=_sp_h,
-                           bg="#1a1a2e", highlightthickness=0)
-    _sp_canvas.pack(pady=(0, 4))
+    _sp_font = tkFont.Font(family="Segoe UI", size=22, weight="bold")
     _sp_off = [0.0]
 
     def _animate_splash_title():
@@ -16898,9 +17463,19 @@ def show_splash_then_auth():
             _sp_canvas.delete("sptitle")
             chars = list(_sp_text)
             total_w = _sp_font.measure(_sp_text)
-            x = _sp_w // 2 - total_w // 2
-            cy = _sp_h // 2
+            x = sw // 2 - total_w // 2
+            cy = _ty_title
             off = _sp_off[0]
+            # Lớp bóng đen phía dưới
+            for i, ch in enumerate(chars):
+                ch_w = _sp_font.measure(ch)
+                _sp_canvas.create_text(
+                    x + ch_w // 2 + 2, cy + 2, text=ch, font=_sp_font,
+                    fill="#000000", tags="sptitle"
+                )
+                x += ch_w
+            # Lớp chữ màu cầu vồng
+            x = sw // 2 - total_w // 2
             for i, ch in enumerate(chars):
                 ch_w = _sp_font.measure(ch)
                 hue = off + i / max(len(chars), 1) * 0.7
@@ -16916,17 +17491,18 @@ def show_splash_then_auth():
 
     _animate_splash_title()
 
-    tk.Label(
-        center, text="by Mr.Tân",
-        font=("Segoe UI", 9),
-        fg="#ffffff", bg="#1a1a2e"
-    ).pack(pady=(0, 10))
+    # "by Mr.Tân" — có bóng
+    _sp_canvas.create_text(sw // 2 + 1, _ty_by + 1, text="by Mr.Tân",
+                           font=("Segoe UI", 10), fill="#000000")
+    _sp_canvas.create_text(sw // 2, _ty_by, text="by Mr.Tân",
+                           font=("Segoe UI", 10), fill="#ffffff")
 
-    tk.Label(
-        center, text="Đang khởi động & kiểm tra kết nối...",
-        font=("Segoe UI", 9),
-        fg="#ffdd00", bg="#1a1a2e"
-    ).pack()
+    # Dòng trạng thái — có bóng
+    _sub_text = "Đang khởi động & kiểm tra kết nối..."
+    _sp_canvas.create_text(sw // 2 + 1, _ty_sub + 1, text=_sub_text,
+                           font=("Segoe UI", 9), fill="#000000")
+    _sp_canvas.create_text(sw // 2, _ty_sub, text=_sub_text,
+                           font=("Segoe UI", 9), fill="#ffdd00")
 
     def _close_splash():
         splash.destroy()
