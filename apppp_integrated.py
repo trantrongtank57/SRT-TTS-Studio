@@ -4832,6 +4832,15 @@ _g5_studio = _sec_row(_sec_es)
 _sec_tools = _make_section("Nhật ký & Reset", "Xóa log · đặt lại trạng thái giao diện", "#5a6478", ws="tools")
 _g_tools = _sec_row(_sec_tools)
 
+# Tiện ích SRT (dời thời gian — lambda vì hàm được định nghĩa phía dưới)
+_sec_srttools = _make_section("Tiện ích SRT", "Dời thời gian phụ đề · sửa lỗi file SRT",
+                              "#3aa675", ws="tools")
+_g_srttools = _sec_row(_sec_srttools)
+btn_srt_shift = ctk.CTkButton(_g_srttools, text="⏱ Dời thời gian SRT",
+                              command=lambda: open_srt_shift_dialog(),
+                              height=36, font=("Arial", 13))
+btn_srt_shift.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
 _sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#5a6478", ws="system")
 _g6 = _sec_row(_sec6)
 
@@ -6898,6 +6907,170 @@ def srt_lint_report():
         log(f"  …(+{len(issues) - 40} mục nữa)")
     log(f"Tổng: {bad} lỗi ❌ (nên sửa SRT trước khi chạy), {warn} cảnh báo ⚠ "
         f"(merge sẽ tự tăng tốc/xử lý) / {len(subtitles_cache)} dòng.")
+
+
+def _srt_split_point(txt):
+    """Vị trí tách đôi câu dài: ranh giới câu (.!?;,) gần giữa nhất, chừa mỗi
+    nửa ≥ 50 ký tự. None nếu không có chỗ tách hợp lý."""
+    mid = len(txt) // 2
+    best = None
+    for m in re.finditer(r"[.!?;,]\s+", txt):
+        pos = m.end()
+        if 50 <= pos <= len(txt) - 50:
+            if best is None or abs(pos - mid) < abs(best - mid):
+                best = pos
+    return best
+
+
+def srt_autofix():
+    """🔧 Dọn & sửa SRT đang nạp → <tên>_fixed.srt rồi nạp lại. Tự sửa được:
+    sắp lại thứ tự theo thời gian, timestamp ngược (end<start), bỏ dòng trống,
+    2 dòng trùng/lùi mốc bắt đầu (+0.1s), tách đôi dòng >400 ký tự tại ranh
+    giới câu (chia khe theo tỷ lệ độ dài). KHÔNG tự sửa được: câu tràn khe
+    (text dài hơn khe dù tăng tốc 2x) — phải rút gọn text/sửa timing tay."""
+    global SRT_FILE, current_index
+    if not subtitles_cache or not SRT_FILE:
+        log("[Sửa SRT] ❌ Chưa Load SRT.")
+        return
+    import datetime as _dt
+    items = []
+    n_empty = 0
+    for s in subtitles_cache:
+        if not clean_text(s.content):
+            n_empty += 1
+            continue
+        items.append({"start": s.start.total_seconds(),
+                      "end": s.end.total_seconds(),
+                      "content": s.content})
+    if not items:
+        log("[Sửa SRT] ❌ SRT không còn dòng nào có nội dung.")
+        return
+    _starts0 = [it["start"] for it in items]
+    items.sort(key=lambda it: it["start"])
+    n_sort = 1 if [it["start"] for it in items] != _starts0 else 0
+    n_rev = 0
+    for it in items:
+        if it["end"] < it["start"]:
+            it["end"] = it["start"] + 0.3 + len(clean_text(it["content"])) * 0.09
+            n_rev += 1
+    n_dup = 0
+    for k in range(1, len(items)):
+        if items[k]["start"] <= items[k - 1]["start"]:
+            items[k]["start"] = items[k - 1]["start"] + 0.1
+            if items[k]["end"] <= items[k]["start"]:
+                items[k]["end"] = items[k]["start"] + 1.0
+            n_dup += 1
+    out = []
+    n_split = 0
+    for it in items:
+        txt = clean_text(it["content"])
+        if len(txt) > 400:
+            cut = _srt_split_point(txt)
+            if cut:
+                a, b = txt[:cut].strip(), txt[cut:].strip()
+                dur = max(0.5, it["end"] - it["start"])
+                mid = it["start"] + dur * (len(a) / max(1, len(txt)))
+                out.append({"start": it["start"], "end": mid, "content": a})
+                out.append({"start": mid, "end": it["end"], "content": b})
+                n_split += 1
+                continue
+        out.append(it)
+    total = n_sort + n_rev + n_empty + n_dup + n_split
+    if total == 0:
+        log("[Sửa SRT] ✅ Không có gì để tự sửa. (Câu tràn khe — nếu có — phải sửa tay.)")
+        return
+    subs_out = [srt.Subtitle(index=k + 1,
+                             start=_dt.timedelta(seconds=it["start"]),
+                             end=_dt.timedelta(seconds=it["end"]),
+                             content=it["content"])
+                for k, it in enumerate(out)]
+    out_path = os.path.splitext(SRT_FILE)[0] + "_fixed.srt"
+    try:
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(srt.compose(subs_out))
+    except Exception as e:
+        log(f"[Sửa SRT] ❌ Không ghi được file: {e}")
+        return
+    log("━━━ SỬA SRT ━━━")
+    if n_sort:  log("  • Đã sắp lại thứ tự dòng theo thời gian bắt đầu")
+    if n_rev:   log(f"  • Sửa {n_rev} timestamp ngược (end < start)")
+    if n_empty: log(f"  • Bỏ {n_empty} dòng trống")
+    if n_dup:   log(f"  • Tách {n_dup} cặp dòng trùng/lùi mốc bắt đầu (+0.1s)")
+    if n_split: log(f"  • Tách đôi {n_split} dòng > 400 ký tự tại ranh giới câu")
+    log(f"[Sửa SRT] 💾 {os.path.basename(out_path)} — đang nạp lại file đã sửa...")
+    SRT_FILE = out_path
+    current_index = 0
+    load_subtitles(force_select=False)   # tự chạy khám nhanh trên file mới
+    set_mode("srt")
+
+
+def open_srt_shift_dialog():
+    """⏱ Dời toàn bộ thời gian một file SRT ±N ms → <tên>_shifted.srt."""
+    win = ctk.CTkToplevel(app)
+    win.title("⏱ Dời thời gian SRT")
+    win.geometry("560x250")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    ctk.CTkLabel(win, text="Dời toàn bộ phụ đề sớm/muộn N mili-giây (sub lệch tiếng)",
+                 font=("Arial", 13, "bold")).pack(pady=(12, 6))
+    row1 = ctk.CTkFrame(win, fg_color="transparent")
+    row1.pack(fill="x", padx=14, pady=4)
+    ctk.CTkLabel(row1, text="File SRT:", font=("Arial", 12), width=70,
+                 anchor="w").pack(side="left")
+    v_file = ctk.StringVar(value=SRT_FILE or "")
+    ctk.CTkEntry(row1, textvariable=v_file).pack(side="left", expand=True,
+                                                 fill="x", padx=(0, 6))
+    def _browse():
+        p = filedialog.askopenfilename(title="Chọn file SRT",
+                                       filetypes=[("SRT files", "*.srt")])
+        if p:
+            v_file.set(p)
+    ctk.CTkButton(row1, text="Browse", width=80, command=_browse).pack(side="left")
+
+    row2 = ctk.CTkFrame(win, fg_color="transparent")
+    row2.pack(fill="x", padx=14, pady=4)
+    ctk.CTkLabel(row2, text="Dời (ms):", font=("Arial", 12), width=70,
+                 anchor="w").pack(side="left")
+    v_ms = ctk.StringVar(value="500")
+    ctk.CTkEntry(row2, textvariable=v_ms, width=100,
+                 justify="center").pack(side="left")
+    ctk.CTkLabel(row2, text="(+500 = phụ đề muộn hơn nửa giây; -500 = sớm hơn)",
+                 font=("Arial", 11), text_color="#888").pack(side="left", padx=8)
+
+    def _apply():
+        path = v_file.get().strip()
+        if not path or not os.path.isfile(path):
+            msg.showerror("Dời SRT", "Chưa chọn file SRT hợp lệ.")
+            return
+        try:
+            ms = int(float(v_ms.get().strip()))
+        except ValueError:
+            msg.showerror("Dời SRT", "Số mili-giây không hợp lệ.")
+            return
+        import datetime as _dt
+        try:
+            subs = list(srt.parse(_read_text_smart(path)))
+            delta = _dt.timedelta(milliseconds=ms)
+            zero = _dt.timedelta(0)
+            for s in subs:
+                s.start = max(zero, s.start + delta)
+                s.end = max(zero, s.end + delta)
+            out_path = os.path.splitext(path)[0] + "_shifted.srt"
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(srt.compose(subs))
+            log(f"⏱ Đã dời {ms:+d} ms toàn bộ {len(subs)} dòng → {os.path.basename(out_path)}")
+            win.destroy()
+            try:
+                _reveal_output(out_path)
+            except Exception:
+                pass
+        except Exception as e:
+            msg.showerror("Dời SRT", f"Lỗi: {e}")
+
+    ctk.CTkButton(win, text="⏱ Dời & lưu file mới", command=_apply, height=40,
+                  fg_color="#2fa572", hover_color="#37b87f",
+                  font=("Arial", 14, "bold")).pack(fill="x", padx=14, pady=(10, 12))
 
 
 def load_subtitles(force_select=True):
@@ -9428,6 +9601,93 @@ def _maybe_auto_retry_fail():
         return
     log(f"🧩 Tự động tạo lại {FAIL_COUNT} dòng FAIL (checkbox đang bật)...")
     app.after(800, qc_retry_missing_lines)
+
+
+def open_qc_listen_dialog():
+    """🎧 Nghe & xử lý từng dòng audio lỗi: list file QC-rename + nút ▶ nghe +
+    🔁 regen ngay tại chỗ (qua regenerate_line/pdf đầy đủ, khóa _QC_REGEN_RUNNING).
+    Quyết định 'regen hay sửa text' nhanh hơn nhiều so với mò file trong thư mục."""
+    bad = _qc_scan_bad_files()
+    if not bad:
+        log("[QC] ✅ Không có file audio lỗi trong thư mục output.")
+        return
+    win = ctk.CTkToplevel(app)
+    win.title("🎧 Nghe & xử lý dòng lỗi (QC)")
+    win.geometry("620x480")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    ctk.CTkLabel(win, text=f"{len(bad)} dòng audio bị QC đánh dấu lỗi",
+                 font=("Arial", 13, "bold")).pack(pady=(10, 2))
+    ctk.CTkLabel(win, text="▶ nghe thử — 🔁 tạo lại dòng đó ngay (đúng engine + QC).\n"
+                           "Regen cần SRT/PDF tương ứng đang được nạp.",
+                 font=("Arial", 11), justify="left").pack(pady=(0, 6))
+
+    lst = ctk.CTkScrollableFrame(win)
+    lst.pack(fill="both", expand=True, padx=10, pady=4)
+
+    def _regen_one(prefix, idx, path, status_lbl):
+        if (_QC_REGEN_RUNNING[0] or _MULTIVOICE_RUNNING[0]
+                or _QUEUE_RUNNING[0]):
+            log("[QC] Đang có tiến trình regen/batch khác — đợi xong rồi thử lại.")
+            return
+        if prefix == "line_":
+            if idx >= len(subtitles_cache):
+                log(f"[QC] ❌ Dòng {idx}: chưa Load đúng file SRT.")
+                return
+            text = clean_text(subtitles_cache[idx].content)
+        else:
+            if idx >= len(PDF_CHUNKS):
+                log(f"[QC] ❌ Đoạn PDF {idx}: chưa nạp đúng tài liệu.")
+                return
+            text = PDF_CHUNKS[idx].strip()
+        status_lbl.configure(text="⏳")
+
+        def _run():
+            global stop_requested
+            _QC_REGEN_RUNNING[0] = True
+            stop_requested = False
+            try:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+                try:
+                    if prefix == "line_":
+                        asyncio.run(regenerate_line(idx, text))
+                    else:
+                        asyncio.run(regenerate_pdf_line(idx, text))
+                except Exception as e:
+                    log(f"[QC] ❌ Lỗi regen dòng {idx}: {e}")
+                target = os.path.join(OUTPUT_DIR, f"{prefix}{idx:04d}.mp3")
+                ok = os.path.isfile(target)
+                log(f"[QC] {'✅' if ok else '❌'} Regen dòng {idx}"
+                    + ("" if ok else " — vẫn lỗi, xem log."))
+                app.after(0, lambda: status_lbl.configure(
+                    text="✅" if ok else "❌"))
+            finally:
+                _QC_REGEN_RUNNING[0] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    for prefix, idx, reason, path in bad:
+        row = ctk.CTkFrame(lst, fg_color="transparent")
+        row.pack(fill="x", pady=2)
+        dur = _probe_duration_sec(path)
+        name = ("PDF " if prefix == "pdf_line_" else "Dòng ") + str(idx)
+        ctk.CTkLabel(row, text=f"{name} — {reason} ({dur:.1f}s)",
+                     font=("Arial", 12), anchor="w").pack(
+            side="left", expand=True, fill="x", padx=(4, 6))
+        status = ctk.CTkLabel(row, text="", width=30, font=("Arial", 12))
+        ctk.CTkButton(row, text="▶", width=40,
+                      command=lambda p=path: _play_audio_file(p)
+                      ).pack(side="left", padx=2)
+        ctk.CTkButton(row, text="🔁", width=40,
+                      fg_color="#b3771d", hover_color="#d18a22",
+                      command=lambda pr=prefix, i=idx, p=path, s=status:
+                          _regen_one(pr, i, p, s)
+                      ).pack(side="left", padx=2)
+        status.pack(side="left", padx=(4, 2))
 
 
 def _check_rvc_preflight():
@@ -12678,6 +12938,8 @@ def open_autodub_dialog():
 _DUB_MAX_SPEED = 2.0    # tăng tốc tối đa (giữ độ rõ); câu vẫn dài hơn sẽ được cảnh báo
 _DUB_GAP_MS    = 50     # khe hở an toàn giữa 2 câu (ms)
 _DUB_CENTER_MAX_S = 0.8 # dịch tối đa khi căn giữa câu ngắn vào khe lặng (giây)
+_LINEVOL_TARGET_DB = -20.0  # mean_volume đích khi "Cân âm lượng các dòng" bật
+_LINEVOL_MAX_GAIN  = 12.0   # giới hạn ± gain (dB) — tránh khuếch đại file gần câm
 
 # Kết quả phân tích của lần merge gần nhất (wizard lồng tiếng đọc để tổng kết)
 _LAST_MERGE_REPORT = {}
@@ -12730,6 +12992,19 @@ def _probe_duration_sec(path):
         return 0.0
 
 
+def _probe_mean_volume(path):
+    """mean_volume (dB) của file audio qua ffmpeg volumedetect; None nếu lỗi."""
+    try:
+        r = subprocess.run(
+            [get_ffmpeg(), "-i", path, "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, creationflags=CREATE_NO_WINDOW)
+        m = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", r.stderr or "")
+        return float(m.group(1)) if m else None
+    except Exception:
+        return None
+
+
 def _atempo_chain(factor):
     """Chuỗi filter atempo cho hệ số tốc độ bất kỳ (>1 = nhanh hơn).
     Mỗi tầng atempo chỉ nhận 0.5–2.0 nên phải nối nhiều tầng cho hệ số lớn."""
@@ -12763,9 +13038,11 @@ def merge_ffmpeg():
     stretched = []   # các dòng (1-based) bị tăng tốc cho khớp khe
     overflow  = []   # các dòng vẫn dài hơn khe dù đã tăng tốc tối đa
     centered  = []   # các dòng ngắn được căn giữa khe lặng
+    leveled   = []   # các dòng được cân âm lượng về _LINEVOL_TARGET_DB
     synced_lines = []  # (idx, start_s THẬT, duration_s THẬT) → final_synced.srt
 
     center_on = bool(merge_center_var.get())
+    linevol_on = bool(merge_linevol_var.get())
     out_name, codec_args = _MERGE_FORMATS.get(
         merge_format_var.get(), _MERGE_FORMATS["mp3"])
 
@@ -12820,15 +13097,24 @@ def merge_ffmpeg():
 
         inputs.append(f'-i "{rel_name}"')
 
+        # Chuỗi filter từng dòng: [atempo] → [volume cân dòng] → adelay
+        fparts = []
         if factor > 1.001:
-            chain = _atempo_chain(factor)
-            filters.append(
-                f'[{real_index}:a]{chain},adelay={start_ms}:all=1[a{real_index}]'
-            )
-        else:
-            filters.append(
-                f'[{real_index}:a]adelay={start_ms}:all=1[a{real_index}]'
-            )
+            fparts.append(_atempo_chain(factor))
+        if linevol_on:
+            # Cân mọi dòng về cùng mean_volume — Phân vai trộn nhiều engine/giọng
+            # (mỗi cái một âm lượng) không còn chỗ to chỗ nhỏ theo nhân vật.
+            _mv = _probe_mean_volume(abs_path)
+            if _mv is not None and _mv < -5.0:   # đo được + không phải file lỗi
+                _gain = max(-_LINEVOL_MAX_GAIN,
+                            min(_LINEVOL_MAX_GAIN, _LINEVOL_TARGET_DB - _mv))
+                if abs(_gain) >= 1.0:
+                    fparts.append(f"volume={_gain:.1f}dB")
+                    leveled.append(i + 1)
+        fparts.append(f"adelay={start_ms}:all=1")
+        filters.append(
+            f'[{real_index}:a]' + ",".join(fparts) + f'[a{real_index}]'
+        )
 
         mixes.append(f'[a{real_index}]')
 
@@ -12845,6 +13131,9 @@ def merge_ffmpeg():
         log(f"⏩ Đã tăng tốc {len(stretched)} câu cho khớp khe thời gian (chống đè giọng).")
     if centered:
         log(f"🎯 Đã căn giữa {len(centered)} câu ngắn vào khe lặng (tự nhiên hơn).")
+    if leveled:
+        log(f"🔉 Đã cân âm lượng {len(leveled)} dòng về {_LINEVOL_TARGET_DB:.0f} dB "
+            "(đều giọng giữa các dòng/nhân vật).")
     if overflow:
         dedup   = sorted(set(overflow))
         preview = ", ".join(str(x) for x in dedup[:20])
@@ -12857,6 +13146,7 @@ def merge_ffmpeg():
     _LAST_MERGE_REPORT.update({
         "lines": real_index, "total": n_sub,
         "stretched": len(stretched), "centered": len(centered),
+        "leveled": len(leveled),
         "overflow": sorted(set(overflow)),
     })
 
@@ -16032,6 +16322,12 @@ merge_loudnorm_var = ctk.BooleanVar(value=False)
 ctk.CTkCheckBox(_merge_opt_row2, text="Chuẩn hóa âm lượng (-16 LUFS, chuẩn YouTube)",
                 variable=merge_loudnorm_var, font=("Arial", 12)).pack(side="left", padx=(2, 0))
 
+_merge_opt_row3 = ctk.CTkFrame(_g1_create, fg_color="transparent")
+_merge_opt_row3.pack(side="top", fill="x", padx=4, pady=(0, 4))
+merge_linevol_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(_merge_opt_row3, text="Cân âm lượng các dòng (đều giọng khi phân vai)",
+                variable=merge_linevol_var, font=("Arial", 12)).pack(side="left", padx=(2, 0))
+
 btn_open_se = ctk.CTkButton(_g1_io, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="top", fill="x", padx=4, pady=4)
 btn_open_se.bind("<Enter>", lambda e: btn_open_se.configure(fg_color="#8B5CF6"))
@@ -16058,6 +16354,14 @@ btn_qc_missing.pack(side="top", fill="x", padx=4, pady=4)
 btn_srt_lint = ctk.CTkButton(_g1_io, text="🩺 Khám SRT", command=srt_lint_report,
                              height=36, font=("Arial", 13))
 btn_srt_lint.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_srt_fix = ctk.CTkButton(_g1_io, text="🔧 Sửa SRT (tự động)", command=srt_autofix,
+                            height=36, font=("Arial", 13))
+btn_srt_fix.pack(side="top", fill="x", padx=4, pady=4)
+
+btn_qc_listen = ctk.CTkButton(_g1_io, text="🎧 Nghe dòng lỗi", command=open_qc_listen_dialog,
+                              height=36, font=("Arial", 13))
+btn_qc_listen.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_exit = ctk.CTkButton(_left_col, text="🚪 Logout", command=lambda: on_logout(), height=36, font=("Arial", 13), fg_color="#9a3b3b", hover_color="#cc0000")
 btn_exit.pack(side="bottom", fill="x", padx=10, pady=(6, 2))
@@ -17114,7 +17418,7 @@ def _ui_prefs_register():
         "vi_num": vi_num_var, "auto_retry_fail": auto_retry_fail_var,
         "trim_silence": trim_silence_var,
         "merge_center": merge_center_var, "merge_format": merge_format_var,
-        "merge_loudnorm": merge_loudnorm_var,
+        "merge_loudnorm": merge_loudnorm_var, "merge_linevol": merge_linevol_var,
         "quick_tts_telex": quick_tts_telex_var,
         "stt_model": stt_model_var, "stt_lang": stt_lang_var,
         "stt_format": stt_format_label_var,
@@ -18136,6 +18440,113 @@ def show_splash_then_auth():
         _sp_canvas.create_text(sw // 2, sh // 2 - 40, text="🎬",
                                font=("Segoe UI", 48), fill="white")
 
+    # ===== Light Sweep: luồng sáng chéo quét qua bề mặt (bóng bẩy, sang trọng) =====
+    try:
+        from PIL import ImageDraw as _SwDraw, ImageChops as _SwChops
+        # Mặt nạ bo góc giới hạn vệt sáng nằm gọn trong khung
+        _swmask = Image.new("L", (sw, sh), 0)
+        _SwDraw.Draw(_swmask).rounded_rectangle(
+            [0, 0, sw - 1, sh - 1], radius=30, fill=255)
+
+        # Dải sáng dọc với gradient mềm (lõi sáng + tản dần), rồi xoay nghiêng
+        _bandw = 64
+        _bandh = int((sw + sh) * 0.95)
+        _core, _peak = 5.0, 95
+        _col = []
+        _cx = _bandw / 2.0
+        for _x in range(_bandw):
+            _dd = abs(_x - _cx)
+            if _dd <= _core:
+                _v = 1.0
+            else:
+                _v = max(0.0, 1.0 - (_dd - _core) / (_cx - _core))
+                _v *= _v
+            _col.append(int(_peak * _v))
+        _strip = Image.new("L", (_bandw, 1))
+        _strip.putdata(_col)
+        _strip = _strip.resize((_bandw, _bandh))
+        _white = Image.new("RGBA", (_bandw, _bandh), (255, 255, 255, 0))
+        _white.putalpha(_strip)
+        _streak = _white.rotate(30, expand=True, resample=Image.BICUBIC)
+        _rw, _rh = _streak.size
+
+        # Dựng sẵn các frame: vệt sáng trượt từ trái qua phải, cắt theo khung
+        _SW_N = 40
+        _sw_frames = []
+        for _i in range(_SW_N):
+            _ovr = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+            _px = int(-_rw + (sw + _rw) * _i / (_SW_N - 1))
+            _ovr.alpha_composite(_streak, (_px, (sh - _rh) // 2))
+            _ovr.putalpha(_SwChops.multiply(_ovr.split()[3], _swmask))
+            _sw_frames.append(ImageTk.PhotoImage(_ovr))
+
+        _sweep_id = _sp_canvas.create_image(0, 0, anchor="nw",
+                                            image=_sw_frames[0])
+        _sp_canvas._sw_frames = _sw_frames  # giữ reference khỏi bị GC
+        _sw_idx = [0]
+
+        def _animate_sweep():
+            try:
+                _sw_idx[0] = (_sw_idx[0] + 1) % _SW_N
+                _sp_canvas.itemconfig(_sweep_id, image=_sw_frames[_sw_idx[0]])
+                # nghỉ một nhịp ở đầu mỗi lượt cho cảm giác sang trọng
+                _sp_canvas.after(900 if _sw_idx[0] == 0 else 45, _animate_sweep)
+            except Exception:
+                pass
+
+        _sp_canvas.after(400, _animate_sweep)
+    except Exception:
+        pass
+
+    # ===== Viền cầu vồng chuyển động (chạy vòng quanh khung như video) =====
+    import math as _math
+    _bm = 3            # cách mép
+    _brad = 27         # bán kính bo của viền (nhỏ hơn ảnh để nằm gọn bên trong)
+
+    def _round_rect_points(x0, y0, x1, y1, r, seg_edge=16, seg_arc=7):
+        pts = []
+        def edge(ax, ay, bx, by):
+            for i in range(seg_edge):
+                t = i / seg_edge
+                pts.append((ax + (bx - ax) * t, ay + (by - ay) * t))
+        def arc(cx, cy, a0):
+            for i in range(seg_arc):
+                a = _math.radians(a0 + 90 * i / seg_arc)
+                pts.append((cx + r * _math.cos(a), cy + r * _math.sin(a)))
+        edge(x0 + r, y0, x1 - r, y0)          # cạnh trên
+        arc(x1 - r, y0 + r, -90)              # góc trên-phải
+        edge(x1, y0 + r, x1, y1 - r)          # cạnh phải
+        arc(x1 - r, y1 - r, 0)                # góc dưới-phải
+        edge(x1 - r, y1, x0 + r, y1)          # cạnh dưới
+        arc(x0 + r, y1 - r, 90)               # góc dưới-trái
+        edge(x0, y1 - r, x0, y0 + r)          # cạnh trái
+        arc(x0 + r, y0 + r, 180)              # góc trên-trái
+        return pts
+
+    _bpts = _round_rect_points(_bm, _bm, sw - _bm, sh - _bm, _brad)
+    _bsegs = []
+    _bn = len(_bpts)
+    for _i in range(_bn):
+        _x1b, _y1b = _bpts[_i]
+        _x2b, _y2b = _bpts[(_i + 1) % _bn]
+        _bsegs.append(_sp_canvas.create_line(
+            _x1b, _y1b, _x2b, _y2b, width=5,
+            capstyle="round", joinstyle="round", tags="rbborder"))
+    _boff = [0.0]
+
+    def _animate_border():
+        try:
+            off = _boff[0]
+            n = len(_bsegs)
+            for i, seg in enumerate(_bsegs):
+                _sp_canvas.itemconfig(seg, fill=_rainbow_color(i / n + off))
+            _boff[0] = (off + 0.012) % 1.0
+            _sp_canvas.after(40, _animate_border)
+        except Exception:
+            pass
+
+    _animate_border()
+
     # Vị trí chữ (đè lên vùng tối phía dưới ảnh)
     _ty_title = sh - 96
     _ty_by = sh - 56
@@ -18185,12 +18596,27 @@ def show_splash_then_auth():
     _sp_canvas.create_text(sw // 2, _ty_by, text="by Mr.Tân",
                            font=("Segoe UI", 10), fill="#ffffff")
 
-    # Dòng trạng thái — có bóng
-    _sub_text = "Đang khởi động & kiểm tra kết nối..."
-    _sp_canvas.create_text(sw // 2 + 1, _ty_sub + 1, text=_sub_text,
-                           font=("Segoe UI", 9), fill="#000000")
-    _sp_canvas.create_text(sw // 2, _ty_sub, text=_sub_text,
-                           font=("Segoe UI", 9), fill="#ffdd00")
+    # Dòng trạng thái — chấm "..." chạy kiểu loading ( . / .. / ... )
+    _sub_base = "Đang khởi động & kiểm tra kết nối"
+    _sub_font = tkFont.Font(family="Segoe UI", size=9)
+    _sub_full_w = _sub_font.measure(_sub_base + "...")
+    _sub_x = sw // 2 - _sub_full_w // 2   # neo trái để chấm mọc sang phải, chữ đứng yên
+    _sub_dots = [0]
+
+    def _animate_subdots():
+        try:
+            _sp_canvas.delete("subln")
+            _txt = _sub_base + "." * (_sub_dots[0] % 3 + 1)   # 1 → 2 → 3 chấm
+            _sp_canvas.create_text(_sub_x + 1, _ty_sub + 1, text=_txt, anchor="w",
+                                   font=_sub_font, fill="#000000", tags="subln")
+            _sp_canvas.create_text(_sub_x, _ty_sub, text=_txt, anchor="w",
+                                   font=_sub_font, fill="#ffdd00", tags="subln")
+            _sub_dots[0] += 1
+            _sp_canvas.after(450, _animate_subdots)
+        except Exception:
+            pass
+
+    _animate_subdots()
 
     def _close_splash():
         splash.destroy()

@@ -17,7 +17,7 @@ $files = @(
   "SRT_TTS_Studio.spec","SRT_TTS_Studio_onedir.spec","SRT_TTS_Studio_onefile.spec",
   "SRT_TTS_Studio_onefile_secured.spec","SRT_TTS_Studio_onefile_trial.spec","product.wxs",
   # asset
-  "logo.ico","logo.png","license.rtf",
+  "logo.ico","logo.png","splash_preview.png","license.rtf",
   "chungtakhongthuocvenhau.WAV","naycaugioi.WAV","toyeucaunhieulamday.WAV","error.wav",
   "build_type_portable.dat","build_type_secured.dat","build_type_trial.dat",
   # docs
