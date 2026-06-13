@@ -11,7 +11,7 @@ $files = @(
   "whisper_stt.py","audio_enhancer.py","pdf_helper.py","srt_align_helper.py",
   "videocr_helper.py","video_stt_helper.py","translate_helper.py",
   # build/audit
-  "build_all.bat","build_msi_protected.bat","gen_integrity.py","gen_self_hash.py",
+  "build_all.bat","build_msi_protected.bat","run_build.bat","gen_integrity.py","gen_self_hash.py",
   "_verify_security.py","_audit_deps.py","_strings_audit.py",
   # spec + wix
   "SRT_TTS_Studio.spec","SRT_TTS_Studio_onedir.spec","SRT_TTS_Studio_onefile.spec",
@@ -21,7 +21,7 @@ $files = @(
   "chungtakhongthuocvenhau.WAV","naycaugioi.WAV","toyeucaunhieulamday.WAV","error.wav",
   "build_type_portable.dat","build_type_secured.dat","build_type_trial.dat",
   # docs
-  "CLAUDE.md","MOVE_CHECKLIST.txt",".gitignore","UI_redesign_mockup.html",
+  "CLAUDE.md","MOVE_CHECKLIST.txt","TEST_CHECKLIST.md",".gitignore","UI_redesign_mockup.html",
   "make_source_zip.ps1"
 )
 

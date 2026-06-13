@@ -50,6 +50,12 @@ def main():
     parser.add_argument("--model",      default="large-v3", help="Whisper model size")
     parser.add_argument("--lang",       default="vi",       help="Ngôn ngữ ISO (vi/en/auto)")
     parser.add_argument("--ffmpeg",     default="ffmpeg",   help="Đường dẫn ffmpeg.exe")
+    parser.add_argument("--segment-mode", default="sentence",
+                        choices=["sentence", "karaoke"],
+                        help="sentence: phụ đề theo câu (mặc định); "
+                             "karaoke: cụm 2-4 từ bám nhịp nói (word timestamps)")
+    parser.add_argument("--karaoke-words", type=int, default=4,
+                        help="Số từ tối đa mỗi dòng ở chế độ karaoke")
     args = parser.parse_args()
 
     try:
@@ -89,6 +95,7 @@ def main():
     #  ta báo tiến trình ngay trong vòng lặp thay vì chờ materialise xong).
     srt_lines  = []
     txt_parts  = []
+    karaoke    = args.segment_mode == "karaoke"
     try:
         model = WhisperModel(args.model, device=device, compute_type=compute)
         lang  = None if args.lang == "auto" else args.lang
@@ -97,7 +104,7 @@ def main():
             language=lang,
             beam_size=5,
             vad_filter=True,
-            word_timestamps=False,
+            word_timestamps=karaoke,
         )
 
         # Tổng thời lượng audio (giây) — dùng làm mốc 100% cho thanh tiến trình.
@@ -106,13 +113,42 @@ def main():
         total_ms  = max(int(total_dur * 1000), 1)
         last_pct  = -1
         idx       = 0
+
+        def _emit(start_s, end_s, text):
+            nonlocal idx
+            text = (text or "").strip()
+            if not text:
+                return
+            idx += 1
+            srt_lines.append(
+                f"{idx}\n{_seconds_to_srt_time(start_s)} --> "
+                f"{_seconds_to_srt_time(end_s)}\n{text}\n")
+
         for seg in segments_gen:
-            idx  += 1
-            start = _seconds_to_srt_time(seg.start)
-            end   = _seconds_to_srt_time(seg.end)
-            text  = seg.text.strip()
-            srt_lines.append(f"{idx}\n{start} --> {end}\n{text}\n")
-            txt_parts.append(text)
+            if karaoke and getattr(seg, "words", None):
+                # Karaoke: gom tối đa N từ một dòng, ngắt sớm tại dấu câu hoặc
+                # khoảng nghỉ > 0.6s — phụ đề bám nhịp nói kiểu Shorts/TikTok.
+                chunk = []
+                for w in seg.words:
+                    if chunk and (w.start - chunk[-1].end) > 0.6:
+                        _emit(chunk[0].start, chunk[-1].end,
+                              "".join(x.word for x in chunk))
+                        chunk = []
+                    chunk.append(w)
+                    wtext = (w.word or "").strip()
+                    if (len(chunk) >= args.karaoke_words
+                            or wtext.endswith((".", ",", "?", "!", ";", ":", "…"))):
+                        _emit(chunk[0].start, chunk[-1].end,
+                              "".join(x.word for x in chunk))
+                        chunk = []
+                if chunk:
+                    _emit(chunk[0].start, chunk[-1].end,
+                          "".join(x.word for x in chunk))
+                # TXT giữ nguyên theo câu cho dễ đọc
+                txt_parts.append(seg.text.strip())
+            else:
+                _emit(seg.start, seg.end, seg.text)
+                txt_parts.append(seg.text.strip())
 
             # Tiến trình dựa trên vị trí (giây) đã nhận dạng so với tổng thời lượng.
             done_ms = min(int(seg.end * 1000), total_ms)
