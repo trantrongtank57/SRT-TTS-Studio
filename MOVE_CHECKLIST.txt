@@ -155,7 +155,11 @@
 
 [3b] CÁCH THỦ CÔNG — NẾU ĐẶT Ở Ổ/THƯ MỤC KHÁC: MỞ ⚙ CÀI ĐẶT TRỎ 4 ĐƯỜNG DẪN
 --------------------------------------------------------------------------
- (Lưu vào settings.json cạnh file .exe — ghi đè auto-dò & hardcode E:\/C:\Users\os)
+ (Lưu vào settings.json — ghi đè auto-dò & hardcode E:\/C:\Users\os.
+  Vị trí: CẠNH .exe nếu thư mục ghi được; nếu cài MSI vào C:\Program Files
+  (chỉ đọc) thì tự lưu ở %LOCALAPPDATA%\SRT TTS Studio\ — app báo đường dẫn
+  ở dòng "KIỂM TRA HỆ THỐNG" lúc khởi động. voice_profiles/glossary/ui_prefs/
+  session/log cũng nằm cùng chỗ đó.)
 
  [ ] VideOCR CLI folder    →  ...\VideOCR-1.5.1\...\CLI  (ở máy mới)
  [ ] VoxCPM model folder   →  thư mục VoxCPM-1.5-VN model (ở máy mới)

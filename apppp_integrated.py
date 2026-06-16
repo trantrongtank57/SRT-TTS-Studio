@@ -936,12 +936,57 @@ F5TTS_MODEL_DIR     = ""   # thư mục model F5-TTS-Vietnamese (chứa checkpoi
 OMNIVOICE_ENV_OVERRIDE = ""   # path tới omnivoice_env\Scripts\python.exe; rỗng = tự tìm
 OMNIVOICE_MODEL_DIR    = ""   # thư mục/HF repo model OmniVoice; rỗng = tự tải từ HuggingFace
 
-# File lưu cài đặt (cạnh exe/script)
-_SETTINGS_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(
-        sys.executable if getattr(sys, "frozen", False) else __file__
-    )), "settings.json"
-)
+# File lưu cài đặt + mọi file trạng thái (voice_profiles/session/glossary/
+# ui_prefs/tts_prices/edge_voices/logs) đều nằm CÙNG thư mục với settings.json.
+# Ưu tiên CẠNH exe (portable). Nhưng khi cài bằng MSI vào C:\Program Files\…
+# thì thư mục đó CHỈ ĐỌC với user thường → ghi sẽ [Errno 13] Permission denied.
+# Vì vậy nếu cạnh exe không ghi được thì rơi về %LOCALAPPDATA%\SRT TTS Studio\.
+_EXE_DIR = os.path.dirname(os.path.abspath(
+    sys.executable if getattr(sys, "frozen", False) else __file__))
+
+
+def _resolve_config_dir():
+    """Thư mục cấu hình GHI ĐƯỢC: cạnh exe nếu ghi được, else %LOCALAPPDATA%."""
+    try:
+        _probe = os.path.join(_EXE_DIR, ".write_test.tmp")
+        with open(_probe, "w") as _f:
+            _f.write("ok")
+        os.remove(_probe)
+        return _EXE_DIR                      # portable / chạy dev — giữ cạnh exe
+    except Exception:
+        pass
+    base = (os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+            or os.path.expanduser("~"))
+    cfg = os.path.join(base, "SRT TTS Studio")
+    try:
+        os.makedirs(cfg, exist_ok=True)
+        return cfg
+    except Exception:
+        return _EXE_DIR                      # bí quá → giữ exe_dir
+
+
+_CONFIG_DIR = _resolve_config_dir()
+
+
+def _migrate_config_from_exe_dir():
+    """Lần đầu chạy sau khi đổi sang %LOCALAPPDATA%: copy cấu hình cũ (nếu có)
+    nằm cạnh exe sang thư mục mới, để không mất hồ sơ giọng/cài đặt đã có."""
+    if os.path.abspath(_CONFIG_DIR) == os.path.abspath(_EXE_DIR):
+        return
+    for name in ("settings.json", "voice_profiles.json", "glossary.json",
+                 "ui_prefs.json", "session.json", "tts_prices.json",
+                 "edge_voices.json"):
+        src = os.path.join(_EXE_DIR, name)
+        dst = os.path.join(_CONFIG_DIR, name)
+        try:
+            if os.path.isfile(src) and not os.path.isfile(dst):
+                shutil.copy2(src, dst)
+        except Exception:
+            pass
+
+
+_migrate_config_from_exe_dir()
+_SETTINGS_FILE = os.path.join(_CONFIG_DIR, "settings.json")
 
 def _load_settings():
     """Đọc settings.json và áp dụng vào các global path."""
@@ -19148,6 +19193,12 @@ def _run_startup_diagnostics():
 
     _OK  = "#22c55e"   # xanh lá — check OK
     _YEL = "#ffdd00"   # vàng     — header / cảnh báo / lỗi (default)
+
+    # 0. Nơi lưu cấu hình/log (ghi được) — nếu khác thư mục exe nghĩa là cài MSI
+    #    vào Program Files (chỉ đọc) nên đã chuyển sang %LOCALAPPDATA%.
+    if os.path.abspath(_CONFIG_DIR) != os.path.abspath(_EXE_DIR):
+        log_color(f"ℹ Cấu hình & log lưu tại: {_CONFIG_DIR}", _OK)
+        log_color("   (thư mục cài đặt chỉ đọc → đã chuyển sang LOCALAPPDATA)", _OK)
 
     # 1. Internet
     if check_internet():
