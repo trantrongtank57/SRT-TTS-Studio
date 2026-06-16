@@ -11235,8 +11235,10 @@ def _run_voxcpm_batch():
     items = []
     for i, sub in enumerate(subtitles_cache):
         text = clean_text(sub.content)
-        if text:
+        if text and _is_speakable(text):
             items.append({"index": i, "text": text})
+        elif text:
+            log(f"⏭ Dòng {i}: không có nội dung đọc được — bỏ qua")
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_voxcpm_texts.json")
@@ -11444,7 +11446,8 @@ def _run_voxcpm_batch_pdf():
 
     # Ghi PDF chunks ra JSON — dùng prefix pdf_ để phân biệt với SRT
     items = [{"index": i, "text": chunk}
-             for i, chunk in enumerate(PDF_CHUNKS) if chunk.strip()]
+             for i, chunk in enumerate(PDF_CHUNKS)
+             if chunk.strip() and _is_speakable(chunk)]
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_voxcpm_pdf_texts.json")
@@ -11667,8 +11670,10 @@ def _run_vieneu_batch():
     items = []
     for i, sub in enumerate(subtitles_cache):
         text = clean_text(sub.content)
-        if text:
+        if text and _is_speakable(text):
             items.append({"index": i, "text": text})
+        elif text:
+            log(f"⏭ Dòng {i}: không có nội dung đọc được — bỏ qua")
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_vieneu_texts.json")
@@ -11806,7 +11811,8 @@ def _run_vieneu_batch_pdf():
     app.after(0, lambda: set_mode("tts_running"))
 
     items = [{"index": i, "text": chunk}
-             for i, chunk in enumerate(PDF_CHUNKS) if chunk.strip()]
+             for i, chunk in enumerate(PDF_CHUNKS)
+             if chunk.strip() and _is_speakable(chunk)]
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_vieneu_pdf_texts.json")
@@ -12025,8 +12031,10 @@ def _run_f5tts_batch():
     items = []
     for i, sub in enumerate(subtitles_cache):
         text = clean_text(sub.content)
-        if text:
+        if text and _is_speakable(text):
             items.append({"index": i, "text": text})
+        elif text:
+            log(f"⏭ Dòng {i}: không có nội dung đọc được — bỏ qua")
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_f5tts_texts.json")
@@ -12163,7 +12171,8 @@ def _run_f5tts_batch_pdf():
     app.after(0, lambda: set_mode("tts_running"))
 
     items = [{"index": i, "text": chunk}
-             for i, chunk in enumerate(PDF_CHUNKS) if chunk.strip()]
+             for i, chunk in enumerate(PDF_CHUNKS)
+             if chunk.strip() and _is_speakable(chunk)]
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_f5tts_pdf_texts.json")
@@ -12373,8 +12382,10 @@ def _run_omnivoice_batch():
     items = []
     for i, sub in enumerate(subtitles_cache):
         text = clean_text(sub.content)
-        if text:
+        if text and _is_speakable(text):
             items.append({"index": i, "text": text})
+        elif text:
+            log(f"⏭ Dòng {i}: không có nội dung đọc được — bỏ qua")
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_omnivoice_texts.json")
@@ -12511,7 +12522,8 @@ def _run_omnivoice_batch_pdf():
     app.after(0, lambda: set_mode("tts_running"))
 
     items = [{"index": i, "text": chunk}
-             for i, chunk in enumerate(PDF_CHUNKS) if chunk.strip()]
+             for i, chunk in enumerate(PDF_CHUNKS)
+             if chunk.strip() and _is_speakable(chunk)]
     _text_by_idx = {it["index"]: it["text"] for it in items}
 
     texts_file = os.path.join(OUTPUT_DIR, "_omnivoice_pdf_texts.json")
