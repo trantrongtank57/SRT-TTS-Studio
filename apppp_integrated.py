@@ -6,6 +6,7 @@ import asyncio
 import edge_tts
 import srt
 import re
+import unicodedata
 import os
 import threading
 import subprocess
@@ -3067,10 +3068,60 @@ def _vi_num_normalize(text):
     return text
 
 
+# Ký tự "đọc được": có ít nhất 1 chữ cái / chữ số (mọi ngôn ngữ, Unicode).
+# Dòng chỉ gồm dấu câu / ký hiệu / nốt nhạc (♪) → TTS chỉ ra im lặng (novoice)
+# nên ta bỏ qua, không phí lượt gen.
+_SPEAKABLE_RE = re.compile(r"[^\W_]", re.UNICODE)
+
+def _is_speakable(text):
+    """True nếu text có ít nhất 1 chữ cái hoặc chữ số → đáng để gọi TTS."""
+    return bool(text) and bool(_SPEAKABLE_RE.search(text))
+
+
+# Bảng ký tự cần XÓA khỏi text TTS: ký tự vô hình (zero-width U+200B–200F,
+# bidi U+202A–202E, word-joiner U+2060, BOM U+FEFF, soft-hyphen U+00AD) +
+# control chars (giữ lại \t \n \r vì chúng là khoảng trắng hợp lệ).
+_OCR_DROP_CODEPOINTS = (
+    list(range(0x00, 0x09)) + [0x0b, 0x0c]      # control (giữ \t)
+    + list(range(0x0e, 0x20)) + [0x7f]          # control (giữ \n \r)
+    + [0x00ad]                                  # soft hyphen
+    + list(range(0x200b, 0x2010))               # zero-width + bidi marks
+    + list(range(0x202a, 0x202f))               # bidi embedding/override
+    + [0x2060, 0xfeff]                          # word joiner, BOM
+)
+_OCR_DROP_CHARS = {cp: None for cp in _OCR_DROP_CODEPOINTS}
+
+
+def _clean_ocr_text(text):
+    """Khử các ký tự 'bẩn' từ OCR/nguồn lạ làm Edge/TTS đọc lặp (toolong),
+    cắt giữa chừng (tooshort) hoặc ra im lặng (novoice). Chạy cho MỌI engine,
+    NGAY từ lần gen đầu (khác _sanitize_tts_text — chỉ chạy ở lần retry cuối) vì
+    đây là lỗi tất định: cùng ký tự bẩn thì retry bao nhiêu lần cũng lỗi y hệt.
+    KHÔNG xóa nội dung đọc được — chỉ loại ký hiệu gây nhiễu engine."""
+    if not text:
+        return text
+    try:
+        t = unicodedata.normalize("NFKC", text)   # gộp ký tự lạ về dạng chuẩn
+    except Exception:
+        t = text
+    t = t.replace("�", "")           # ký tự thay thế OCR "�"
+    # ký tự vô hình (zero-width, bidi marks, BOM, soft hyphen) + control chars
+    # (giữ \t \n \r dạng khoảng trắng bình thường)
+    t = t.translate(_OCR_DROP_CHARS)
+    # ký tự phá SSML của Edge TTS (< > &) → khoảng trắng, tránh bị cắt giữa chừng
+    t = re.sub(r"[<>&]", " ", t)
+    # gộp ký tự lặp bệnh lý (>4 lần liên tiếp) → 2, chống runaway.
+    # Loại trừ chữ số để không phá số lớn (vd "1000000").
+    t = re.sub(r"([^\d\s])\1{4,}", r"\1\1", t)
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t or text                               # không trả chuỗi rỗng
+
+
 def _apply_glossary(text):
-    """Tiền xử lý text TRƯỚC khi đưa vào TTS (mọi engine, mọi luồng): từ điển
-    phát âm + (tùy chọn vi_num_var) đọc số tiền/ngày/giờ kiểu Việt.
+    """Tiền xử lý text TRƯỚC khi đưa vào TTS (mọi engine, mọi luồng): khử ký tự
+    bẩn OCR → từ điển phát âm → (tùy chọn vi_num_var) đọc số tiền/ngày/giờ kiểu Việt.
     KHÔNG ảnh hưởng file SRT, bản dịch hay text hiển thị."""
+    text = _clean_ocr_text(text)
     rx = _GLOSSARY_RX[0]
     if rx is not None and text:
         lmap = _GLOSSARY_LMAP[0]
@@ -9054,6 +9105,11 @@ async def _generate_pdf_tts():
             current_index += 1
             continue
 
+        if not _is_speakable(text):
+            log(f"⏭ [PDF] Đoạn {current_index}: không có nội dung đọc được — bỏ qua")
+            current_index += 1
+            continue
+
         filename = os.path.join(OUTPUT_DIR, f"pdf_line_{current_index:04d}.mp3")
 
         if os.path.exists(filename):
@@ -9827,14 +9883,14 @@ def _scan_missing_lines():
     if subtitles_cache and any(_line_re.match(fn) for fn in existing):
         for i, sub in enumerate(subtitles_cache):
             t = clean_text(sub.content)
-            if not t:
+            if not t or not _is_speakable(t):   # dòng rỗng / không đọc được → batch cố tình bỏ qua
                 continue
             if f"line_{i:04d}.mp3" not in existing and ("line_", i) not in bad_idx:
                 missing.append(("line_", i, t))
     if PDF_CHUNKS and any(_pdf_re.match(fn) for fn in existing):
         for i, chunk in enumerate(PDF_CHUNKS):
             t = (chunk or "").strip()
-            if not t:
+            if not t or not _is_speakable(t):
                 continue
             if f"pdf_line_{i:04d}.mp3" not in existing and ("pdf_line_", i) not in bad_idx:
                 missing.append(("pdf_line_", i, t))
@@ -10368,6 +10424,9 @@ async def _generate_tts_parallel():
         text = clean_text(subtitles_cache[i].content)
         if not text:
             continue
+        if not _is_speakable(text):
+            log(f"⏭ Dòng {i}: không có nội dung đọc được — bỏ qua")
+            continue
         if os.path.exists(os.path.join(OUTPUT_DIR, f"line_{i:04d}.mp3")):
             skipped += 1
             continue
@@ -10399,6 +10458,9 @@ async def _generate_pdf_tts_parallel():
     for i in range(current_index, total):
         text = (PDF_CHUNKS[i] or "").strip()
         if not text:
+            continue
+        if not _is_speakable(text):
+            log(f"⏭ [PDF] Đoạn {i}: không có nội dung đọc được — bỏ qua")
             continue
         if os.path.exists(os.path.join(OUTPUT_DIR, f"pdf_line_{i:04d}.mp3")):
             skipped += 1
@@ -10510,6 +10572,13 @@ async def generate_tts():
         text = clean_text(sub.content)
 
         if not text:
+            current_index += 1
+            continue
+
+        # Dòng không có ký tự đọc được (toàn dấu câu / ký hiệu / nốt nhạc) → bỏ qua,
+        # nếu gen thì TTS chỉ ra im lặng (novoice) và phí 3 lượt retry.
+        if not _is_speakable(text):
+            log(f"⏭ Dòng {current_index}: không có nội dung đọc được — bỏ qua")
             current_index += 1
             continue
 
