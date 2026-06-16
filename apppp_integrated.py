@@ -3842,6 +3842,7 @@ class AnimatedLogBox(tk.Canvas):
         super().__init__(master, highlightthickness=0, bd=0,
                          bg=self.BG_BASE, **kw)
         self._wrap = bool(wrap)     # wrap="word" -> bọc dòng theo bề ngang
+        self._wrap_h_cache = {"_w": -1}  # cache chiều cao dòng đã bọc theo bề rộng
         self._lines = []            # list of dict(text=str, tag=str|None)
         self._tag_colors = {}       # tag -> foreground color
         self._font = _tkfont.Font(family="Consolas", size=13)
@@ -3902,9 +3903,13 @@ class AnimatedLogBox(tk.Canvas):
     # ---- cuộn bằng con lăn chuột ----
     def _on_wheel(self, event):
         flat = self._flatten()
-        h = self.winfo_height()
-        visible = max(1, (h - 2 * self._pad) // self._line_h)
-        max_off = max(0, len(flat) - visible)
+        if self._wrap:
+            # dòng bọc cao thấp khác nhau → cho cuộn tới khi chỉ còn dòng đầu
+            max_off = max(0, len(flat) - 1)
+        else:
+            h = self.winfo_height()
+            visible = max(1, (h - 2 * self._pad) // self._line_h)
+            max_off = max(0, len(flat) - visible)
         step = 3 if event.delta > 0 else -3
         self._scroll_off = max(0, min(max_off, self._scroll_off + step))
         self._render_text()
@@ -4290,21 +4295,19 @@ class AnimatedLogBox(tk.Canvas):
             super().tag_raise("logtext")
             return
 
-        # chế độ bọc dòng: đo chiều cao từng dòng rồi neo từ đáy lên
+        # chế độ bọc dòng: CHỈ đo các dòng thực sự hiển thị (neo từ đáy lên),
+        # có cache chiều cao theo (text, bề rộng) → cuộn không còn đo lại cả
+        # nghìn dòng mỗi lần lăn chuột (nguyên nhân giật).
         avail_w = max(1, w - 2 * self._pad)
-        heights = []
-        for text, col in flat:
-            tid = super().create_text(self._pad, -10000, text=text, anchor="nw",
-                                      fill=col, font=self._font,
-                                      width=avail_w, tags="measure")
-            bb = super().bbox(tid)
-            heights.append((bb[3] - bb[1]) if bb else self._line_h)
-            super().delete(tid)
+        cache = self._wrap_h_cache
+        if cache.get("_w") != avail_w:     # đổi bề rộng → cache cũ vô nghĩa
+            cache.clear()
+            cache["_w"] = avail_w
         end = max(0, min(len(flat), len(flat) - self._scroll_off))
         start = end
         used = 0
         while start > 0 and used < inner_h:
-            used += heights[start - 1]
+            used += self._wrapped_h(flat[start - 1][0], flat[start - 1][1], avail_w)
             start -= 1
         y = self._pad
         for idx in range(start, end):
@@ -4312,11 +4315,24 @@ class AnimatedLogBox(tk.Canvas):
             super().create_text(self._pad, y, text=text, anchor="nw",
                                 fill=col, font=self._font,
                                 width=avail_w, tags="logtext")
-            y += heights[idx]
+            y += self._wrapped_h(text, col, avail_w)
         super().tag_raise("logtext")
 
+    def _wrapped_h(self, text, col, avail_w):
+        """Chiều cao (px) của 1 dòng khi bọc theo avail_w — đo 1 lần rồi cache."""
+        hh = self._wrap_h_cache.get(text)
+        if hh is None:
+            tid = super().create_text(self._pad, -10000, text=text, anchor="nw",
+                                      fill=col, font=self._font,
+                                      width=avail_w, tags="measure")
+            bb = super().bbox(tid)
+            hh = (bb[3] - bb[1]) if bb else self._line_h
+            super().delete(tid)
+            self._wrap_h_cache[text] = hh
+        return hh
 
-logbox = AnimatedLogBox(left_frame)
+
+logbox = AnimatedLogBox(left_frame, wrap="word")   # bọc dòng dài (đường dẫn/URL) thay vì cắt mất ở mép phải
 logbox.pack(fill="both", expand=True, padx=10, pady=10)
 logbox.configure(state="disabled")
 
@@ -8549,14 +8565,29 @@ def _run_mux_thread():
     # Xây filter_complex cho audio
     # input 0 = video (kèm audio gốc nếu có), input 1 = audio final
     if keep_orig and has_video_audio:
-        # Trộn audio gốc (video) + audio final
-        filt = (
-            f"[0:a]volume={vid_vol}[a0];"
-            f"[1:a]volume={aud_vol}[a1];"
-            f"[a0][a1]amix=inputs=2:duration=longest:normalize=0[aout]"
-        )
+        duck = bool(mux_duck_var.get())
+        if duck:
+            # Ducking: hạ tiếng gốc khi giọng đọc đang nói (dùng giọng đọc làm
+            # tín hiệu sidechain), trả lại đầy đủ khi gốc chỉ còn nhạc/SFX →
+            # giọng lồng luôn nổi rõ mà vẫn nghe được nhạc nền dưới các quãng nghỉ.
+            filt = (
+                f"[0:a]volume={vid_vol}[a0];"
+                f"[1:a]volume={aud_vol}[a1];"
+                f"[a1]asplit=2[a1mix][a1key];"
+                f"[a0][a1key]sidechaincompress="
+                f"threshold=0.015:ratio=12:attack=20:release=350:makeup=1[a0d];"
+                f"[a0d][a1mix]amix=inputs=2:duration=longest:normalize=0[aout]"
+            )
+            mode_desc = (f"trộn + ducking (gốc×{vid_vol} tự hạ khi có giọng×{aud_vol})")
+        else:
+            # Trộn audio gốc (video) + audio final ở âm lượng cố định
+            filt = (
+                f"[0:a]volume={vid_vol}[a0];"
+                f"[1:a]volume={aud_vol}[a1];"
+                f"[a0][a1]amix=inputs=2:duration=longest:normalize=0[aout]"
+            )
+            mode_desc = f"trộn (video×{vid_vol} + audio×{aud_vol})"
         amap = "[aout]"
-        mode_desc = f"trộn (video×{vid_vol} + audio×{aud_vol})"
     else:
         # Chỉ dùng audio final (thay thế audio gốc)
         filt = f"[1:a]volume={aud_vol}[aout]"
@@ -12895,6 +12926,10 @@ autodub_lang_var      = ctk.StringVar(value="auto")
 autodub_translate_var = ctk.BooleanVar(value=True)
 autodub_keep_var      = ctk.BooleanVar(value=False)
 autodub_burnsub_var   = ctk.BooleanVar(value=False)
+# YouTube → lồng tiếng: thư mục tải video về + tự mở xem khi xong
+autodub_yt_dir_var    = ctk.StringVar(
+    value=os.path.join(os.path.expanduser("~"), "Videos", "SRT_TTS_YouTube"))
+autodub_yt_open_var   = ctk.BooleanVar(value=True)
 
 
 def _active_engine_name():
@@ -13057,6 +13092,24 @@ def _autodub_env_preflight(do_translate):
             _translate_active_key()
         except Exception as e:
             log(f"[Lồng tiếng] ❌ {e}")
+            return False
+    if do_translate and TRANSLATE_PROVIDER == "Offline":
+        if not (LOCAL_TRANSLATE_MODEL_DIR or "").strip():
+            log("[Lồng tiếng] ❌ Dịch Offline cần model local — Vào ⚙ Cài đặt → "
+                "'Thư mục model offline' (ví dụ NLLB-200-distilled-600M / envit5). "
+                "Hoặc bỏ tick 'Dịch' để đọc nguyên văn.")
+            return False
+        if not _find_translate_helper():
+            log("[Lồng tiếng] ❌ Không tìm thấy translate_helper.py cạnh app/exe.")
+            return False
+        _tp = ""
+        if TRANSLATE_ENV_OVERRIDE and os.path.isfile(TRANSLATE_ENV_OVERRIDE):
+            _tp = TRANSLATE_ENV_OVERRIDE
+        if not _tp:
+            _tp = _find_whisper_python() or _find_voxcpm_python(os.getcwd())
+        if not _tp:
+            log("[Lồng tiếng] ❌ Dịch Offline cần python có torch+transformers "
+                "(voxcpm_env hoặc 'Python env dịch riêng' ở ⚙ Cài đặt).")
             return False
     # Pre-flight engine giọng (VoxCPM tự validate trong batch; RVC chỉ khi đi đường provider)
     if VIENEU_ENABLED and not _vieneu_preflight()[0]:
@@ -13277,6 +13330,201 @@ def run_autodub_queue(videos, stt_model, stt_lang, do_translate, keep_orig,
 
 
 # =========================
+# 📺 YOUTUBE → LỒNG TIẾNG — dán link, tải về (yt-dlp) rồi chạy wizard, tự mở xem
+# =========================
+# Tái dùng TOÀN BỘ chuỗi _autodub_chain_sync (STT→Dịch→TTS→Merge→Mux). Việc DUY
+# NHẤT thêm là tải video bằng yt-dlp. "Lồng tiếng real-time đúng nghĩa" trong khi
+# lướt là bất khả thi (độ trễ STT+dịch+TTS dồn lại, tiếng Việt dài hơn nên đè
+# giọng) → cách chất lượng cao là tải nhanh rồi dub rồi mở xem ngay.
+def _find_ytdlp():
+    """Tìm yt-dlp → list lệnh để Popen (nối thêm args sau). None nếu không có.
+    Ưu tiên yt-dlp.exe (PATH / cạnh exe), fallback `python -m yt_dlp` (voxcpm_env)."""
+    exe = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+    if exe:
+        return [exe]
+    for root in _install_dirs():
+        for name in ("yt-dlp.exe", "yt-dlp_min.exe", "yt-dlp_x86.exe"):
+            cand = os.path.join(root, name)
+            if os.path.isfile(cand):
+                return [cand]
+    py = _find_whisper_python() or _find_voxcpm_python()
+    if py:
+        return [py, "-m", "yt_dlp"]
+    return None
+
+
+_YT_VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov", ".avi", ".ts", ".flv")
+
+
+def _download_youtube(url, dest_dir):
+    """Tải 1 video YouTube (hoặc URL yt-dlp hỗ trợ) về dest_dir → đường dẫn file
+    hoặc None. Stream % vào progress bar + logbox."""
+    cmd0 = _find_ytdlp()
+    if not cmd0:
+        log("[YouTube] ❌ Chưa cài yt-dlp. Cài: mở CMD và chạy  pip install -U yt-dlp")
+        log("[YouTube]    (hoặc tải yt-dlp.exe đặt cạnh file .exe của app).")
+        return None
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except Exception as e:
+        log(f"[YouTube] ❌ Không tạo được thư mục tải: {e}")
+        return None
+    # Ảnh chụp file sẵn có để nhận biết file mới nếu không parse được path
+    try:
+        before = set(os.listdir(dest_dir))
+    except Exception:
+        before = set()
+    out_tmpl = os.path.join(dest_dir, "%(title).80B [%(id)s].%(ext)s")
+    cmd = list(cmd0) + [
+        "--no-playlist",
+        "-f", "bv*+ba/b",
+        "--merge-output-format", "mp4",
+        "-o", out_tmpl,
+        "--newline", "--no-part",
+    ]
+    ff_ok, ff_path, _ = _check_ffmpeg_exists()
+    if ff_ok:
+        cmd += ["--ffmpeg-location", os.path.dirname(ff_path)]
+    cmd += [url]
+    log("[YouTube] ⏬ Đang tải video...")
+    update_progress(0, 100)
+    produced = []
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=CREATE_NO_WINDOW)
+    except Exception as e:
+        log(f"[YouTube] ❌ Không chạy được yt-dlp: {e}")
+        return None
+    _last_pct = [-10.0]
+    _tail = []   # giữ vài dòng cuối để báo lỗi thật
+    for line in proc.stdout:
+        line = (line or "").rstrip()
+        if not line:
+            continue
+        _tail.append(line)
+        if len(_tail) > 8:
+            del _tail[0]
+        m = re.search(r'Merging formats into "(.+?)"', line)
+        if m:
+            produced.append(m.group(1))
+        m = re.search(r'\[download\] Destination:\s*(.+)$', line)
+        if m:
+            produced.append(m.group(1).strip())
+        m = re.search(r'\[download\]\s*(.+?) has already been downloaded', line)
+        if m:
+            produced.append(m.group(1).strip())
+        pm = re.search(r'\[download\]\s+([\d.]+)%', line)
+        if pm:
+            try:
+                pct = float(pm.group(1))
+                update_progress(pct, 100)
+                if pct - _last_pct[0] >= 10:
+                    _last_pct[0] = pct
+                    log(f"[YouTube]   ... {pct:.0f}%")
+            except Exception:
+                pass
+            continue
+        low = line.lower()
+        if (low.startswith("error") or "warning:" in low
+                or "merging" in low or "has already been downloaded" in low):
+            log(f"[YouTube]   {line}")
+    rc = proc.wait()
+    if rc != 0:
+        _joined = " ".join(_tail).lower()
+        if "no module named" in _joined and "yt_dlp" in _joined:
+            log("[YouTube] ❌ yt-dlp CHƯA được cài trong env. Cài bằng:")
+            log("[YouTube]    voxcpm_env\\Scripts\\python.exe -m pip install -U yt-dlp")
+            log("[YouTube]    (hoặc tải yt-dlp.exe đặt cạnh file .exe của app).")
+            return None
+        log(f"[YouTube] ❌ yt-dlp lỗi (mã {rc}). Video có thể bị giới hạn tuổi/đăng nhập "
+            "hoặc link sai. Chi tiết:")
+        for _l in _tail:          # in vài dòng cuối để biết nguyên nhân thật
+            log(f"[YouTube]   {_l}")
+        return None
+    # Ưu tiên path parse được; fallback file video mới nhất chưa có trước đó
+    for p in reversed(produced):
+        if p and p.lower().endswith(_YT_VIDEO_EXT) and os.path.isfile(p):
+            return p
+    try:
+        cands = [os.path.join(dest_dir, fn) for fn in os.listdir(dest_dir)
+                 if fn not in before and fn.lower().endswith(_YT_VIDEO_EXT)]
+        if not cands:   # đã tải trước đó → lấy mới nhất bất kỳ
+            cands = [os.path.join(dest_dir, fn) for fn in os.listdir(dest_dir)
+                     if fn.lower().endswith(_YT_VIDEO_EXT)]
+        if cands:
+            return max(cands, key=os.path.getmtime)
+    except Exception:
+        pass
+    log("[YouTube] ❌ Tải xong nhưng không tìm thấy file video — kiểm tra thư mục tải.")
+    return None
+
+
+def _open_in_player(path):
+    """Mở file bằng trình phát mặc định của Windows."""
+    try:
+        os.startfile(path)   # noqa: S606 — mở bằng app mặc định người dùng
+        log(f"[YouTube] ▶ Đang mở: {os.path.basename(path)}")
+    except Exception as e:
+        log(f"[YouTube] ⚠ Không mở được trình phát: {e}")
+
+
+def run_autodub_youtube(urls, dest_dir, stt_model, stt_lang, do_translate,
+                        keep_orig, burn_sub=False, auto_open=True):
+    """Dán 1+ link YouTube → tải → lồng tiếng (chuỗi wizard) → tự mở xem khi xong.
+    Nhiều link = hàng đợi tuần tự (mỗi video tải xong rồi mới dub video đó)."""
+    if _autodub_busy():
+        return
+    links = [u.strip() for u in (urls or []) if u and u.strip()]
+    if not links:
+        log("[YouTube] ❌ Chưa nhập link YouTube.")
+        return
+    dest_dir = (dest_dir or "").strip() or os.path.join(
+        os.path.expanduser("~"), "Videos", "SRT_TTS_YouTube")
+    if not _find_ytdlp():
+        log("[YouTube] ❌ Chưa cài yt-dlp. Mở CMD chạy:  pip install -U yt-dlp")
+        return
+    if not _autodub_env_preflight(do_translate):
+        return
+
+    def _run():
+        _AUTODUB_RUNNING[0] = True
+        results = []
+        try:
+            n = len(links)
+            log_color(f"━━━ YOUTUBE → LỒNG TIẾNG: {n} video ━━━", "#ff5c5c")
+            for k, url in enumerate(links, 1):
+                log_color(f"▶▶ Link {k}/{n}: {url}", "#ff5c5c")
+                video = _download_youtube(url, dest_dir)
+                if not video:
+                    results.append((url, False))
+                    continue
+                log(f"[YouTube] ✅ Đã tải: {os.path.basename(video)}")
+                ok = _autodub_chain_sync(video, stt_model, stt_lang,
+                                         do_translate, keep_orig, burn_sub)
+                results.append((url, ok))
+                if ok and auto_open:
+                    dubbed = os.path.join(
+                        os.path.splitext(video)[0] + "_dub",
+                        os.path.splitext(os.path.basename(video))[0] + "_dubbed.mp4")
+                    if os.path.isfile(dubbed):
+                        app.after(0, lambda d=dubbed: _open_in_player(d))
+                if not ok and (stop_requested or VIDEO_STT_STOP
+                               or TRANSLATE_STOP or VIDEOTOOL_STOP):
+                    log("[YouTube] ⏹ Người dùng dừng — hủy phần còn lại.")
+                    break
+            if n > 1:
+                done = sum(1 for _u, _o in results if _o)
+                log_color(f"━━━ YOUTUBE: {done}/{len(results)} video OK ━━━",
+                          globals().get("_OK", "#2dd4a7"))
+        finally:
+            _AUTODUB_RUNNING[0] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# =========================
 # 📂 WATCH FOLDER — thả file vào thư mục là tự xử lý
 # =========================
 # Poll bằng app.after (main thread, 4s/lượt). File mới phải có size ỔN ĐỊNH
@@ -13379,7 +13627,7 @@ def open_autodub_dialog():
     """Wizard 1 nút: chọn video → chuỗi STT → Dịch → TTS → Merge → Mux tự chạy."""
     win = ctk.CTkToplevel(app)
     win.title("🎬 Lồng tiếng tự động")
-    win.geometry("660x520")
+    win.geometry("660x680")
     win.transient(app); win.lift(); win.attributes("-topmost", True)
     win.after(300, lambda: win.attributes("-topmost", False))
 
@@ -13389,7 +13637,31 @@ def open_autodub_dialog():
                            f"Dịch dùng provider đang chọn ({TRANSLATE_PROVIDER}). "
                            f"Output vào thư mục <tên video>_dub cạnh video.\n"
                            "💡 Browse chọn NHIỀU video (Ctrl+click) = hàng đợi dub tuần tự qua đêm.",
-                 font=("Arial", 11), justify="left").pack(pady=(0, 10))
+                 font=("Arial", 11), justify="left").pack(pady=(0, 6))
+
+    # ── 📺 YouTube: dán link → tải về (yt-dlp) → lồng tiếng → tự mở xem ──
+    yt_card = ctk.CTkFrame(win, fg_color=("#fbe9e9", "#3a2020"))
+    yt_card.pack(fill="x", padx=14, pady=(0, 8))
+    ctk.CTkLabel(yt_card, text="📺 Lồng tiếng video YouTube (dán link)",
+                 font=("Arial", 12, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
+    ctk.CTkLabel(yt_card, text="Dán 1 hoặc nhiều link (mỗi link 1 dòng). Bỏ trống nếu dùng file dưới.",
+                 font=("Arial", 10), text_color="#999").pack(anchor="w", padx=10)
+    yt_box = ctk.CTkTextbox(yt_card, height=58, wrap="none")
+    yt_box.pack(fill="x", padx=10, pady=(4, 4))
+    yt_row = ctk.CTkFrame(yt_card, fg_color="transparent")
+    yt_row.pack(fill="x", padx=10, pady=(0, 8))
+    ctk.CTkLabel(yt_row, text="Tải về:", font=("Arial", 11), width=58,
+                 anchor="w").pack(side="left")
+    ctk.CTkEntry(yt_row, textvariable=autodub_yt_dir_var).pack(
+        side="left", expand=True, fill="x", padx=(0, 6))
+
+    def _yt_browse_dir():
+        d = filedialog.askdirectory(title="Chọn thư mục lưu video tải về")
+        if d:
+            autodub_yt_dir_var.set(d)
+    ctk.CTkButton(yt_row, text="📁", width=40, command=_yt_browse_dir).pack(side="left", padx=(0, 6))
+    ctk.CTkCheckBox(yt_row, text="Mở xem ngay khi xong",
+                    variable=autodub_yt_open_var, font=("Arial", 11)).pack(side="left")
 
     row1 = ctk.CTkFrame(win, fg_color="transparent")
     row1.pack(fill="x", padx=14, pady=4)
@@ -13442,9 +13714,31 @@ def open_autodub_dialog():
     row3 = ctk.CTkFrame(win, fg_color="transparent")
     row3.pack(fill="x", padx=14, pady=4)
     ctk.CTkCheckBox(row3, text="Dịch sang tiếng Việt trước khi đọc",
-                    variable=autodub_translate_var, font=("Arial", 12)).pack(side="left", padx=(0, 16))
-    ctk.CTkCheckBox(row3, text="Giữ audio gốc (trộn nhạc/SFX dưới giọng đọc)",
-                    variable=autodub_keep_var, font=("Arial", 12)).pack(side="left")
+                    variable=autodub_translate_var, font=("Arial", 12)).pack(side="left", padx=(0, 10))
+    ctk.CTkLabel(row3, text="bằng:", font=("Arial", 12)).pack(side="left", padx=(0, 4))
+    ctk.CTkOptionMenu(row3, variable=translate_provider_var,
+                      values=["Claude", "Gemini", "OpenAI", "Offline"],
+                      command=set_translate_provider, width=100,
+                      font=("Arial", 12)).pack(side="left")
+    ctk.CTkLabel(row3, text="(Offline = dịch local, khỏi API key)",
+                 font=("Arial", 10), text_color="#999").pack(side="left", padx=(6, 0))
+
+    row3b = ctk.CTkFrame(win, fg_color="transparent")
+    row3b.pack(fill="x", padx=14, pady=4)
+    # Ô "Hạ tiếng gốc" chỉ hiện khi "Giữ audio gốc" được tick (ducking vô nghĩa
+    # khi giọng đọc thay thế hoàn toàn audio gốc).
+    _duck_chk = ctk.CTkCheckBox(row3b, text="Hạ tiếng gốc khi có giọng đọc (ducking) — giọng đọc luôn nổi rõ",
+                                variable=mux_duck_var, font=("Arial", 12))
+
+    def _toggle_duck():
+        if autodub_keep_var.get():
+            _duck_chk.pack(side="left", padx=(24, 0))
+        else:
+            _duck_chk.pack_forget()
+    ctk.CTkCheckBox(row3b, text="Giữ audio gốc (trộn nhạc/SFX dưới giọng đọc)",
+                    variable=autodub_keep_var, font=("Arial", 12),
+                    command=_toggle_duck).pack(side="left")
+    _toggle_duck()   # trạng thái ban đầu theo giá trị đã nhớ
 
     row4 = ctk.CTkFrame(win, fg_color="transparent")
     row4.pack(fill="x", padx=14, pady=4)
@@ -13457,14 +13751,17 @@ def open_autodub_dialog():
                  justify="left").pack(pady=(8, 2))
 
     def _start():
+        yt_links = [l.strip() for l in yt_box.get("1.0", "end").splitlines()
+                    if l.strip()]
         vids = list(_picked["files"])
         entry_val = v_video.get().strip()
         # Nhiều video + entry chưa bị sửa tay → chạy hàng đợi; còn lại = 1 video
         multi = (len(vids) > 1
                  and entry_val.startswith(f"({len(vids)} video)"))
-        if not multi:
+        if not yt_links and not multi:
             if not entry_val or not os.path.isfile(entry_val):
-                msg.showerror("Lồng tiếng tự động", "Chưa chọn file video hợp lệ.")
+                msg.showerror("Lồng tiếng tự động",
+                              "Chưa dán link YouTube và chưa chọn file video hợp lệ.")
                 return
         # Áp hồ sơ giọng đã chọn (đang ở main thread — apply trực tiếp được)
         sel = v_profile.get()
@@ -13478,12 +13775,15 @@ def open_autodub_dialog():
         _args = (autodub_model_var.get(), autodub_lang_var.get(),
                  bool(autodub_translate_var.get()),
                  bool(autodub_keep_var.get()))
-        if multi:
-            run_autodub_queue(vids, *_args,
-                              burn_sub=bool(autodub_burnsub_var.get()))
+        _bs = bool(autodub_burnsub_var.get())
+        if yt_links:   # ưu tiên link YouTube nếu có
+            run_autodub_youtube(yt_links, autodub_yt_dir_var.get(), *_args,
+                                burn_sub=_bs,
+                                auto_open=bool(autodub_yt_open_var.get()))
+        elif multi:
+            run_autodub_queue(vids, *_args, burn_sub=_bs)
         else:
-            run_autodub_chain(entry_val, *_args,
-                              burn_sub=bool(autodub_burnsub_var.get()))
+            run_autodub_chain(entry_val, *_args, burn_sub=_bs)
 
     ctk.CTkButton(win, text="🎬 Bắt đầu lồng tiếng tự động", command=_start,
                   fg_color="#2fa572", hover_color="#37b87f", height=44,
@@ -17235,6 +17535,22 @@ mux_keep_orig_var = ctk.BooleanVar(value=False)
 mux_keep_orig_check = ctk.CTkCheckBox(_g5_mux2, text="Giữ audio gốc", variable=mux_keep_orig_var, width=110, font=("Arial", 12))
 mux_keep_orig_check.pack(side="left", padx=(0, 6))
 
+# Ducking: tự hạ tiếng gốc khi có giọng đọc, trả lại khi gốc chỉ còn nhạc/SFX
+mux_duck_var = ctk.BooleanVar(value=True)
+mux_duck_check = ctk.CTkCheckBox(
+    _g5_mux2, text="Hạ tiếng gốc khi có giọng đọc", variable=mux_duck_var,
+    width=200, font=("Arial", 12))
+
+# Chỉ hiện ô ducking khi "Giữ audio gốc" được tick (dùng trace để áp đúng cả
+# khi ui_prefs nạp lại giá trị đã nhớ sau lúc tạo widget).
+def _mux_toggle_duck(*_a):
+    if mux_keep_orig_var.get():
+        mux_duck_check.pack(side="left", padx=(0, 6))
+    else:
+        mux_duck_check.pack_forget()
+mux_keep_orig_var.trace_add("write", _mux_toggle_duck)
+_mux_toggle_duck()
+
 btn_mux_run = ctk.CTkButton(_g5_mux3, text="Ghép Vào Video", command=start_mux_video, height=36, font=("Arial", 13), state="disabled", fg_color="#2fa572", hover_color="#37b87f")
 btn_mux_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
@@ -18023,10 +18339,11 @@ def _ui_prefs_register():
         "autodub_model": autodub_model_var, "autodub_lang": autodub_lang_var,
         "autodub_translate": autodub_translate_var,
         "autodub_keep": autodub_keep_var, "autodub_burnsub": autodub_burnsub_var,
+        "autodub_yt_dir": autodub_yt_dir_var, "autodub_yt_open": autodub_yt_open_var,
         "watch_dir": watch_dir_var,   # CHỈ đường dẫn — trạng thái bật không persist
         "translate_bilingual": translate_bilingual_var,
         "translate_then_tts": translate_then_tts_var,
-        "mux_keep_orig": mux_keep_orig_var,
+        "mux_keep_orig": mux_keep_orig_var, "mux_duck": mux_duck_var,
     })
 
 def _ui_prefs_load():

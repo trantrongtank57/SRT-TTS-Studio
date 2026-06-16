@@ -120,6 +120,12 @@
                                     cần cho: dịch provider "Offline"
  [ ] Subtitle Edit        nhỏ       cài bình thường
                                     cần cho: nút Open Subtitle Edit
+ [ ] yt-dlp               nhỏ       cần cho: 📺 YouTube → Lồng tiếng (dán link)
+                                    CÁCH 1 (gọn): tải yt-dlp.exe đặt CẠNH .exe
+                                    CÁCH 2: voxcpm_env\Scripts\python.exe -m pip
+                                            install -U yt-dlp
+                                    Thiếu → chỉ tính năng YouTube báo lỗi rõ,
+                                    phần còn lại vẫn chạy bình thường.
 
  ⚠ TORCH GPU theo TỪNG ENV: mỗi *_env dùng GPU chỉ khi env đó cài torch bản
    CUDA. Hiện tại (máy gốc): voxcpm_env=cu126, vieneu_env=cu128, f5tts_env=cu126
