@@ -5026,20 +5026,13 @@ _g5_studio = _sec_row(_sec_es)
 _sec_tools = _make_section("Nhật ký & Reset", "Xóa log · đặt lại trạng thái giao diện", "#5a6478", ws="tools")
 _g_tools = _sec_row(_sec_tools)
 
-# Tiện ích SRT (dời thời gian — lambda vì hàm được định nghĩa phía dưới)
-_sec_srttools = _make_section("Tiện ích SRT", "Dời thời gian phụ đề · sửa lỗi file SRT",
-                              "#3aa675", ws="tools")
-_g_srttools = _sec_row(_sec_srttools)
-btn_srt_shift = ctk.CTkButton(_g_srttools, text="⏱ Dời thời gian SRT",
-                              command=lambda: open_srt_shift_dialog(),
-                              height=36, font=("Arial", 13))
-btn_srt_shift.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+# (Nút "⏱ Dời thời gian SRT" đã chuyển sang trang SRT → Lồng tiếng, cột TẠO)
 
 # 📂 Watch folder — thả file vào thư mục là tự xử lý (hàm định nghĩa phía dưới
 # cạnh run_autodub_queue → mọi command dùng lambda late-binding)
 _sec_watch = _make_section("📂 Watch folder",
                            "Thả SRT → tự TTS + merge · thả video → tự lồng tiếng (cấu hình wizard đã lưu)",
-                           "#b3771d", ws="tools")
+                           "#b3771d", ws="video")
 _g_watch = _sec_row(_sec_watch)
 watch_dir_var = ctk.StringVar(value="")
 watch_enabled_var = ctk.BooleanVar(value=False)
@@ -17294,6 +17287,12 @@ btn_try3 = ctk.CTkButton(_g1_create, text="🎧 Thử 3 dòng đầu", command=p
                          height=36, font=("Arial", 13),
                          fg_color="#7c5cff", hover_color="#9277ff")
 btn_try3.pack(side="top", fill="x", padx=4, pady=4)
+
+# Tiện ích SRT — dời thời gian (lambda vì open_srt_shift_dialog định nghĩa phía dưới)
+btn_srt_shift = ctk.CTkButton(_g1_create, text="⏱ Dời thời gian SRT",
+                              command=lambda: open_srt_shift_dialog(),
+                              height=36, font=("Arial", 13))
+btn_srt_shift.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_merge = ctk.CTkButton(_g1_create, text="Merge FFmpeg", command=start_merge, height=36, font=("Arial", 13))
 btn_merge.pack(side="top", fill="x", padx=4, pady=4)
