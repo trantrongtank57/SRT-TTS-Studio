@@ -572,7 +572,7 @@ The "textaudio" workspace page. Input is **`quick_tts_textbox`** (multi-line `CT
 
 ## Mux Audio → Video (`_run_mux_thread`)
 
-"Ghép Audio Final vào Video" (in the "video" page) — pick a video + a final audio track (e.g. `final.mp3` from Merge FFmpeg), adjust per-source volume, then mux into `<video>_dubbed.mp4`. Functions live just after `open_compress_folder` (`load_mux_video` @7617, `_parse_volume` @7666, `_run_mux_thread` @7680, `start_mux_video` @7813); globals `MUX_VIDEO_FILE` / `MUX_AUDIO_FILE` / `MUX_OUTPUT_DIR` next to the `COMPRESS_*` globals.
+"Ghép Audio Final vào Video" (in the "video" page) — pick a video + a final audio track (e.g. `final.mp3` from Merge FFmpeg), adjust per-source volume, then mux into `<video>_dubbed.mp4`. Functions live just after `open_compress_folder` (`load_mux_video` @8552, `_run_mux_thread` @8623, `start_mux_video` @8785); globals `MUX_VIDEO_FILE` / `MUX_AUDIO_FILE` / `MUX_OUTPUT_DIR` next to the `COMPRESS_*` globals.
 
 - **Volume controls** (`mux_video_vol_var` / `mux_audio_vol_var`): `_parse_volume()` accepts `1.0`, `0.5`, `150%`, `0` → ffmpeg `volume=` factor.
 - **Keep-original-audio checkbox** (`mux_keep_orig_var`): when checked **and** the video has an audio track, both streams are `amix`-ed (`amix=inputs=2:duration=longest:normalize=0`); otherwise the final audio replaces the original. Falls back to replace-mode with a warning if the video has no audio.

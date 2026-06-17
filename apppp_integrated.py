@@ -8040,7 +8040,7 @@ def _stt_export_format(srt_path, txt_path, fmt, log_cb=None):
 
 def _run_video_stt_thread():
     global STT_OUTPUT_DIR, _VIDEO_STT_PROC, VIDEO_STT_PAUSED, VIDEO_STT_STOP
-    set_mode("video_stt_running")
+    app.after(0, lambda: set_mode("video_stt_running"))
     VIDEO_STT_PAUSED = False
     VIDEO_STT_STOP   = False
 
