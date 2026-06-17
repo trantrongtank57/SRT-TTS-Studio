@@ -8520,7 +8520,7 @@ def _run_compress_thread():
             app.after(0, lambda: set_mode("compress_ready"))
 
     except Exception as exc:
-        app.after(0, lambda: log(f"[Nén Video] ❌ Exception: {exc}"))
+        app.after(0, lambda exc=exc: log(f"[Nén Video] ❌ Exception: {exc}"))
         app.after(0, lambda: set_mode("compress_ready"))
     finally:
         _VIDEOTOOL_PROC = None
@@ -8776,7 +8776,7 @@ def _run_mux_thread():
             app.after(0, lambda: set_mode(_mux_ready_mode()))
 
     except Exception as exc:
-        app.after(0, lambda: log(f"[Ghép Audio] ❌ Exception: {exc}"))
+        app.after(0, lambda exc=exc: log(f"[Ghép Audio] ❌ Exception: {exc}"))
         app.after(0, lambda: set_mode(_mux_ready_mode()))
     finally:
         _VIDEOTOOL_PROC = None
@@ -9311,7 +9311,7 @@ def merge_pdf_audio():
                 err = (result.stderr or b"").decode("utf-8", errors="replace")
                 app.after(0, lambda: log(f"[PDF] Merge FAIL: {err[:200]}"))
         except Exception as e:
-            app.after(0, lambda: log(f"[PDF] Merge lỗi: {e}"))
+            app.after(0, lambda e=e: log(f"[PDF] Merge lỗi: {e}"))
         finally:
             try:
                 os.remove(list_path)
@@ -15875,7 +15875,7 @@ def open_edit_studio():
                 )
             except Exception as ex:
                 if win.winfo_exists():
-                    win.after(0, lambda: _set_status(f"ffmpeg error: {ex}", error=True))
+                    win.after(0, lambda ex=ex: _set_status(f"ffmpeg error: {ex}", error=True))
                 log(f"[Edit Studio] ❌ ffmpeg lỗi khi đọc video: {ex}")
                 log("━━━ Hướng xử lý ━━━")
                 log("  • Kiểm tra file video có bị hỏng không (thử mở bằng trình phát khác)")

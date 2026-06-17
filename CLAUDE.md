@@ -142,7 +142,7 @@ assert not any('apppp_integrated' in n for n in names if not n.endswith('.pyd'))
 
 ### Security layers at runtime
 1. **Cython `.pyd`** — native x64 machine code; no Python decompiler exists
-2. **Integrity check** (`_check_integrity`, line ~114) — SHA-256 of `.exe` + `.pyd` vs `.integrity` file; fail-closed; runs at import time before any UI
+2. **Integrity check** (`_check_integrity`, line ~115) — SHA-256 of `.exe` + `.pyd` vs `.integrity` file; fail-closed; runs at import time before any UI
 3. **Self-integrity** (Secured variant only) — SHA-256 + HMAC of exe vs companion `.integrity`
 4. **Hardware DRM** — `auth.dat` HMAC-signed with CPU `ProcessorId` + C: volume serial
 5. **PBKDF2 password** — 200k iterations; `_HMAC_SECRET` / `_PBKDF2_SALT` XOR-split across two byte literals in source (do NOT change after deployment — breaks existing `auth.dat`)
@@ -179,8 +179,8 @@ Two ways to leave the running app — both live near the bottom of the file:
 
 | Trigger | Function | Behavior |
 |---|---|---|
-| Window **X** button (`WM_DELETE_WINDOW`) | `on_app_close()` @15980 | Confirm dialog → `stop_all_processes()` → goodbye sound (`naycaugioi.wav`, sync) → `os._exit(0)`. Quits for good. |
-| **Logout** button (`btn_exit`, top-right `_g6`) | `on_logout()` @16005 | Same X effect (confirm + stop processes + goodbye sound), but **relaunches** instead of exiting → returns to the login screen. |
+| Window **X** button (`WM_DELETE_WINDOW`) | `on_app_close()` @18640 | Confirm dialog → `stop_all_processes()` → goodbye sound (`naycaugioi.wav`, sync) → `os._exit(0)`. Quits for good. |
+| **Logout** button (`btn_exit`, top-right `_g6`) | `on_logout()` @18667 | Same X effect (confirm + stop processes + goodbye sound), but **relaunches** instead of exiting → returns to the login screen. |
 
 **Logout relaunch must NOT use `os.execl`.** Under PyInstaller onefile, re-exec inherits the bootloader's injected env vars (`_MEIPASS`, `_PYI_*`, `SSL_CERT_FILE`/`SSL_CERT_DIR`) pointing at the temp extraction dir that gets cleaned up on exit → `FileNotFoundError` in `ssl`/`edge_tts` at next import. Instead `on_logout()`:
 1. **Releases the single-instance mutex** (`ReleaseMutex` + `CloseHandle` on `builtins._srt_studio_mutex`) — else the fresh process hits "Phần mềm đang chạy!".
@@ -189,7 +189,7 @@ Two ways to leave the running app — both live near the bottom of the file:
 
 ## Codebase Structure
 
-`apppp_integrated.py` (~17,000 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
+`apppp_integrated.py` (~19,800 lines) is the **entire application** — no modules, packages, or separate files for UI vs logic. All TTS providers, UI, video tools, auth, and utilities are inline.
 
 > **Line anchors below are approximate** — the single file grows with every feature, so `@NNNN` references drift. Treat them as hints; locate symbols by name (`grep -n "^def name" apppp_integrated.py`) rather than trusting the exact number.
 
@@ -199,19 +199,19 @@ Two ways to leave the running app — both live near the bottom of the file:
 
 | Lines (approx.) | Section |
 |---|---|
-| 1–110 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
-| ~110–1060 | Security checks (`_check_integrity` @114, DRM, trial, VM detection), global state vars (incl. translate / OCR-control / Edit-Studio globals), settings load/save (`_load_settings`/`_save_settings`), `_load_settings()` call @1062 |
-| ~1060–1470 | CustomTkinter app/window creation, UI layout frames (`_left_col` @1249, `button_frame` alias @1273), global title-bar controls (`_CTRL_GROUPS` decl @1389, `g_btn_*` @1459+) |
-| ~1470–3060 | Voice/provider UI + the five local-engine panels (RVC, VoxCPM, VieNeu, F5-TTS, OmniVoice) + `_apply_voice_exclusivity`, Voice Profiles + glossary (@2793–2920) |
-| ~3060–4380 | Telex IME (`_telex_transform` @3057), Quick TTS (`_quick_tts_run` @3246), progress-bar canvas, scrollable `button_frame`/`ws_content` |
-| ~4380–5010 | Sidebar-workspace (`# BO CUC SIDEBAR-WORKSPACE` @4378, `show_workspace` @4403, `_make_section` @4510), `show_fireworks` (@4762) |
-| ~5010–5320 | `show_settings_dialog` (@5014) — scrollable settings dialog |
-| ~5320–6390 | **Translation to Vietnamese** (LLM online + offline) — `_translate_active_key` (@5324), `_translate_segments` (@5569), `translate_srt` (@5868), `translate_pdf/doc`, `_write_translated_doc`, `_read_text_smart` |
-| ~6390–10050 | Feature functions: `update_progress` (@6398), `_split_text_chunks` (@6524), **Video OCR** (`_run_videocr_thread` @6789 + pause/stop), STT export (`_stt_export_format` @7054), **Mux** (`load_mux_video` @7617 … `start_mux_video` @7813), TTS providers (Edge/FPT/Vbee/Zalo/EverAI/MiniMax), RVC, VoxCPM, **PDF + Word/TXT TTS** (`load_pdf` @7935, `load_doc_tts` @8007), QC dashboard, compress |
-| ~10050–11700 | Local voice-clone batch backends: VieNeu (`_vieneu_preflight` @10057), **F5-TTS** (`_f5tts_preflight` @10408, `_run_f5tts_batch` @10466), OmniVoice, Queue + **Auto-dubbing wizard** (`run_autodub_chain` ~11300–11650), regenerate paths |
-| ~11700–15370 | `merge_ffmpeg` (@11708), **Edit Studio** (`open_edit_studio` @12757 + sequential playlist), remaining video tools, UI widget instantiation for all button rows, `_CTRL_GROUPS` population (@15248) / `_WS_OUTPUT` (@15348) |
-| ~15370–16950 | `set_mode()` (@15373) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, Logout button), the exit / Logout flow (`on_app_close` @15980, `on_logout` @16005), and `_run_startup_diagnostics` (@16605) |
-| ~16950–end | Splash screen (`show_splash_then_auth` @17369), `app.withdraw()` + splash scheduling, `app.mainloop()` (@17536) at module level |
+| 1–115 | Imports, constants (`CREATE_NO_WINDOW`), `get_ffmpeg()`, `get_ffprobe()`, `_detect_gpu()` |
+| ~115–990 | Security checks (`_check_integrity` @115, DRM, trial, VM detection), global state vars (incl. translate / OCR-control / Edit-Studio globals), settings load/save (`_load_settings` @992 / `_save_settings`), `_load_settings()` call @1109 |
+| ~1100–1480 | CustomTkinter app/window creation, UI layout frames (`_left_col` @1344, `button_frame` alias @1368), global title-bar controls (`_CTRL_GROUPS` decl @1484, `g_btn_*`) |
+| ~1480–3430 | Voice/provider UI + the five local-engine panels (RVC, VoxCPM, VieNeu, F5-TTS, OmniVoice) + `_apply_voice_exclusivity`, Voice Profiles + glossary |
+| ~3430–4770 | Telex IME (`_telex_transform` @3433), Quick TTS (`_quick_tts_run` @3622), progress-bar canvas, scrollable `button_frame`/`ws_content` |
+| ~4770–5480 | Sidebar-workspace (`# BO CUC SIDEBAR-WORKSPACE` @4777, `show_workspace` @4802, `_make_section` @4909), `show_fireworks` (@5231) |
+| ~5480–5860 | `show_settings_dialog` (@5484) — scrollable settings dialog |
+| ~5860–7070 | **Translation to Vietnamese** (LLM online + offline) — `_translate_active_key` (@5867), `_translate_segments` (@6122), `translate_srt` (@6421), `translate_pdf/doc`, `_write_translated_doc`, `_read_text_smart` |
+| ~7070–11600 | Feature functions: `update_progress` (@7079), `_split_text_chunks` (@7451), **Video OCR** (`_run_videocr_thread` @7716 + pause/stop), STT export (`_stt_export_format` @7981), **Mux** (`load_mux_video` @8552 … `start_mux_video` @8785), TTS providers (Edge/FPT/Vbee/Zalo/EverAI/MiniMax), RVC, VoxCPM, **PDF + Word/TXT TTS** (`load_pdf` @8907, `load_doc_tts` @8979), QC dashboard, compress |
+| ~11600–14000 | Local voice-clone batch backends: VieNeu (`_vieneu_preflight` @11603), **F5-TTS** (`_f5tts_preflight` @11957, `_run_f5tts_batch` @12015), OmniVoice, Queue + **Auto-dubbing wizard** (`run_autodub_chain` @13394), regenerate paths |
+| ~14000–17700 | `merge_ffmpeg` (@14016), **Edit Studio** (`open_edit_studio` @15119 + sequential playlist), remaining video tools, UI widget instantiation for all button rows, `_CTRL_GROUPS` population (@17711) / `_WS_OUTPUT` (@17812) |
+| ~17700–19260 | `set_mode()` (@17837) — the central UI state machine — plus late-bound widgets (`btn_reset_mode`, Logout button), the exit / Logout flow (`on_app_close` @18640, `on_logout` @18667) |
+| ~19260–end | `_run_startup_diagnostics` (@19269), splash screen (`show_splash_then_auth` @19504), `app.withdraw()` + splash scheduling, `app.mainloop()` (@19793) at module level |
 
 ## UI Architecture Patterns (apppp_integrated.py)
 
