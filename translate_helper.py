@@ -28,6 +28,51 @@ def _err(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
+def _detect_nllb_lang(segments, default='eng_Latn'):
+    """Đoán mã ngôn ngữ nguồn (NLLB) từ nội dung — không cần thư viện ngoài.
+    Ưu tiên langdetect nếu env có cài (phân biệt tốt các ngôn ngữ chữ Latin);
+    nếu không thì heuristic theo bảng chữ (script) cho các chữ viết phân biệt rõ
+    (Hán/Nhật/Hàn/Thái/Cyrillic). Chữ Latin không tách được → mặc định Anh."""
+    sample = ' '.join(s for s in segments
+                      if isinstance(s, str) and s.strip())[:2000]
+    if not sample.strip():
+        return default
+    # 1) langdetect (tùy chọn) — tốt nhất cho các ngôn ngữ chữ Latin
+    try:
+        from langdetect import detect
+        m = {
+            'en': 'eng_Latn', 'vi': 'vie_Latn', 'zh-cn': 'zho_Hans',
+            'zh-tw': 'zho_Hant', 'zh': 'zho_Hans', 'ja': 'jpn_Jpan',
+            'ko': 'kor_Hang', 'fr': 'fra_Latn', 'es': 'spa_Latn',
+            'ru': 'rus_Cyrl', 'th': 'tha_Thai', 'de': 'deu_Latn',
+            'it': 'ita_Latn', 'pt': 'por_Latn', 'id': 'ind_Latn',
+        }
+        code = detect(sample)
+        if code in m:
+            return m[code]
+    except Exception:
+        pass
+    # 2) Heuristic theo script (đếm ký tự đặc trưng)
+    counts = {}
+    for ch in sample:
+        o = ord(ch)
+        if 0x3040 <= o <= 0x30FF:        # Hiragana/Katakana → Nhật
+            counts['jpn_Jpan'] = counts.get('jpn_Jpan', 0) + 1
+        elif 0xAC00 <= o <= 0xD7A3:      # Hangul → Hàn
+            counts['kor_Hang'] = counts.get('kor_Hang', 0) + 1
+        elif 0x4E00 <= o <= 0x9FFF:      # Hán → Trung (giản thể mặc định)
+            counts['zho_Hans'] = counts.get('zho_Hans', 0) + 1
+        elif 0x0E00 <= o <= 0x0E7F:      # Thái
+            counts['tha_Thai'] = counts.get('tha_Thai', 0) + 1
+        elif 0x0400 <= o <= 0x04FF:      # Cyrillic → Nga
+            counts['rus_Cyrl'] = counts.get('rus_Cyrl', 0) + 1
+    if counts:
+        if counts.get('jpn_Jpan'):       # kana lẫn Hán → vẫn là Nhật
+            return 'jpn_Jpan'
+        return max(counts, key=counts.get)
+    return default                       # chữ Latin → mặc định Anh
+
+
 # Trạng thái điều khiển nhận qua stdin từ app (PAUSE / RESUME / STOP)
 _CTRL = {'pause': False, 'stop': False}
 
@@ -118,8 +163,13 @@ def main():
 
     forced_bos = None
     if is_nllb:
+        eff_src = args.src_lang
+        if str(eff_src).strip().lower() == 'auto':
+            eff_src = _detect_nllb_lang(segments)
+            _err(f'AUTO-DETECT src lang -> {eff_src}')
+            print(f'AUTODETECT:{eff_src}', flush=True)
         try:
-            tok.src_lang = args.src_lang
+            tok.src_lang = eff_src
         except Exception:
             pass
         try:
@@ -131,7 +181,7 @@ def main():
                 forced_bos = tok.lang_code_to_id[args.tgt_lang]
             except Exception:
                 pass
-        _err(f'NLLB mode: src={args.src_lang} tgt={args.tgt_lang} forced_bos={forced_bos}')
+        _err(f'NLLB mode: src={eff_src} tgt={args.tgt_lang} forced_bos={forced_bos}')
     elif is_envit5:
         _err('envit5 mode: English -> Vietnamese')
     else:

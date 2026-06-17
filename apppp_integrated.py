@@ -5673,6 +5673,7 @@ def show_settings_dialog():
 
     # Ngôn ngữ nguồn cho NLLB (envit5 luôn Anh→Việt nên bỏ qua giá trị này)
     _SRC_LANGS = [
+        ("Tự động phát hiện",        "auto"),
         ("Tiếng Anh (English)",      "eng_Latn"),
         ("Tiếng Trung giản thể",     "zho_Hans"),
         ("Tiếng Trung phồn thể",     "zho_Hant"),
@@ -6089,6 +6090,9 @@ def _translate_segments_local(segments, progress_cb=None, log_cb=None):
                         progress_cb(int(parts[1]), int(parts[2]))
                 except Exception:
                     pass
+            elif line.startswith('AUTODETECT:'):
+                if log_cb:
+                    log_cb(f"🔎 Tự động nhận diện ngôn ngữ nguồn: {line.split(':', 1)[1]}")
             elif line == 'STOPPED':
                 if log_cb:
                     log_cb("⏹ Đã dừng (offline) — giữ phần đã dịch.")
