@@ -443,6 +443,11 @@ echo.
 :: =========================================
 echo [7/9] Generating WiX components...
 
+:: An toan: xoa moi auth.dat/.lockout lo lot vao dist (vd do chay thu app tu day)
+:: truoc khi Heat harvest — tranh dong goi credential gan-may-build vao MSI.
+if exist "dist\SRT_TTS_Studio\auth.dat" del /q "dist\SRT_TTS_Studio\auth.dat"
+if exist "dist\SRT_TTS_Studio\.lockout" del /q "dist\SRT_TTS_Studio\.lockout"
+
 %WIX_HEAT% dir "dist\SRT_TTS_Studio" -cg AppFiles -gg -gl -scom -sreg -sfrag -srd -dr INSTALLDIR -var var.SourceDir -out harvested.wxs
 
 if not exist "harvested.wxs" (
@@ -457,7 +462,14 @@ echo.
 :: =========================================
 echo [8/9] Compiling MSI installer...
 
-%WIX_CANDLE% product.wxs harvested.wxs -dSourceDir="dist\SRT_TTS_Studio" -arch x64
+:: --- Doc so phien ban tu VERSION.txt (mac dinh 1.0.0 neu thieu) ---
+:: TANG so nay moi ban phat hanh (vd 1.0.0 -> 1.0.1) thi nguoi dung chi can
+:: chay file .msi moi la tu dong cap nhat de, KHONG can go cai dat truoc.
+set "APP_VERSION=1.0.0"
+if exist "VERSION.txt" ( set /p APP_VERSION=<VERSION.txt )
+echo   [i] MSI version = %APP_VERSION%
+
+%WIX_CANDLE% product.wxs harvested.wxs -dSourceDir="dist\SRT_TTS_Studio" -dProductVersion=%APP_VERSION% -arch x64
 if errorlevel 1 ( echo   [ERROR] candle.exe failed! & pause & exit /b 1 )
 
 %WIX_LIGHT% product.wixobj harvested.wixobj -ext WixUIExtension -sice:ICE80 -sice:ICE60 -out "SRT_TTS_Studio_Setup.msi" -b "dist\SRT_TTS_Studio"

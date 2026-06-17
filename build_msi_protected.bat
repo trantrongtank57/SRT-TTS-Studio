@@ -360,6 +360,11 @@ echo.
 :: =========================================
 echo [7/8] Generating WiX components from dist folder...
 
+:: An toan: xoa moi auth.dat/.lockout lo lot vao dist truoc khi Heat harvest
+:: — tranh dong goi credential gan-may-build vao MSI.
+if exist "dist\SRT_TTS_Studio\auth.dat" del /q "dist\SRT_TTS_Studio\auth.dat"
+if exist "dist\SRT_TTS_Studio\.lockout" del /q "dist\SRT_TTS_Studio\.lockout"
+
 %WIX_HEAT% dir "dist\SRT_TTS_Studio" -cg AppFiles -gg -gl -scom -sreg -sfrag -srd -dr INSTALLDIR -var var.SourceDir -out harvested.wxs
 
 if not exist "harvested.wxs" (
@@ -374,7 +379,13 @@ echo.
 :: =========================================
 echo [8/8] Compiling and linking MSI...
 
-%WIX_CANDLE% product.wxs harvested.wxs -dSourceDir="dist\SRT_TTS_Studio" -arch x64
+:: --- Doc so phien ban tu VERSION.txt (mac dinh 1.0.0 neu thieu) ---
+:: TANG so nay moi ban phat hanh thi nguoi dung chay .msi moi se cap nhat de tu dong.
+set "APP_VERSION=1.0.0"
+if exist "VERSION.txt" ( set /p APP_VERSION=<VERSION.txt )
+echo   [i] MSI version = %APP_VERSION%
+
+%WIX_CANDLE% product.wxs harvested.wxs -dSourceDir="dist\SRT_TTS_Studio" -dProductVersion=%APP_VERSION% -arch x64
 
 if errorlevel 1 (
     echo   [ERROR] candle.exe failed!

@@ -5,10 +5,19 @@
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
+  <!-- Version duoc truyen tu build script qua: candle -dProductVersion=x.y.z
+       Neu khong truyen (build tay) thi mac dinh 1.0.0.
+       QUAN TRONG: Windows Installer BO QUA truong thu 4 cua version khi so sanh,
+       nen chi dung 3 truong (x.y.z) va PHAI tang it nhat 1 trong 3 truong moi ban
+       thi MajorUpgrade moi nhan ra la ban moi. UpgradeCode KHONG BAO GIO duoc doi. -->
+  <?ifndef ProductVersion ?>
+    <?define ProductVersion = "1.0.0" ?>
+  <?endif ?>
+
   <Product Id="*"
            Name="SRT TTS Studio"
            Language="1033"
-           Version="1.0.0.0"
+           Version="$(var.ProductVersion)"
            Manufacturer="SRT TTS Studio"
            UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
 
@@ -18,8 +27,14 @@
              Description="SRT TTS Studio Installer"
              Comments="Chuyen van ban SRT thanh giong noi" />
 
-    <!-- Cho phep upgrade, khong cho downgrade -->
-    <MajorUpgrade DowngradeErrorMessage="Phien ban moi hon da duoc cai dat. Vui long go cai dat truoc." />
+    <!-- CAP NHAT KHONG CAN GO CAI DAT:
+         MajorUpgrade tu dong go ban cu + cai ban moi trong 1 buoc (RemoveExistingProducts
+         chay sau InstallValidate). Nguoi dung CHI can chay file .msi moi.
+         - DowngradeErrorMessage: chi hien khi co ai do co cai ban CU hon ban dang co.
+         - AllowSameVersionUpgrades: cho phep cai de khi version giong het (tien khi test). -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="Mot phien ban moi hon cua SRT TTS Studio da duoc cai dat. Khong the cai de ban cu hon." />
 
     <!-- Nen file vao 1 cabinet -->
     <MediaTemplate EmbedCab="yes" />

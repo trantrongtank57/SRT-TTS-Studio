@@ -976,7 +976,7 @@ def _migrate_config_from_exe_dir():
         return
     for name in ("settings.json", "voice_profiles.json", "glossary.json",
                  "ui_prefs.json", "session.json", "tts_prices.json",
-                 "edge_voices.json"):
+                 "edge_voices.json", "auth.dat", ".lockout"):
         src = os.path.join(_EXE_DIR, name)
         dst = os.path.join(_CONFIG_DIR, name)
         try:
@@ -18773,8 +18773,12 @@ import base64
 import struct
 import time
 
-PASSWORD_FILE = "auth.dat"
-LOCKOUT_FILE  = ".lockout"
+# Neo vao _CONFIG_DIR (ghi duoc, on dinh, song sot qua MSI major-upgrade) thay vi
+# duong dan tuong doi theo CWD — CWD = Program Files (read-only) khi cai bang MSI,
+# se gay PermissionError luc dat mat khau + lam "mat" login khi CWD doi.
+# File cu nam canh exe da duoc _migrate_config_from_exe_dir() copy sang truoc do.
+PASSWORD_FILE = os.path.join(_CONFIG_DIR, "auth.dat")
+LOCKOUT_FILE  = os.path.join(_CONFIG_DIR, ".lockout")
 _LOCKOUT_MAX      = 5
 _LOCKOUT_COOLDOWN = 900  # giây (15 phút)
 
