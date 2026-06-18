@@ -4792,7 +4792,7 @@ ws_nav = ctk.CTkFrame(_left_col, fg_color=_WS_NAVBG, corner_radius=0)
 ws_nav.pack(side="top", fill="both", expand=True, padx=0, pady=(38, 0))
 
 # ws_content + voice_page đã được tạo SỚM ở trên (gần _rc_body).
-_WS_KEYS = ["tts", "voice", "textaudio", "doc", "extract", "translate", "video", "editstudio", "tools", "system"]
+_WS_KEYS = ["dashboard", "tts", "voice", "textaudio", "doc", "extract", "translate", "video", "editstudio", "tools", "system"]
 ws_pages = {_k: ctk.CTkFrame(ws_content, fg_color="transparent") for _k in _WS_KEYS}
 ws_pages["voice"] = voice_page   # trang Giọng đọc đã dựng sẵn (chứa voice_frame)
 
@@ -4814,8 +4814,17 @@ def show_workspace(key):
     except Exception:
         pass
     _sync_output_buttons()   # cập nhật 2 nút Output chung theo trang vừa mở
+    if key == "dashboard":
+        _dbstart = globals().get("_dashboard_start_loop")
+        if _dbstart:
+            try:
+                _dbstart()
+            except Exception:
+                pass
 
 _WS_NAV_ITEMS = [
+    ("__cap0",    "TỔNG QUAN"),
+    ("dashboard", "\U0001F4CA   Bảng điều khiển"),
     ("__cap1",    "TẠO GIỌNG NÓI"),
     ("tts",       "\U0001F3A7   SRT \u2192 Lồng tiếng"),
     ("voice",     "\U0001F399\ufe0f   Gi\u1ecdng \u0111\u1ecdc / Clone"),
@@ -4906,8 +4915,8 @@ for _key, _label in _WS_NAV_ITEMS:
 _SEC_BG, _SEC_BORDER = "#181c2b", "#2a3046"
 _SUB_FG, _TTL_FG, _SUBTTL_FG = "#8a93ad", "#eef1f8", "#8a93ad"
 
-def _make_section(title, subtitle="", accent="#7c5cff", ws="tts"):
-    _parent = ws_pages.get(ws, button_frame)
+def _make_section(title, subtitle="", accent="#7c5cff", ws="tts", parent=None):
+    _parent = parent if parent is not None else ws_pages.get(ws, button_frame)
     card = ctk.CTkFrame(_parent, fg_color=_SEC_BG,
                         border_color=_SEC_BORDER, border_width=1, corner_radius=14)
     card.pack(fill="x", padx=4, pady=(0, 12))
@@ -4940,6 +4949,742 @@ def _sec_sublabel(parent, text):
                         text_color=_SUB_FG, anchor="w")
     _lbl.pack(fill="x", padx=5, pady=(7, 1))
     return _lbl
+
+# =====================================================================
+# BẢNG ĐIỀU KHIỂN (dashboard) — trang tổng quan: trạng thái phiên,
+# lối tắt nhanh, theo dõi job đang chạy, thống kê & nhật ký.
+# Các nhãn động được cập nhật bởi _dashboard_refresh() (gọi khi mở trang
+# + tự làm mới mỗi 2s khi trang đang hiển thị).
+# =====================================================================
+_DB_VALS = {}   # tên trường → CTkLabel giá trị (cập nhật bởi _dashboard_refresh)
+_DB_LOOP = {"on": False}   # chống xếp chồng nhiều vòng tự-làm-mới
+_DB_LOG_RING = []          # vài chục dòng log gần nhất (cho thẻ Nhật ký gần đây)
+_DB_JOB = {"on": False, "t0_mono": 0.0, "t0_wall": 0.0}   # thời điểm job bắt đầu
+
+def _db_fmt_dur(sec):
+    sec = int(max(0, sec))
+    h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
+    if h:
+        return f"{h}h{m:02d}p{s:02d}s"
+    if m:
+        return f"{m}p{s:02d}s"
+    return f"{s}s"
+
+def _db_kv(parent, key, label, val0="—"):
+    """Một hàng 'Nhãn : giá trị' trong thẻ trạng thái."""
+    row = ctk.CTkFrame(parent, fg_color="transparent")
+    row.pack(fill="x", padx=6, pady=2)
+    ctk.CTkLabel(row, text=label, font=("Arial", 12), text_color=_SUB_FG,
+                 anchor="w", width=170).pack(side="left")
+    _v = ctk.CTkLabel(row, text=val0, font=("Arial", 12, "bold"),
+                      text_color=_TTL_FG, anchor="w", justify="left")
+    _v.pack(side="left", fill="x", expand=True)
+    _DB_VALS[key] = _v
+    return _v
+
+# Thanh công cụ gọn ở đầu trang + khu "Chẩn đoán nâng cao" (ẩn mặc định) để
+# giảm rối: các thẻ ít dùng (môi trường / model runtime / tốc độ / log) được
+# gom vào _db_diag_body — chỉ hiện khi bấm nút. Khu này dựng SỚM (trước các
+# thẻ chẩn đoán cần parent=_db_diag_body) nhưng PACK ở CUỐI trang.
+_db_page = ws_pages["dashboard"]
+_db_toolbar = ctk.CTkFrame(_db_page, fg_color="transparent")
+_db_toolbar.pack(fill="x", padx=4, pady=(2, 8))
+ctk.CTkButton(_db_toolbar, text="🔄 Làm mới", width=110, height=32, fg_color="#5a5470",
+              command=lambda: (_dashboard_refresh(), _db_env_check())
+              ).pack(side="left", padx=4)
+ctk.CTkButton(_db_toolbar, text="📄 Mở log hôm nay", width=150, height=32,
+              command=lambda: open_today_log()
+              ).pack(side="left", padx=4)
+
+# Khu "Chẩn đoán nâng cao" — nút tiêu đề + thân nằm CÙNG CHỖ (cuối trang) nên
+# bấm là nội dung bung ra NGAY DƯỚI nút (tránh cảm giác "bấm không phản ứng"
+# khi nút ở đầu mà nội dung lại ở đáy). Body ẩn mặc định; mở thì tự cuộn tới.
+_db_diag_wrap = ctk.CTkFrame(_db_page, fg_color="transparent")   # PACK ở cuối
+_db_diag_shown = {"on": False}
+def _db_toggle_diag():
+    if _db_diag_shown["on"]:
+        _db_diag_body.pack_forget()
+        _db_diag_shown["on"] = False
+        _db_diag_btn.configure(text="🔧  Chẩn đoán nâng cao  (bấm để mở)  ▸")
+    else:
+        _db_diag_body.pack(fill="x", pady=(6, 0))
+        _db_diag_shown["on"] = True
+        _db_diag_btn.configure(text="🔧  Chẩn đoán nâng cao  (bấm để ẩn)  ▾")
+        try:
+            _db_env_check()   # quét môi trường/model/QC khi mở khu chẩn đoán
+        except Exception:
+            pass
+        try:   # cuộn xuống để thấy nội dung vừa bung
+            app.after(60, lambda: ws_content._parent_canvas.yview_moveto(1.0))
+        except Exception:
+            pass
+_db_diag_btn = ctk.CTkButton(_db_diag_wrap, text="🔧  Chẩn đoán nâng cao  (bấm để mở)  ▸",
+                             height=40, anchor="w", font=("Arial", 13, "bold"),
+                             fg_color="#3a3568", hover_color="#4a4578",
+                             command=lambda: _db_toggle_diag())
+_db_diag_btn.pack(fill="x", padx=4, pady=(4, 0))
+_db_diag_body = ctk.CTkFrame(_db_diag_wrap, fg_color="transparent")  # ẩn mặc định
+
+# --- Thẻ 1: Trạng thái phiên --------------------------------------------
+_db_sec1 = _make_section("Trạng thái phiên", "Tổng quan nhanh phiên làm việc hiện tại",
+                         "#36c5ff", ws="dashboard")
+_db_c = _sec_row(_db_sec1)
+_db_c1 = _sec_col(_db_c)
+_db_c2 = _sec_col(_db_c)
+_db_kv(_db_c1, "mode",   "Trạng thái:")
+_db_kv(_db_c1, "srt",    "File SRT:")
+_db_kv(_db_c1, "lines",  "Số dòng phụ đề:")
+_db_kv(_db_c1, "made",   "Đã tạo (file audio):")
+_db_kv(_db_c1, "fail",   "Dòng FAIL:")
+_db_kv(_db_c2, "voice",  "Giọng đang chọn:")
+_db_kv(_db_c2, "out",    "Thư mục Output:")
+_db_kv(_db_c2, "gpu",    "Tăng tốc:")
+_db_kv(_db_c2, "cfg",    "Thư mục cấu hình:")
+
+# --- Thẻ 1b: Sức khỏe môi trường (gọn) ----------------------------------
+# Cập nhật KHÔNG theo nhịp 2s (các _find_*_python phải quét thư mục) — chỉ
+# chạy khi mở trang + bấm 🔄 Làm mới / 🔍 Kiểm tra môi trường.
+_db_secEnv = _make_section("Sức khỏe môi trường", "Engine / model phát hiện trên máy này",
+                           "#9b8cff", parent=_db_diag_body)
+_db_envc = _sec_row(_db_secEnv)
+_db_envc1 = _sec_col(_db_envc)
+_db_envc2 = _sec_col(_db_envc)
+_db_kv(_db_envc1, "env_ffmpeg", "ffmpeg/ffprobe:", "⏳")
+_db_kv(_db_envc1, "env_gpu",    "GPU (CUDA):",      "⏳")
+_db_kv(_db_envc1, "env_voxcpm", "VoxCPM env:",      "⏳")
+_db_kv(_db_envc1, "env_vieneu", "VieNeu env:",      "⏳")
+_db_kv(_db_envc2, "env_f5tts",  "F5-TTS env:",      "⏳")
+_db_kv(_db_envc2, "env_omni",   "OmniVoice env:",   "⏳")
+_db_kv(_db_envc2, "env_videocr","VideOCR CLI:",     "⏳")
+
+_DB_ENV_RUNNING = {"on": False}   # chống spawn nhiều thread quét cùng lúc
+
+def _db_env_apply(res):
+    """Áp kết quả quét lên nhãn (CHẠY TRÊN MAIN THREAD qua app.after)."""
+    for _k, _v in res.items():
+        if _k == "_profile_names":
+            try:
+                _db_profile_menu.configure(values=_v)
+            except Exception:
+                pass
+            continue
+        _w = _DB_VALS.get(_k)
+        if _w is not None:
+            try:
+                _w.configure(text=_v)
+            except Exception:
+                pass
+
+def _db_env_worker(snap):
+    """Quét môi trường/model/QC/lint trong THREAD — KHÔNG đụng widget/Tk var
+    (mọi giá trị Tk đã chụp sẵn trong snap; subtitles_cache là list thường).
+    Kết quả áp lại trên main thread qua app.after → không khựng UI dù SRT lớn."""
+    res = {}
+    _ok, _no = "✅ Có", "❌ Thiếu"
+    def _fnd(name, *a):
+        try:
+            _f = globals().get(name)
+            return bool(_f and _f(*a))
+        except Exception:
+            return False
+    try:
+        _chk = globals().get("_check_ffmpeg_exists")
+        res["env_ffmpeg"] = _ok if (_chk and _chk()[0]) else _no
+    except Exception:
+        res["env_ffmpeg"] = "?"
+    res["env_gpu"] = f"✅ {DETECTED_GPU}" if DETECTED_GPU else "CPU (không GPU)"
+    res["env_voxcpm"] = _ok if _fnd("_find_voxcpm_python", snap.get("voxcpm_ckpt", "")) else _no
+    res["env_vieneu"] = _ok if _fnd("_find_vieneu_python") else _no
+    res["env_f5tts"]  = _ok if _fnd("_find_f5tts_python") else _no
+    res["env_omni"]   = _ok if _fnd("_find_omnivoice_python") else _no
+    try:
+        _vd = globals().get("VIDEOCR_CLI_DIR") or ""
+        res["env_videocr"] = _ok if (_vd and os.path.isdir(_vd)) else _no
+    except Exception:
+        res["env_videocr"] = "?"
+    try:
+        _hfh = globals().get("_hf_cache_has")
+        _hfp = globals().get("_hf_cache_has_prefix")
+        _thh = globals().get("_torch_hub_has")
+        res["rt_moss"]    = _ok if (_hfh and _hfh("OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano")) else _no
+        res["rt_vocos"]   = _ok if (_hfh and _hfh("charactr/vocos-mel-24khz")) else _no
+        res["rt_whisper"] = _ok if (_hfp and _hfp("Systran/faster-whisper")) else _no
+        res["rt_demucs"]  = _ok if (_thh and _thh("955717e8")) else _no
+    except Exception:
+        pass
+    try:
+        _bf = globals().get("_qc_scan_bad_files")
+        _mf = globals().get("_scan_missing_lines")
+        _nb = len(_bf()) if _bf else 0
+        _nm = len(_mf()) if _mf else 0
+        res["qc"] = ("✅ Không có file lỗi / dòng thiếu" if (_nb == 0 and _nm == 0)
+                     else f"⚠ {_nb} file lỗi · {_nm} dòng thiếu")
+    except Exception:
+        res["qc"] = "—"
+    try:
+        _prov = snap.get("provider", "")
+        if _prov == "Edge TTS":
+            res["cost"] = "Edge TTS — miễn phí"
+        elif not subtitles_cache:
+            res["cost"] = "Chưa nạp SRT"
+        else:
+            _nchar = 0
+            for _s in list(subtitles_cache):
+                try:
+                    _nchar += len(clean_text(_s.content))
+                except Exception:
+                    pass
+            _pr = _tts_price_per_1k(_prov)
+            res["cost"] = (f"~{_nchar / 1000.0 * _pr:,.0f}đ  ({_nchar:,} ký tự · {_prov})"
+                           if _pr > 0 else
+                           f"{_prov} TRẢ PHÍ — khai đơn giá trong tts_prices.json")
+    except Exception:
+        res["cost"] = "—"
+    try:
+        _pf = globals().get("_db_preflight")
+        if _pf:
+            res.update(_pf(snap))
+    except Exception:
+        pass
+    try:
+        res["_profile_names"] = _voice_profiles_names()
+    except Exception:
+        pass
+    try:
+        app.after(0, lambda: _db_env_apply(res))
+    finally:
+        _DB_ENV_RUNNING["on"] = False
+
+def _db_env_check():
+    """Chụp Tk var ở MAIN THREAD rồi giao việc nặng (dò thư mục, lint SRT,
+    listdir cache) cho 1 thread — tránh khựng UI khi mở trang/làm mới."""
+    if _DB_ENV_RUNNING["on"]:
+        return   # đang quét → bỏ qua, khỏi spawn chồng
+    snap = {}
+    try:
+        snap["voxcpm_ckpt"]   = voxcpm_ckpt_var.get().strip()
+        snap["f5tts_model"]   = f5tts_model_var.get().strip()
+        snap["f5tts_ref"]     = f5tts_ref_var.get().strip()
+        snap["omnivoice_ref"] = omnivoice_ref_var.get().strip()
+        snap["rvc_model"]     = rvc_model_var.get().strip()
+        snap["provider"]      = provider_var.get()
+    except Exception:
+        pass
+    snap["vox_on"]    = bool(globals().get("VOXCPM_ENABLED"))
+    snap["vieneu_on"] = bool(globals().get("VIENEU_ENABLED"))
+    snap["f5_on"]     = bool(globals().get("F5TTS_ENABLED"))
+    snap["omni_on"]   = bool(globals().get("OMNIVOICE_ENABLED"))
+    snap["rvc_on"]    = bool(globals().get("RVC_ENABLED"))
+    _DB_ENV_RUNNING["on"] = True
+    try:
+        threading.Thread(target=_db_env_worker, args=(snap,), daemon=True).start()
+    except Exception:
+        _DB_ENV_RUNNING["on"] = False
+
+# --- Thẻ 1c: Phiên làm việc trước (khôi phục) ---------------------------
+_db_secSess = _make_section("Phiên trước", "Nạp lại file đang làm dở (Resume)",
+                            "#36c5ff", ws="dashboard")
+_db_kv(_db_secSess, "sess", "Phiên gần nhất:", "—")
+_db_sessrow = _sec_row(_db_secSess)
+btn_db_restore = ctk.CTkButton(_db_sessrow, text="↩  Khôi phục phiên", height=38,
+                               command=lambda: restore_session())
+btn_db_restore.pack(side="left", expand=True, fill="x", padx=4, pady=(6, 2))
+
+def _db_session_info():
+    """Đọc session.json → cập nhật nhãn + bật/tắt nút Khôi phục."""
+    _w = _DB_VALS.get("sess")
+    _has = False
+    _txt = "Chưa có phiên nào được lưu."
+    try:
+        if os.path.isfile(_SESSION_FILE):
+            with open(_SESSION_FILE, "r", encoding="utf-8") as _f:
+                _d = json.load(_f)
+            _srt = _d.get("srt_file", "")
+            if _srt:
+                _exists = os.path.isfile(_srt)
+                _outd = _d.get("output_dir", "")
+                _done = 0
+                if _outd and os.path.isdir(_outd):
+                    try:
+                        _done = len([x for x in os.listdir(_outd)
+                                     if re.match(r"^(line_|pdf_line_)\d{4}\.mp3$", x)])
+                    except Exception:
+                        _done = 0
+                _txt = (f"{os.path.basename(_srt)} · {_done} dòng đã tạo"
+                        + ("" if _exists else "  (⚠ file gốc không còn)"))
+                _has = _exists
+    except Exception:
+        pass
+    if _w is not None:
+        try:
+            _w.configure(text=_txt)
+        except Exception:
+            pass
+    try:
+        btn_db_restore.configure(state="normal" if _has else "disabled")
+    except Exception:
+        pass
+
+# --- Thẻ 2: Tiến trình job đang chạy ------------------------------------
+_db_sec2 = _make_section("Tiến trình job", "Theo dõi tác vụ đang chạy + điều khiển",
+                         "#2dd4a7", ws="dashboard")
+_db_kv(_db_sec2, "job",   "Đang chạy:")
+_db_kv(_db_sec2, "prog",  "Tiến trình:")
+_db_kv(_db_sec2, "stats", "Thống kê batch:")
+_db_ctrl = _sec_row(_db_sec2)
+btn_db_pause  = ctk.CTkButton(_db_ctrl, text="⏸ Tạm dừng", command=lambda: _g_pause(),
+                              fg_color="#3B8ED0")
+btn_db_pause.pack(side="left", expand=True, fill="x", padx=4, pady=(8, 2))
+btn_db_resume = ctk.CTkButton(_db_ctrl, text="▶ Tiếp tục", command=lambda: _g_resume(),
+                              fg_color="#2dab76")
+btn_db_resume.pack(side="left", expand=True, fill="x", padx=4, pady=(8, 2))
+btn_db_stop   = ctk.CTkButton(_db_ctrl, text="⏹ Dừng", command=lambda: _g_stop(),
+                              fg_color="#c0392b")
+btn_db_stop.pack(side="left", expand=True, fill="x", padx=4, pady=(8, 2))
+
+# --- Thẻ 3: Lối tắt thao tác nhanh --------------------------------------
+_db_sec3 = _make_section("Lối tắt nhanh", "Mở nhanh các tác vụ thường dùng",
+                         "#7c5cff", ws="dashboard")
+_db_qr1 = _sec_row(_db_sec3)
+_db_qr2 = _sec_row(_db_sec3)
+def _db_quick(parent, text, key):
+    _b = ctk.CTkButton(parent, text=text, height=40, corner_radius=10,
+                       command=lambda k=key: show_workspace(k))
+    _b.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+    return _b
+_db_quick(_db_qr1, "🎧  SRT → Lồng tiếng", "tts")
+_db_quick(_db_qr1, "🎙️  Giọng / Clone",    "voice")
+_db_quick(_db_qr1, "📝  Text → Audio",      "textaudio")
+_db_quick(_db_qr1, "📄  Tài liệu → Audio",  "doc")
+_db_quick(_db_qr2, "🔍  Video → Phụ đề",    "extract")
+_db_quick(_db_qr2, "🌐  Dịch thuật AI",      "translate")
+_db_quick(_db_qr2, "🎬  Công cụ Video",      "video")
+ctk.CTkButton(_db_qr2, text="📂  Mở Output", height=40, corner_radius=10,
+              fg_color="#5a5470", command=lambda: open_output_folder()
+              ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# --- Thẻ 4: Lịch sử tốc độ (trong khu Chẩn đoán) ------------------------
+_db_sec4 = _make_section("Lịch sử tốc độ", "Tốc độ trung bình mỗi engine",
+                         "#f6b93b", parent=_db_diag_body)
+_db_speed = ctk.CTkLabel(_db_sec4, text="Chưa có dữ liệu tốc độ.",
+                         font=("Arial", 12), text_color=_TTL_FG,
+                         anchor="w", justify="left")
+_db_speed.pack(fill="x", padx=6, pady=(2, 6))
+_DB_VALS["speed"] = _db_speed
+ctk.CTkButton(_db_sec4, text="🔍  Kiểm tra môi trường (log chi tiết)", height=34,
+              command=lambda: (_db_env_check(), _report_startup_diagnostics())
+              ).pack(fill="x", padx=6, pady=(2, 4))
+
+# --- Thẻ 5: Mạng & API key ----------------------------------------------
+_db_secNet = _make_section("Mạng & API", "Trạng thái online + provider/khoá đã cấu hình",
+                           "#19c3e6", ws="dashboard")
+_db_netc = _sec_row(_db_secNet)
+_db_netc1 = _sec_col(_db_netc)
+_db_netc2 = _sec_col(_db_netc)
+_db_kv(_db_netc1, "net",      "Internet:",        "⏳")
+_db_kv(_db_netc1, "ttsprov",  "TTS provider:",    "—")
+_db_kv(_db_netc2, "trprov",   "Dịch — provider:", "—")
+_db_kv(_db_netc2, "trkeys",   "API key dịch:",    "—")
+
+# --- Thẻ 6: Cảnh báo sẵn sàng (preflight) -------------------------------
+# Cập nhật theo tầng "mở trang / làm mới" (chạy _srt_lint, có thể nặng với
+# SRT lớn) — KHÔNG theo nhịp 2s.
+_db_secPre = _make_section("Sẵn sàng chạy?", "Kiểm tra giọng + SRT trước khi tốn thời gian TTS",
+                           "#f06595", ws="dashboard")
+_db_kv(_db_secPre, "pf_engine", "Giọng đang dùng:", "—")
+_db_kv(_db_secPre, "pf_srt",    "Khám SRT:",        "—")
+ctk.CTkButton(_db_secPre, text="🩺  Khám SRT chi tiết", height=34, fg_color="#5a5470",
+              command=lambda: srt_lint_report()
+              ).pack(fill="x", padx=6, pady=(6, 2))
+
+def _db_preflight(snap):
+    """PURE (chạy trong _db_env_worker thread — KHÔNG đụng widget/Tk var): tính
+    'sẵn sàng engine' + lint SRT từ snapshot. Trả dict {pf_engine, pf_srt}."""
+    res = {}
+    def _fn(name, *a):
+        try:
+            _f = globals().get(name)
+            return bool(_f and _f(*a))
+        except Exception:
+            return False
+    def _isdir(p):
+        try:
+            return bool(p) and os.path.isdir(p)
+        except Exception:
+            return False
+    def _isfile(p):
+        try:
+            return bool(p) and os.path.isfile(p)
+        except Exception:
+            return False
+    try:
+        if snap.get("vox_on"):
+            _ck = snap.get("voxcpm_ckpt", "")
+            _ready = _isdir(_ck) and _fn("_find_voxcpm_python", _ck)
+            res["pf_engine"] = "VoxCPM — " + ("✅ sẵn sàng" if _ready
+                               else "⚠ thiếu model/env (xem ⚙ Cài đặt)")
+        elif snap.get("vieneu_on"):
+            res["pf_engine"] = "VieNeu — " + ("✅ sẵn sàng" if _fn("_find_vieneu_python")
+                               else "⚠ thiếu env")
+        elif snap.get("f5_on"):
+            _ready = (_isdir(snap.get("f5tts_model", "")) and _isfile(snap.get("f5tts_ref", ""))
+                      and _fn("_find_f5tts_python"))
+            res["pf_engine"] = "F5-TTS — " + ("✅ sẵn sàng" if _ready
+                               else "⚠ cần model + audio mẫu + env")
+        elif snap.get("omni_on"):
+            _ready = _isfile(snap.get("omnivoice_ref", "")) and _fn("_find_omnivoice_python")
+            res["pf_engine"] = "OmniVoice — " + ("✅ sẵn sàng" if _ready
+                               else "⚠ cần audio mẫu + env")
+        elif snap.get("rvc_on"):
+            res["pf_engine"] = "Provider + RVC — " + ("✅ có model RVC"
+                               if _isfile(snap.get("rvc_model", "")) else "⚠ chưa chọn model .pth")
+        else:
+            res["pf_engine"] = f"{snap.get('provider', '')} (online)"
+    except Exception:
+        res["pf_engine"] = "—"
+    try:
+        if not subtitles_cache:
+            res["pf_srt"] = "Chưa nạp SRT"
+        else:
+            _iss = _srt_lint()
+            _bad = sum(1 for s, _i, _m in _iss if s == "❌")
+            _warn = len(_iss) - _bad
+            res["pf_srt"] = (f"✅ {len(subtitles_cache)} dòng — không lỗi" if not _iss
+                             else f"{_bad} lỗi ❌ · {_warn} cảnh báo ⚠ / {len(subtitles_cache)} dòng")
+    except Exception:
+        res["pf_srt"] = "—"
+    return res
+
+# --- Thẻ 7: Hàng đợi & Watch folder -------------------------------------
+_db_secQ = _make_section("Hàng đợi & Theo dõi", "Batch nhiều file + tự xử lý thư mục",
+                         "#20bf6b", ws="dashboard")
+_db_kv(_db_secQ, "queue", "Hàng đợi:",     "—")
+_db_kv(_db_secQ, "watch", "Watch folder:", "—")
+ctk.CTkButton(_db_secQ, text="📚  Mở Hàng đợi", height=34,
+              command=lambda: open_queue_dialog()
+              ).pack(fill="x", padx=6, pady=(6, 2))
+
+# --- Thẻ 8: Tóm tắt job vừa xong ----------------------------------------
+_db_secLast = _make_section("Job gần nhất", "Kết quả lần lồng tiếng / merge vừa rồi",
+                            "#fa8231", ws="dashboard")
+_db_last = ctk.CTkLabel(_db_secLast, text="Chưa có job nào hoàn tất trong phiên này.",
+                        font=("Arial", 12), text_color=_TTL_FG, anchor="w", justify="left")
+_db_last.pack(fill="x", padx=6, pady=(2, 6))
+_DB_VALS["lastjob"] = _db_last
+
+# --- Thẻ 9: Mini Quick-TTS ----------------------------------------------
+_db_secQt = _make_section("Nghe thử nhanh", "Gõ text → nghe ngay (giọng đang chọn)",
+                          "#7c5cff", ws="dashboard")
+_db_qt_box = ctk.CTkTextbox(_db_secQt, height=64, wrap="word")
+_db_qt_box.pack(fill="x", padx=6, pady=(2, 4))
+_db_qt_row = _sec_row(_db_secQt)
+def _db_qt_preview():
+    try:
+        _t = _db_qt_box.get("1.0", "end").strip()
+    except Exception:
+        _t = ""
+    if not _t:
+        return
+    try:                       # bơm text vào ô Quick-TTS chuẩn rồi tái dùng pipeline có sẵn
+        quick_tts_textbox.delete("1.0", "end")
+        quick_tts_textbox.insert("1.0", _t)
+    except Exception:
+        pass
+    try:
+        _quick_tts_run(preview=True)
+    except Exception as _e:
+        log(f"[Dashboard] Nghe thử lỗi: {_e}")
+ctk.CTkButton(_db_qt_row, text="🎧  Nghe thử", height=36, command=_db_qt_preview
+              ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_db_qt_row, text="⏹  Dừng", height=36, fg_color="#c0392b",
+              command=lambda: _quick_tts_stop_preview()
+              ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# --- Thẻ 10: Nhật ký gần đây --------------------------------------------
+_db_secLog = _make_section("Nhật ký gần đây", "8 dòng log mới nhất", "#778ca3",
+                           parent=_db_diag_body)
+_db_logv = ctk.CTkLabel(_db_secLog, text="(chưa có log)", font=("Consolas", 11),
+                        text_color=_TTL_FG, anchor="w", justify="left")
+_db_logv.pack(fill="x", padx=6, pady=(2, 6))
+_DB_VALS["logtail"] = _db_logv
+
+# --- Thẻ 11: Bật/tắt nhanh tùy chọn hay dùng ----------------------------
+# Switch dùng CHUNG BooleanVar với trang Giọng/Merge → đổi ở đâu cũng đồng bộ.
+# Một số var (merge_*) định nghĩa BÊN DƯỚI → dựng switch qua app.after(0,...).
+_db_secTog = _make_section("Bật/tắt nhanh", "Tùy chọn hay dùng — đồng bộ với trang Giọng/Merge",
+                           "#12cbc4", ws="dashboard")
+_db_tog_holder = _sec_row(_db_secTog)
+_db_tog_holder2 = _sec_row(_db_secTog)
+def _db_build_toggles():
+    """Dựng các switch sau khi mọi BooleanVar đã tồn tại (gọi qua app.after)."""
+    _specs = [
+        (_db_tog_holder,  "trim_silence_var",    "Cắt lặng đầu/cuối"),
+        (_db_tog_holder,  "vi_num_var",          "Đọc số kiểu VN"),
+        (_db_tog_holder,  "auto_retry_fail_var", "Tự tạo lại FAIL"),
+        (_db_tog_holder2, "merge_loudnorm_var",  "Chuẩn hóa âm lượng"),
+        (_db_tog_holder2, "merge_center_var",    "Căn giữa khe lặng"),
+        (_db_tog_holder2, "merge_linevol_var",   "Cân âm lượng từng dòng"),
+    ]
+    for _parent, _vn, _txt in _specs:
+        _v = globals().get(_vn)
+        if _v is None:
+            continue
+        try:
+            ctk.CTkSwitch(_parent, text=_txt, variable=_v, font=("Arial", 12)
+                          ).pack(side="left", expand=True, fill="x", padx=6, pady=4)
+        except Exception:
+            pass
+try:
+    app.after(0, _db_build_toggles)
+except Exception:
+    pass
+
+# --- Thẻ 12: Quét & dọn file lỗi QC -------------------------------------
+# Quét OUTPUT_DIR (listdir) → tầng "mở trang / làm mới", không theo nhịp 2s.
+_db_secQc = _make_section("Chất lượng audio (QC)", "File bị đánh dấu lỗi + dòng thiếu file",
+                          "#eb3b5a", ws="dashboard")
+_db_kv(_db_secQc, "qc", "Tình trạng:", "⏳")
+_db_qcrow = _sec_row(_db_secQc)
+ctk.CTkButton(_db_qcrow, text="📋  Báo cáo QC", height=34, fg_color="#5a5470",
+              command=lambda: qc_show_report()
+              ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_db_qcrow, text="🔁  Tạo lại file lỗi", height=34,
+              command=lambda: qc_regen_bad_lines()
+              ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_db_qcrow, text="🧩  Tạo lại dòng thiếu", height=34,
+              command=lambda: qc_retry_missing_lines()
+              ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# --- Thẻ 13: Trạng thái model tải runtime -------------------------------
+_db_secRt = _make_section("Model tải lúc chạy", "Model HF/torch hay quên trên máy mới",
+                          "#8854d0", parent=_db_diag_body)
+_db_rtc = _sec_row(_db_secRt)
+_db_rtc1 = _sec_col(_db_rtc)
+_db_rtc2 = _sec_col(_db_rtc)
+_db_kv(_db_rtc1, "rt_moss",    "MOSS Tokenizer (VoxCPM):", "⏳")
+_db_kv(_db_rtc1, "rt_vocos",   "vocos-mel (F5-TTS):",      "⏳")
+_db_kv(_db_rtc2, "rt_whisper", "faster-whisper (STT):",    "⏳")
+_db_kv(_db_rtc2, "rt_demucs",  "demucs htdemucs (tách nhạc):", "⏳")
+
+# --- Thẻ 14: Chi phí ước tính -------------------------------------------
+_db_secCost = _make_section("Chi phí ước tính", "Cho provider TRẢ PHÍ — theo tts_prices.json",
+                            "#f7b731", ws="dashboard")
+_db_kv(_db_secCost, "cost", "SRT đang nạp:", "—")
+
+# --- Thẻ 15: Đổi giọng nhanh (Hồ sơ giọng) ------------------------------
+# Dùng CHUNG voice_profile_var + _voice_profile_on_select với trang Giọng →
+# chọn ở dashboard cũng cập nhật dropdown bên kia và áp dụng ngay.
+_db_secProf = _make_section("Đổi giọng nhanh", "Áp dụng Hồ sơ giọng đã lưu (voice_profiles.json)",
+                            "#0fb9b1", ws="dashboard")
+_db_profrow = _sec_row(_db_secProf)
+_db_profile_menu = ctk.CTkOptionMenu(
+    _db_profrow, variable=voice_profile_var, values=_voice_profiles_names(),
+    command=_voice_profile_on_select)
+_db_profile_menu.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_db_profrow, text="✅  Áp dụng", height=34, width=110,
+              command=lambda: _voice_profile_on_select(voice_profile_var.get())
+              ).pack(side="left", padx=4, pady=4)
+
+# --- Thẻ 16: Thời gian chạy job hiện tại --------------------------------
+_db_secTime = _make_section("Thời gian chạy", "Job đang chạy bắt đầu lúc nào + đã chạy bao lâu",
+                            "#a55eea", ws="dashboard")
+_db_kv(_db_secTime, "elapsed", "Job hiện tại:", "Không có job đang chạy")
+
+# Khu "Chẩn đoán nâng cao" gói các thẻ ít dùng — pack ở CUỐI trang, body ẩn
+# mặc định (bấm nút 🔧 trên thanh công cụ để hiện).
+_db_diag_wrap.pack(fill="x", padx=0, pady=0)
+
+_MODE_LABELS = {
+    "reset": "Sẵn sàng", "srt": "Đã nạp SRT", "pdf": "Đã nạp tài liệu",
+    "pdf_tts_done": "Đọc tài liệu xong", "video": "Đã nạp video",
+    "tts_running": "Đang lồng tiếng…", "tts_stopped": "Đã dừng lồng tiếng",
+    "tts_done": "Lồng tiếng xong", "scanning": "Đang quét", "scan_done": "Quét xong",
+    "videocr": "OCR sẵn sàng", "videocr_running": "Đang tách sub (OCR)…",
+    "videocr_done": "OCR xong", "video_stt": "STT sẵn sàng",
+    "video_stt_running": "Đang nhận dạng giọng nói…", "video_stt_done": "STT xong",
+    "compress_ready": "Nén sẵn sàng", "compressing": "Đang nén video…",
+    "compress_done": "Nén xong", "mux_idle": "Ghép — chờ chọn file",
+    "mux_ready": "Ghép sẵn sàng", "muxing": "Đang ghép audio→video…",
+    "mux_done": "Ghép xong",
+}
+
+def _dashboard_refresh():
+    """Cập nhật toàn bộ nhãn động của Bảng điều khiển. Main-thread only."""
+    try:
+        _mode = globals().get("_CURRENT_MODE", "reset")
+        _running = _mode in globals().get("_RUNNING_MODES", set())
+        def _set(k, txt):
+            _w = _DB_VALS.get(k)
+            if _w is not None:
+                _w.configure(text=txt)
+        # Thẻ 1 — trạng thái phiên
+        _set("mode", _MODE_LABELS.get(_mode, _mode))
+        _srt = globals().get("SRT_FILE")
+        _set("srt", os.path.basename(_srt) if _srt else "—")
+        _nlines = len(globals().get("subtitles_cache", []) or [])
+        _set("lines", str(_nlines))
+        # Đếm file audio đã sinh trong OUTPUT_DIR (line_/pdf_line_ NNNN.mp3)
+        try:
+            _od0 = globals().get("OUTPUT_DIR") or ""
+            _made = 0
+            if _od0 and os.path.isdir(_od0):
+                _made = len([x for x in os.listdir(_od0)
+                             if re.match(r"^(line_|pdf_line_)\d{4}\.mp3$", x)])
+            _set("made", f"{_made} / {_nlines}" if _nlines else str(_made))
+        except Exception:
+            _set("made", "—")
+        _fc = globals().get("FAIL_COUNT", 0)
+        _set("fail", f"⚠ {_fc}" if _fc else "0")
+        try:
+            _set("voice", f"{provider_var.get()} · {voice_var.get()}")
+        except Exception:
+            _set("voice", "—")
+        _od = globals().get("OUTPUT_DIR") or "—"
+        _set("out", _od if len(_od) <= 48 else "…" + _od[-46:])
+        _set("gpu", f"GPU · {DETECTED_GPU}" if DETECTED_GPU else "CPU")
+        try:
+            _cfg = os.path.dirname(_SETTINGS_FILE)
+            _set("cfg", _cfg if len(_cfg) <= 48 else "…" + _cfg[-46:])
+        except Exception:
+            _set("cfg", "—")
+        # Thẻ 2 — tiến trình job
+        _set("job", _MODE_LABELS.get(_mode, _mode) if _running else "Không có job nào")
+        try:
+            _set("prog", f"{progress_var.get()*100:.0f}%"
+                 + (f"  ({getattr(progress_bar, 'eta_text', '')})"
+                    if getattr(progress_bar, "eta_text", "") else ""))
+        except Exception:
+            _set("prog", "—")
+        try:
+            _bs = globals().get("_BATCH_STATS", {})
+            _set("stats", f"Tạo {_bs.get('gen', 0)} · Trùng {_bs.get('cache', 0)}"
+                          f" · Retry {_bs.get('retry', 0)}")
+        except Exception:
+            _set("stats", "—")
+        for _b, _on in ((btn_db_pause, _running), (btn_db_resume, _running),
+                        (btn_db_stop, _running)):
+            try:
+                _b.configure(state="normal" if _on else "disabled")
+            except Exception:
+                pass
+        # Thẻ 4 — lịch sử tốc độ
+        try:
+            _sh = globals().get("_SPEED_HISTORY", {}) or {}
+            if _sh:
+                _rows = []
+                for _k, _spl in sorted(_sh.items()):
+                    if _spl and _spl > 0:
+                        _rows.append(f"• {_k}: ~{_spl:.1f}s/dòng (~{60.0/_spl:.0f} dòng/phút)")
+                _DB_VALS["speed"].configure(
+                    text="\n".join(_rows) if _rows else "Chưa có dữ liệu tốc độ.")
+            else:
+                _DB_VALS["speed"].configure(text="Chưa có dữ liệu tốc độ.")
+        except Exception:
+            pass
+        # Thẻ 1c — phiên trước (đọc session.json, nhẹ)
+        try:
+            _db_session_info()
+        except Exception:
+            pass
+        # Thẻ 5 — Mạng & API (dùng cờ cache _net_was_online, không ping mới)
+        try:
+            _set("net", "✅ Online" if globals().get("_net_was_online", [True])[0]
+                 else "❌ Offline")
+        except Exception:
+            pass
+        try:
+            _set("ttsprov", provider_var.get())
+        except Exception:
+            pass
+        try:
+            _set("trprov", translate_provider_var.get())
+        except Exception:
+            _set("trprov", globals().get("TRANSLATE_PROVIDER", "—"))
+        try:
+            _keys = []
+            if (globals().get("ANTHROPIC_API_KEY") or "").strip(): _keys.append("Claude")
+            if (globals().get("GEMINI_API_KEY") or "").strip():    _keys.append("Gemini")
+            if (globals().get("OPENAI_API_KEY") or "").strip():    _keys.append("OpenAI")
+            _set("trkeys", ", ".join(_keys) if _keys else "⚠ chưa có key nào")
+        except Exception:
+            _set("trkeys", "—")
+        # Thẻ 7 — Hàng đợi & Watch
+        try:
+            _q = globals().get("QUEUE_FILES", []) or []
+            _set("queue", f"{len(_q)} file" if _q else "trống")
+        except Exception:
+            _set("queue", "—")
+        try:
+            _wd = watch_dir_var.get().strip()
+            _won = bool(watch_enabled_var.get())
+            if _wd:
+                _short = _wd if len(_wd) <= 34 else "…" + _wd[-32:]
+                _set("watch", ("🟢 BẬT · " if _won else "⚪ tắt · ") + _short)
+            else:
+                _set("watch", "chưa đặt thư mục")
+        except Exception:
+            _set("watch", "—")
+        # Thẻ 8 — Job gần nhất (_LAST_MERGE_REPORT)
+        try:
+            _lr = globals().get("_LAST_MERGE_REPORT", {}) or {}
+            if _lr:
+                _ov = _lr.get("overflow", []) or []
+                _txt = (f"Đã ghép {_lr.get('lines', 0)}/{_lr.get('total', 0)} dòng"
+                        f"  ·  kéo giãn {_lr.get('stretched', 0)}"
+                        f"  ·  căn giữa {_lr.get('centered', 0)}")
+                if _ov:
+                    _txt += f"\n⚠ Tràn khe ({len(_ov)} dòng): " + ", ".join(map(str, _ov[:20]))
+                    if len(_ov) > 20:
+                        _txt += " …"
+                _DB_VALS["lastjob"].configure(text=_txt)
+        except Exception:
+            pass
+        # Thẻ 10 — Nhật ký gần đây (8 dòng cuối)
+        try:
+            _tail = _DB_LOG_RING[-8:]
+            _DB_VALS["logtail"].configure(
+                text="\n".join(_tail) if _tail else "(chưa có log)")
+        except Exception:
+            pass
+        # Thẻ 16 — Thời gian chạy job hiện tại
+        try:
+            if _running:
+                if not _DB_JOB["on"]:
+                    _DB_JOB["on"] = True
+                    _DB_JOB["t0_mono"] = time.monotonic()
+                    _DB_JOB["t0_wall"] = time.time()
+                _el = time.monotonic() - _DB_JOB["t0_mono"]
+                _hhmm = time.strftime("%H:%M:%S", time.localtime(_DB_JOB["t0_wall"]))
+                _set("elapsed", f"Bắt đầu {_hhmm} · đã chạy {_db_fmt_dur(_el)}")
+            else:
+                _DB_JOB["on"] = False
+                _set("elapsed", "Không có job đang chạy")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def _dashboard_tick():
+    """Nhịp tự-làm-mới (một vòng duy nhất): dừng khi rời trang dashboard."""
+    if _ws_current.get("key") != "dashboard":
+        _DB_LOOP["on"] = False
+        return
+    _dashboard_refresh()
+    app.after(2000, _dashboard_tick)
+
+def _dashboard_start_loop():
+    """Khởi động vòng tự-làm-mới nếu chưa chạy (gọi từ show_workspace)."""
+    _dashboard_refresh()
+    # Quét môi trường 1 lần khi mở trang (không theo nhịp 2s). Hoãn qua
+    # event-loop: lúc auto-mở trang khi khởi động, các _find_*_python định
+    # nghĩa BÊN DƯỚI chưa tồn tại — app.after(0) đảm bảo chạy sau khi nạp xong.
+    try:
+        app.after(0, _db_env_check)
+    except Exception:
+        pass
+    if not _DB_LOOP.get("on"):
+        _DB_LOOP["on"] = True
+        app.after(2000, _dashboard_tick)
 
 # Nhom 1
 _sec1 = _make_section("SRT → Lồng tiếng (TTS)", "Nạp phụ đề → tạo giọng → ghép vào video", "#7c5cff", ws="tts")
@@ -5050,8 +5795,8 @@ watch_switch.pack(side="left", padx=8)
 _sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#5a6478", ws="system")
 _g6 = _sec_row(_sec6)
 
-# Mo workspace mac dinh khi khoi dong
-show_workspace("tts")
+# Mo workspace mac dinh khi khoi dong — Bảng điều khiển (trang tổng quan)
+show_workspace("dashboard")
 
 # === Thiet lap OCR (chuyen tu thanh tren xuong workspace "Video -> Phu de") ===
 ctk.CTkLabel(_g3_ocr_opt1, text="OCR Ngôn ngữ:", font=("Arial", 12)).pack(side="left", padx=(2, 4))
@@ -6729,6 +7474,13 @@ def _file_log(text):
                 f"\n===== Phiên mới {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
         _FILE_LOG["fh"].write(f"[{time.strftime('%H:%M:%S')}] {text}\n")
         _FILE_LOG["fh"].flush()
+    except Exception:
+        pass
+    # Ring buffer cho thẻ "Nhật ký gần đây" của Bảng điều khiển (main-thread).
+    try:
+        _DB_LOG_RING.append(f"[{time.strftime('%H:%M:%S')}] {text}")
+        if len(_DB_LOG_RING) > 60:
+            del _DB_LOG_RING[:-60]
     except Exception:
         pass
 
