@@ -4792,7 +4792,7 @@ ws_nav = ctk.CTkFrame(_left_col, fg_color=_WS_NAVBG, corner_radius=0)
 ws_nav.pack(side="top", fill="both", expand=True, padx=0, pady=(38, 0))
 
 # ws_content + voice_page đã được tạo SỚM ở trên (gần _rc_body).
-_WS_KEYS = ["dashboard", "tts", "voice", "textaudio", "doc", "extract", "translate", "video", "editstudio", "tools", "system"]
+_WS_KEYS = ["dashboard", "tts", "voice", "textaudio", "doc", "extract", "translate", "video", "editstudio", "manga", "tools", "system"]
 ws_pages = {_k: ctk.CTkFrame(ws_content, fg_color="transparent") for _k in _WS_KEYS}
 ws_pages["voice"] = voice_page   # trang Giọng đọc đã dựng sẵn (chứa voice_frame)
 
@@ -4855,6 +4855,20 @@ try:
         _vk = [k for k, _ in _WS_NAV_ITEMS]
         _pos = (_vk.index("video") + 1) if "video" in _vk else len(_WS_NAV_ITEMS)
         _WS_NAV_ITEMS.insert(_pos, ("editstudio", "\U0001F39E️   Edit Studio"))
+except Exception:
+    pass
+
+# Them muc "Tải truyện (Webtoon)" vao nhom TIEN ICH (ngay sau "editstudio"/"video").
+try:
+    if "manga" not in [k for k, _ in _WS_NAV_ITEMS]:
+        _mk = [k for k, _ in _WS_NAV_ITEMS]
+        if "editstudio" in _mk:
+            _mp = _mk.index("editstudio") + 1
+        elif "video" in _mk:
+            _mp = _mk.index("video") + 1
+        else:
+            _mp = len(_WS_NAV_ITEMS)
+        _WS_NAV_ITEMS.insert(_mp, ("manga", "\U0001F4DA   Tải truyện (Webtoon)"))
 except Exception:
     pass
 
@@ -5794,6 +5808,887 @@ watch_switch.pack(side="left", padx=8)
 
 _sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#5a6478", ws="system")
 _g6 = _sec_row(_sec6)
+
+# =====================================================================
+# TẢI TRUYỆN (Webtoon) — trang "manga". Tải ảnh truyện về máy đọc offline,
+# theo HỆ SITE-ADAPTER: truyenqq có adapter riêng (class="chapter-name",
+# data-src, dò bù 100 chương); trang lạ dùng _MANGA_GENERIC (best-effort,
+# tự thử data-src/data-original/.../src). Tách rời set_mode (như nút Dịch),
+# tự khoá bằng cờ. Chỉ tải để đọc cá nhân — truyện có bản quyền của nhóm dịch.
+# =====================================================================
+_MANGA_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+_MANGA_RUNNING = [False]
+_MANGA_STOP = [False]
+_MANGA_PROC = [None]   # tiến trình gallery-dl đang chạy (để dừng được)
+
+
+class _MangaNoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None   # không tự đi theo redirect → 302 = chương không tồn tại
+
+
+_MANGA_NOREDIR = urllib.request.build_opener(_MangaNoRedirect)
+
+
+def _manga_base(url):
+    sp = urllib.parse.urlsplit(url)
+    return f"{sp.scheme}://{sp.netloc}"
+
+
+def _manga_safe_name(s):
+    return re.sub(r'[<>:"/\\|?*]', "_", s).strip().strip(".") or "untitled"
+
+
+def _manga_http(url, referer, binary=False, timeout=40):
+    req = urllib.request.Request(
+        url, headers={"User-Agent": _MANGA_UA, "Referer": referer})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read()
+    return data if binary else data.decode("utf-8", "replace")
+
+
+def _manga_chapter_exists(url, referer):
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": _MANGA_UA, "Referer": referer})
+        with _MANGA_NOREDIR.open(req, timeout=20) as r:
+            return getattr(r, "status", r.getcode()) == 200
+    except Exception:
+        return False
+
+
+def _manga_chap_key(num_str):
+    """'120-4' -> (120,4); '28' -> (28,0). Sắp đúng thứ tự chương."""
+    nums = [int(p) for p in re.split(r"[-.]", num_str) if p.isdigit()]
+    return tuple(nums) if nums else (10 ** 9,)
+
+
+# --- Site adapters: mỗi trang 1 cấu hình; trang lạ dùng GENERIC (best-effort).
+# Thêm trang mới = copy 1 block trong _MANGA_ADAPTERS, sửa "match" + 2 regex.
+_MANGA_GENERIC = {
+    "name": "generic",
+    "match": [],
+    "chapter_link_re": r'<a[^>]+href="([^"]*(?:chap|chuong)[^"]*)"[^>]*>(.*?)</a>',
+    "image_res": [
+        r'<img[^>]+data-src="([^"]+)"',
+        r'<img[^>]+data-original="([^"]+)"',
+        r'<img[^>]+data-lazy-src="([^"]+)"',
+        r'<img[^>]+data-aload="([^"]+)"',
+        r'<img[^>]+src="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"',
+    ],
+    "backfill": False,
+}
+_MANGA_ADAPTERS = [
+    {
+        "name": "truyenqq",
+        "match": ["truyenqq"],
+        "chapter_link_re":
+            r'<a\s+href="([^"]+)"\s+class="chapter-name[^"]*"[^>]*>(.*?)</a>',
+        "image_res": [r'<img[^>]+data-(?:src|original)="([^"]+)"'],
+        "backfill": True,
+        "chap_url": lambda base, i: f"{base}/chapter-{i}",
+    },
+]
+_MANGA_IMG_JUNK = ("placeholder", "loading", "logo", "banner", "avatar",
+                   "/ads", "nocover", "blank", "/icon")
+
+
+def _manga_get_adapter(url):
+    host = urllib.parse.urlsplit(url).netloc.lower()
+    for a in _MANGA_ADAPTERS:
+        if any(m in host for m in a["match"]):
+            return a
+    return _MANGA_GENERIC
+
+
+def _manga_is_content_img(u):
+    ul = u.lower()
+    if any(j in ul for j in _MANGA_IMG_JUNK):
+        return False
+    return ul.split("?")[0].endswith((".jpg", ".jpeg", ".png", ".webp"))
+
+
+def _manga_extract_images(html, adapter):
+    """Thử từng regex ảnh của adapter, chọn list nhiều ảnh hợp lệ nhất."""
+    best = []
+    for rgx in adapter["image_res"]:
+        urls = [u.strip() for u in re.findall(rgx, html, flags=re.I)]
+        urls = [u for u in urls if _manga_is_content_img(u)]
+        if len(urls) > len(best):
+            best = urls
+    return best
+
+
+def _manga_extract_chap_num(href):
+    for pat in (r"chapter-([\d.\-]+)", r"chuong-([\d.\-]+)", r"chap[-_]?([\d.\-]+)"):
+        m = re.search(pat, href, flags=re.I)
+        if m:
+            return m.group(1)
+    m = re.search(r"(\d+(?:[.\-]\d+)*)\D*$", href)
+    return m.group(1) if m else href
+
+
+def _manga_list_chapters(series_url, log_cb):
+    """[(tên, url)] từ chương 1 → mới nhất (qua adapter theo tên miền). Với trang
+    giới hạn chương hiển thị (vd truyenqq 100 chương) thì dò bù chương đầu."""
+    adapter = _manga_get_adapter(series_url)
+    base = _manga_base(series_url)
+    html = _manga_http(series_url, base)
+    pairs = re.findall(adapter["chapter_link_re"], html, flags=re.S | re.I)
+    chapters = {}
+    for href, label in pairs:
+        href = href.strip()
+        if not href or href.lower().startswith("javascript"):
+            continue
+        url = urllib.parse.urljoin(base, href)
+        num = _manga_extract_chap_num(href)
+        name = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", label)).strip() \
+            or f"Chapter {num}"
+        chapters[num] = (name, url)
+    if adapter.get("backfill"):
+        int_chaps = [_manga_chap_key(n)[0] for n in chapters
+                     if _manga_chap_key(n)[0] < 10 ** 9]
+        if int_chaps:
+            mn = min(int_chaps)
+            if mn > 1:
+                log_cb(f"   (Trang chỉ liệt kê từ chương {mn}; đang dò chương 1..{mn-1}...)")
+                b = series_url.rstrip("/")
+                cu = adapter.get("chap_url", lambda bb, i: f"{bb}/chapter-{i}")
+                for i in range(1, mn):
+                    if _MANGA_STOP[0] or str(i) in chapters:
+                        continue
+                    curl = cu(b, i)
+                    if _manga_chapter_exists(curl, base):
+                        chapters[str(i)] = (f"Chapter {i}", curl)
+    return [chapters[k] for k in sorted(chapters, key=_manga_chap_key)]
+
+
+def _manga_chapter_images(chapter_url):
+    """URL ảnh thật trong 1 chương (qua adapter), đúng thứ tự."""
+    adapter = _manga_get_adapter(chapter_url)
+    base = _manga_base(chapter_url)
+    html = _manga_http(chapter_url, base)
+    return _manga_extract_images(html, adapter)
+
+
+def _manga_download_image(url, dest, referer):
+    if os.path.exists(dest) and os.path.getsize(dest) > 1024:
+        return True
+    for attempt in range(3):
+        try:
+            data = _manga_http(url, referer, binary=True, timeout=60)
+            tmp = dest + ".part"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, dest)
+            return True
+        except Exception:
+            time.sleep(1.5)
+    return False
+
+
+def _manga_img_files(folder):
+    return sorted(
+        [os.path.join(folder, f) for f in os.listdir(folder)
+         if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))],
+        key=lambda p: int(re.search(r"(\d+)", os.path.basename(p)).group(1))
+        if re.search(r"(\d+)", os.path.basename(p)) else 0)
+
+
+def _manga_imgs_to_pdf(img_paths, pdf_path, log_cb):
+    if not img_paths:
+        return False
+    try:
+        pages = []
+        for p in img_paths:
+            try:
+                im = Image.open(p)
+                if im.mode in ("RGBA", "P", "LA"):
+                    im = im.convert("RGB")
+                pages.append(im)
+            except Exception:
+                pass
+        if not pages:
+            return False
+        pages[0].save(pdf_path, save_all=True, append_images=pages[1:])
+        log_cb(f"📕 PDF: {pdf_path}")
+        return True
+    except Exception as e:
+        log_cb(f"❌ Lỗi tạo PDF: {e}")
+        return False
+
+
+def _manga_imgs_to_cbz(img_paths, cbz_path, log_cb, prefix=False):
+    if not img_paths:
+        return False
+    try:
+        import zipfile as _zip
+        with _zip.ZipFile(cbz_path, "w", _zip.ZIP_STORED) as z:
+            for i, p in enumerate(img_paths):
+                ext = os.path.splitext(p)[1] or ".jpg"
+                arc = f"{i+1:05d}{ext}" if prefix else os.path.basename(p)
+                z.write(p, arc)
+        log_cb(f"📦 CBZ: {cbz_path}")
+        return True
+    except Exception as e:
+        log_cb(f"❌ Lỗi tạo CBZ: {e}")
+        return False
+
+
+def _manga_parse_range(s):
+    """'1-10' / '1,2,5' / '1-3,7' → set số chương dạng chuỗi. Rỗng → None (tất cả)."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    want = set()
+    for part in s.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-", 1)
+            try:
+                want.update(str(x) for x in range(int(a), int(b) + 1))
+            except Exception:
+                pass
+        elif part:
+            want.add(part)
+    return want or None
+
+
+def _manga_set_running(on):
+    """Bật/tắt trạng thái nút (chạy trên main thread)."""
+    try:
+        btn_manga_run.configure(state="disabled" if on else "normal")
+        btn_manga_stop.configure(state="normal" if on else "disabled")
+    except Exception:
+        pass
+
+
+def _manga_stop():
+    if _MANGA_RUNNING[0]:
+        _MANGA_STOP[0] = True
+        log("⏹ Đang dừng tải truyện...")
+        # Dừng cả tiến trình gallery-dl (nếu đang chạy)
+        _p = _MANGA_PROC[0]
+        if _p is not None:
+            try:
+                _proc_tree_action(_p, "kill")
+            except Exception:
+                try:
+                    _p.kill()
+                except Exception:
+                    pass
+
+
+def _manga_start():
+    if _MANGA_RUNNING[0]:
+        log("⚠ Đang tải truyện rồi, đợi xong hoặc bấm Dừng.")
+        return
+    url = manga_url_var.get().strip()
+    if not url or "http" not in url:
+        log("❌ Nhập URL bộ truyện hoặc 1 chương.")
+        return
+    out_dir = manga_out_var.get().strip()
+    if not out_dir:
+        out_dir = os.path.join(os.path.expanduser("~"), "Downloads", "Truyen")
+        manga_out_var.set(out_dir)
+    fmt = manga_format_var.get()
+    rng = manga_chap_var.get().strip()
+    delay = 0.3
+    use_gdl = bool(manga_gallerydl_var.get())
+    cookies = manga_cookies_var.get().strip()
+    if cookies in ("", "(Không)"):
+        cookies = ""
+    # webtoonscan.com có Cloudflare → bắt buộc đi đường gallery-dl generic (urllib bị 403)
+    if "webtoonscan.com" in url.lower():
+        use_gdl = True
+    _MANGA_STOP[0] = False
+    _MANGA_PROC[0] = None
+    _MANGA_RUNNING[0] = True
+    _manga_set_running(True)
+    if use_gdl:
+        threading.Thread(target=_manga_gdl_worker, args=(url, out_dir, fmt, rng, cookies),
+                         daemon=True).start()
+    else:
+        threading.Thread(target=_manga_worker, args=(url, out_dir, fmt, rng, delay),
+                         daemon=True).start()
+
+
+def _find_gallerydl():
+    """Tìm gallery-dl → list lệnh để Popen. None nếu không có.
+    Ưu tiên gallery-dl.exe (PATH / cạnh exe), fallback `python -m gallery_dl`."""
+    exe = shutil.which("gallery-dl") or shutil.which("gallery-dl.exe")
+    if exe:
+        return [exe]
+    try:
+        for root in _install_dirs():
+            cand = os.path.join(root, "gallery-dl.exe")
+            if os.path.isfile(cand):
+                return [cand]
+    except Exception:
+        pass
+    py = _find_whisper_python() or _find_voxcpm_python("")
+    if py:
+        return [py, "-m", "gallery_dl"]
+    return None
+
+
+_MANGA_GDL_IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+
+
+def _manga_gdl_chapter_dirs(root):
+    """Các thư mục lá chứa ảnh (mỗi cái = 1 chương), sắp tự nhiên theo số."""
+    dirs = []
+    for dp, _dn, fn in os.walk(root):
+        if any(f.lower().endswith(_MANGA_GDL_IMG_EXT) for f in fn):
+            dirs.append(dp)
+
+    def _key(p):
+        nums = re.findall(r"\d+", os.path.basename(p))
+        return ([int(n) for n in nums] or [10 ** 9], os.path.basename(p))
+    return sorted(dirs, key=_key)
+
+
+def _manga_gdl_finalize(dest, out_dir, title, fmt):
+    """Gộp ảnh đã tải thành PDF/CBZ theo định dạng (dùng chung cho các worker gallery-dl)."""
+    per_pdf = fmt == "PDF mỗi chương"
+    per_cbz = fmt == "CBZ mỗi chương"
+    merge_pdf = fmt == "1 PDF cả bộ"
+    merge_cbz = fmt == "1 CBZ cả bộ"
+    if not (per_pdf or per_cbz or merge_pdf or merge_cbz):
+        return
+    chap_dirs = _manga_gdl_chapter_dirs(dest)
+    if not chap_dirs:
+        log("   [!] Không tìm thấy ảnh đã tải để gộp.")
+        return
+    if per_pdf or per_cbz:
+        for d in chap_dirs:
+            imgs = _manga_img_files(d)
+            nm = _manga_safe_name(os.path.basename(d))
+            if per_pdf:
+                _manga_imgs_to_pdf(imgs, os.path.join(dest, nm + ".pdf"), log)
+            if per_cbz:
+                _manga_imgs_to_cbz(imgs, os.path.join(dest, nm + ".cbz"), log)
+    if merge_pdf or merge_cbz:
+        all_imgs = []
+        for d in chap_dirs:
+            all_imgs.extend(_manga_img_files(d))
+        log_color(f"🧩 Gộp cả bộ: {len(all_imgs)} trang từ "
+                  f"{len(chap_dirs)} chương...", "#7cf")
+        if merge_pdf:
+            _manga_imgs_to_pdf(all_imgs, os.path.join(out_dir, title + ".pdf"), log)
+        if merge_cbz:
+            _manga_imgs_to_cbz(all_imgs, os.path.join(out_dir, title + ".cbz"),
+                               log, prefix=True)
+
+
+def _manga_wts_parts(url):
+    """Tách (series_base_url, 'chapter-N' hoặc None) từ 1 URL webtoonscan."""
+    p = url.split("?")[0].split("#")[0].rstrip("/")
+    segs = p.split("/")
+    if segs and segs[-1].lower().startswith("chapter-"):
+        return "/".join(segs[:-1]), segs[-1]
+    return p, None
+
+
+# UA giả-Firefox để cf_clearance (cookie Cloudflare cấp bởi Firefox) chấp nhận request urllib.
+_MANGA_WTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) "
+                 "Gecko/20100101 Firefox/152.0")
+
+
+def _manga_firefox_cookie_header(host_like="webtoonscan"):
+    """Đọc cookie Firefox cho 1 host (Firefox lưu plaintext trong cookies.sqlite, không cần
+    giải mã như Chrome) → chuỗi 'k=v; ...' để gắn header Cookie. '' nếu không có."""
+    try:
+        import glob
+        import sqlite3
+        import tempfile
+        pats = [os.path.expandvars(r"%APPDATA%\Mozilla\Firefox\Profiles\*\cookies.sqlite"),
+                os.path.expanduser("~/.mozilla/firefox/*/cookies.sqlite")]
+        cands = []
+        for p in pats:
+            cands += glob.glob(p)
+        if not cands:
+            return ""
+        db = max(cands, key=os.path.getmtime)
+        tmp = os.path.join(tempfile.gettempdir(), "_wts_ff_ck.sqlite")
+        shutil.copy2(db, tmp)                  # copy tránh khoá file khi Firefox đang mở
+        con = sqlite3.connect(tmp)
+        try:
+            rows = con.execute(
+                "SELECT name,value FROM moz_cookies WHERE host LIKE ?",
+                ("%" + host_like + "%",)).fetchall()
+        finally:
+            con.close()
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        return "; ".join(f"{n}={v}" for n, v in rows)
+    except Exception:
+        return ""
+
+
+def _manga_wts_list_chapters(series_base, slug):
+    """Danh sách (label, url) chương THẬT từ trang series webtoonscan — gồm cả chương lẻ
+    (chapter-207-5 = chương 207.5). Trả [] nếu không lấy được (chưa mở/đóng Firefox, cookie
+    hết hạn). Sắp tự nhiên (1, 2, ..., 207, 207-5, 208...)."""
+    ck = _manga_firefox_cookie_header()
+    if not ck:
+        return []
+    try:
+        req = urllib.request.Request(series_base + "/", headers={
+            "User-Agent": _MANGA_WTS_UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Cookie": ck, "Referer": "https://webtoonscan.com/"})
+        html = urllib.request.urlopen(req, timeout=40).read().decode("utf-8", "replace")
+    except Exception:
+        return []
+    # chỉ lấy chương CỦA bộ này (slug) → bỏ link bộ khác ở sidebar
+    pat = re.compile(r'href="([^"]*?/' + re.escape(slug)
+                     + r'/chapter-([0-9][0-9.\-]*?))/?"', re.I)
+    seen = {}
+    for full, label in pat.findall(html):
+        label = label.strip("-.").strip()
+        if not label or label in seen:
+            continue
+        if not full.startswith("http"):
+            full = "https://webtoonscan.com" + full
+        seen[label] = full.rstrip("/") + "/"
+    items = sorted(seen.items(), key=lambda it: _manga_chap_key(it[0]))
+    return items
+
+
+def _manga_wts_gdl_worker(url, out_dir, fmt, rng, cookies=""):
+    """webtoonscan.com qua gallery-dl `generic:` (vượt Cloudflare bằng cookie trình duyệt).
+    gallery-dl không có extractor riêng cho site này và `generic:` chỉ lấy 1 chương/URL,
+    nên ta tự liệt kê chương theo pattern .../chapter-N/ rồi tải từng chương,
+    lọc `--filter "'cdn' in imageurl"` để chỉ giữ ảnh nội dung (bỏ logo/thumbnail rác)."""
+    try:
+        cmd0 = _find_gallerydl()
+        if not cmd0:
+            log("❌ Chưa cài gallery-dl. Mở CMD chạy:  pip install -U gallery-dl")
+            log("   (hoặc đặt gallery-dl.exe cạnh phần mềm)")
+            return
+        # Xác nhận gallery-dl thực sự chạy được trong môi trường app phân giải tới —
+        # nếu không, báo rõ thay vì để mỗi chương về 0 ảnh rồi đoán nhầm "cookie hết hạn".
+        try:
+            _ver = subprocess.run(cmd0 + ["--version"], capture_output=True, text=True,
+                                  timeout=60, creationflags=CREATE_NO_WINDOW)
+            if _ver.returncode != 0:
+                log(f"❌ gallery-dl không chạy được qua: {cmd0[0]}")
+                _msg = (_ver.stderr or _ver.stdout or "").strip().splitlines()
+                if _msg:
+                    log(f"   {_msg[-1][:200]}")
+                if "-m" in cmd0:
+                    log(f"   Cài đúng môi trường:  \"{cmd0[0]}\" -m pip install -U gallery-dl")
+                return
+        except Exception as _e:
+            log(f"❌ Không gọi được gallery-dl ({cmd0[0]}): {_e}")
+            return
+        if not cookies:
+            log("⚠ webtoonscan có Cloudflare — cần chọn Cookie (trình duyệt) để vượt.")
+            log("   Mở truyện trong Firefox vượt Cloudflare → đóng Firefox → chọn Cookie = firefox.")
+            log("   (Chrome v127+ không dùng được do mã hoá App-Bound; hãy dùng Firefox.)")
+
+        series, chap_seg = _manga_wts_parts(url)
+        slug = _manga_safe_name(series.rstrip("/").split("/")[-1]) or "webtoonscan"
+        dest = os.path.join(out_dir, slug)
+        os.makedirs(dest, exist_ok=True)
+        ck_args = ["--cookies-from-browser", cookies] if cookies else []
+        filt = ["--filter", "'cdn' in imageurl"]
+        base = series.rstrip("/")
+        log_color(f"🌐 webtoonscan: {slug}"
+                  + (f"  (cookies: {cookies})" if cookies else ""), "#7cf")
+
+        def _dl_chapter(label, chap_url, report=False):
+            """Tải 1 chương (URL cụ thể) vào dest/chapter-<label> → số ảnh tải được.
+            report=True: nếu 0 ảnh thì in vài dòng output cuối của gallery-dl (lý do thật:
+            403 challenge, cookie sai...) thay vì im lặng."""
+            chap_dir = os.path.join(dest, f"chapter-{label}")
+            proc = subprocess.Popen(
+                cmd0 + ["-D", chap_dir] + filt + ck_args + ["generic:" + chap_url],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW)
+            _MANGA_PROC[0] = proc
+            got = 0
+            tail = []
+            for line in proc.stdout:
+                if _MANGA_STOP[0]:
+                    break
+                line = line.rstrip()
+                if not line:
+                    continue
+                if line.lower().endswith(_MANGA_GDL_IMG_EXT):
+                    got += 1
+                else:
+                    tail.append(line)
+                    if len(tail) > 6:
+                        tail.pop(0)
+                    if line.startswith("[") and ("error" in line.lower()
+                                                 or "challenge" in line.lower()):
+                        log(f"   {line}")
+            proc.wait()
+            _MANGA_PROC[0] = None
+            if got == 0:
+                if report:                             # hiện lý do thật khi chương lẽ ra có ảnh
+                    for t in tail:
+                        log(f"   gdl: {t}")
+                try:                                   # xoá thư mục chương rỗng
+                    if os.path.isdir(chap_dir) and not _manga_img_files(chap_dir):
+                        shutil.rmtree(chap_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            return got
+
+        # Xác định danh sách chương: ưu tiên danh sách THẬT từ trang series (gồm chương lẻ),
+        # fallback dò số nguyên 1,2,3... nếu không đọc được trang (cookie/Firefox).
+        if chap_seg:                                   # URL 1 chương cụ thể
+            label = chap_seg.split("chapter-", 1)[-1]
+            chapters = [(label, url.rstrip("/") + "/")]
+        else:
+            chapters = _manga_wts_list_chapters(base, slug)
+            if chapters:
+                want = _manga_parse_range(rng)         # set số nguyên, hoặc None
+                if want:                               # giữ chương có phần nguyên trong range
+                    chapters = [c for c in chapters
+                                if str(_manga_chap_key(c[0])[0]) in want]
+                log(f"   Tìm thấy {len(chapters)} chương từ trang truyện (gồm chương lẻ).")
+            else:
+                log("   [!] Không đọc được danh sách chương (cần Firefox đã vượt Cloudflare"
+                    " + đóng Firefox). Chuyển sang dò chương số nguyên.")
+                chapters = None                        # tín hiệu fallback enumeration
+
+        total_imgs = 0
+        n_chap = 0
+        if chapters is None:                           # fallback: dò 1,2,3... (bỏ chương lẻ)
+            misses = 0
+            n = 1
+            while not _MANGA_STOP[0] and n <= 2000:
+                got = _dl_chapter(str(n), f"{base}/chapter-{n}/")
+                if got:
+                    n_chap += 1
+                    total_imgs += got
+                    misses = 0
+                    log(f"   ✔ Chương {n}: {got} ảnh")
+                else:
+                    misses += 1
+                    if misses >= 2:                    # 2 chương trống liên tiếp = hết bộ
+                        break
+                n += 1
+        else:
+            tot = len(chapters)
+            for i, (label, churl) in enumerate(chapters, 1):
+                if _MANGA_STOP[0]:
+                    break
+                got = _dl_chapter(label, churl, report=(i == 1))
+                if got:
+                    n_chap += 1
+                    total_imgs += got
+                    log(f"   ✔ Chương {label}: {got} ảnh")
+                else:
+                    log(f"   [!] Chương {label}: không có ảnh (bỏ qua / bị chặn?)")
+                update_progress(i, tot)
+
+        if _MANGA_STOP[0]:
+            log("⏹ Đã dừng.")
+            return
+        if n_chap == 0:
+            log("❌ Không tải được ảnh nào. Cookie hết hạn hoặc URL sai?")
+            log("   Mở lại truyện trong Firefox (vượt Cloudflare) → đóng Firefox → thử lại.")
+            return
+        log_color(f"   ✔ Tải xong {total_imgs} ảnh / {n_chap} chương.", "#6f6")
+
+        _manga_gdl_finalize(dest, out_dir, slug, fmt)
+        log_color(f"✅ Hoàn tất! Lưu tại: {dest}", "#6f6")
+        try:
+            _reveal_output(dest)
+        except Exception:
+            pass
+        app.after(0, show_fireworks)
+    except Exception as e:
+        log(f"❌ Lỗi webtoonscan: {e}")
+    finally:
+        _MANGA_PROC[0] = None
+        _MANGA_RUNNING[0] = False
+        app.after(0, lambda: _manga_set_running(False))
+        app.after(0, lambda: update_progress(0, 1))
+
+
+def _manga_gdl_worker(url, out_dir, fmt, rng, cookies=""):
+    """Backend gallery-dl cho truyện nước ngoài (MangaDex, mangakakalot, webtoons...).
+    Tải ảnh xuống rồi tái dùng phần gộp PDF/CBZ sẵn có.
+    cookies: tên trình duyệt để lấy cookie (vượt Cloudflare), rỗng = không dùng."""
+    if "webtoonscan.com" in url.lower():               # site Cloudflare → luồng generic riêng
+        return _manga_wts_gdl_worker(url, out_dir, fmt, rng, cookies)
+    per_pdf = fmt in ("PDF mỗi chương",)
+    per_cbz = fmt in ("CBZ mỗi chương",)
+    merge_pdf = fmt in ("1 PDF cả bộ",)
+    merge_cbz = fmt in ("1 CBZ cả bộ",)
+    try:
+        cmd0 = _find_gallerydl()
+        if not cmd0:
+            log("❌ Chưa cài gallery-dl. Mở CMD chạy:  pip install -U gallery-dl")
+            log("   (hoặc đặt gallery-dl.exe cạnh phần mềm)")
+            return
+        title = _manga_safe_name(url.rstrip("/").split("/")[-1]) or "gallerydl"
+        dest = os.path.join(out_dir, title)
+        os.makedirs(dest, exist_ok=True)
+        # Chương = "child extractor" trong gallery-dl → chọn bằng --child-range
+        # (theo THỨ TỰ liệt kê: 1-10 = 10 chương đầu, 1,2,5...). Rỗng = cả bộ.
+        rng_args = []
+        if rng:
+            rng_args = ["--child-range", rng.replace(" ", "")]
+        # Cookie trình duyệt để vượt Cloudflare (chrome/edge/firefox...)
+        ck_args = ["--cookies-from-browser", cookies] if cookies else []
+        log_color(f"🌐 gallery-dl: {url}"
+                  + (f"  (cookies: {cookies})" if cookies else ""), "#7cf")
+
+        # Đếm trước tổng số ảnh (best-effort) để có thanh tiến trình
+        total = 0
+        try:
+            probe = subprocess.run(cmd0 + ["--get-urls"] + ck_args + rng_args + [url],
+                                   capture_output=True, text=True, timeout=180,
+                                   creationflags=CREATE_NO_WINDOW)
+            total = sum(1 for ln in probe.stdout.splitlines()
+                        if ln.strip().startswith("http"))
+            if total:
+                log(f"   Tổng ~{total} ảnh.")
+        except Exception:
+            total = 0
+        if _MANGA_STOP[0]:
+            log("⏹ Đã dừng theo yêu cầu.")
+            return
+
+        update_progress(0, total or 1)
+        proc = subprocess.Popen(
+            cmd0 + ["-d", dest] + ck_args + rng_args + [url],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+        _MANGA_PROC[0] = proc
+        done = 0
+        for line in proc.stdout:
+            if _MANGA_STOP[0]:
+                break
+            line = line.rstrip()
+            if not line:
+                continue
+            if line.lower().endswith(_MANGA_GDL_IMG_EXT):
+                done += 1
+                if total:
+                    update_progress(min(done, total), total)
+                if done % 10 == 0:
+                    log(f"   ⬇ {done}" + (f"/{total}" if total else "") + " ảnh...")
+            elif line.startswith("[") and ("error" in line.lower()
+                                           or "warning" in line.lower()):
+                log(f"   {line}")
+        proc.wait()
+        _MANGA_PROC[0] = None
+        if _MANGA_STOP[0]:
+            log("⏹ Đã dừng.")
+            return
+        log(f"   ✔ Tải xong {done} ảnh.")
+
+        # Gộp PDF/CBZ nếu cần (dùng lại helper sẵn có)
+        _manga_gdl_finalize(dest, out_dir, title, fmt)
+
+        log_color(f"✅ Hoàn tất! Lưu tại: {dest}", "#6f6")
+        try:
+            _reveal_output(dest)
+        except Exception:
+            pass
+        app.after(0, show_fireworks)
+    except Exception as e:
+        log(f"❌ Lỗi gallery-dl: {e}")
+    finally:
+        _MANGA_PROC[0] = None
+        _MANGA_RUNNING[0] = False
+        app.after(0, lambda: _manga_set_running(False))
+        app.after(0, lambda: update_progress(0, 1))
+
+
+def _manga_worker(url, out_dir, fmt, rng, delay):
+    per_pdf = fmt in ("PDF mỗi chương",)
+    per_cbz = fmt in ("CBZ mỗi chương",)
+    merge_pdf = fmt in ("1 PDF cả bộ",)
+    merge_cbz = fmt in ("1 CBZ cả bộ",)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        # 1 chương lẻ
+        if "/chapter-" in url or "/chuong-" in url:
+            title = _manga_safe_name(url.rstrip("/").split("/")[-2])
+            root = os.path.join(out_dir, title)
+            name = url.rstrip("/").split("/")[-1]
+            chapters = [(name, url)]
+            log_color(f"📚 Tải 1 chương: {name}", "#7cf")
+        else:
+            title = _manga_safe_name(url.rstrip("/").split("/")[-1])
+            root = os.path.join(out_dir, title)
+            log_color(f"📚 Lấy danh sách chương: {title}...", "#7cf")
+            chapters = _manga_list_chapters(url, log)
+            if not chapters:
+                log("❌ Không lấy được danh sách chương (cấu trúc trang có thể đã đổi).")
+                return
+            want = _manga_parse_range(rng)
+            if want:
+                sel = []
+                for nm, u in chapters:
+                    num = _manga_extract_chap_num(u)
+                    base_num = num.split(".")[0].split("-")[0]
+                    if num in want or base_num in want or nm.split()[-1] in want:
+                        sel.append((nm, u))
+                chapters = sel
+                if not chapters:
+                    log("❌ Không có chương nào khớp khoảng đã nhập.")
+                    return
+            log(f"   Tổng {len(chapters)} chương sẽ tải.")
+        os.makedirs(root, exist_ok=True)
+
+        done_folders = []
+        total = len(chapters)
+        update_progress(0, total)
+        for idx, (name, churl) in enumerate(chapters, 1):
+            if _MANGA_STOP[0]:
+                log("⏹ Đã dừng theo yêu cầu.")
+                break
+            log_color(f"[{idx}/{total}] {name}", "#9cf")
+            folder = os.path.join(root, _manga_safe_name(name))
+            os.makedirs(folder, exist_ok=True)
+            try:
+                imgs = _manga_chapter_images(churl)
+            except Exception as e:
+                log(f"   ❌ Lỗi lấy ảnh chương: {e}")
+                update_progress(idx, total)
+                continue
+            if not imgs:
+                log(f"   [!] Không tìm thấy ảnh trong {churl}")
+                update_progress(idx, total)
+                continue
+            ok = 0
+            for i, img_url in enumerate(imgs):
+                if _MANGA_STOP[0]:
+                    break
+                ext = os.path.splitext(urllib.parse.urlsplit(img_url).path)[1] or ".jpg"
+                dest = os.path.join(folder, f"{i+1:03d}{ext}")
+                if _manga_download_image(img_url, dest, churl):
+                    ok += 1
+                time.sleep(delay)
+            log(f"   ✔ {ok}/{len(imgs)} trang")
+            if per_pdf:
+                _manga_imgs_to_pdf(_manga_img_files(folder), folder + ".pdf", log)
+            if per_cbz:
+                _manga_imgs_to_cbz(_manga_img_files(folder), folder + ".cbz", log)
+            done_folders.append(folder)
+            update_progress(idx, total)
+
+        # Gộp cả bộ thành 1 file
+        if (merge_pdf or merge_cbz) and done_folders and not _MANGA_STOP[0]:
+            all_imgs = []
+            for folder in done_folders:
+                all_imgs.extend(_manga_img_files(folder))
+            log_color(f"🧩 Gộp cả bộ: {len(all_imgs)} trang từ "
+                      f"{len(done_folders)} chương...", "#7cf")
+            if merge_pdf:
+                _manga_imgs_to_pdf(all_imgs, os.path.join(out_dir, title + ".pdf"), log)
+            if merge_cbz:
+                _manga_imgs_to_cbz(all_imgs, os.path.join(out_dir, title + ".cbz"),
+                                   log, prefix=True)
+
+        if not _MANGA_STOP[0]:
+            log_color(f"✅ Hoàn tất! Lưu tại: {root}", "#6f6")
+            try:
+                _reveal_output(root)
+            except Exception:
+                pass
+            app.after(0, show_fireworks)
+    except Exception as e:
+        log(f"❌ Lỗi tải truyện: {e}")
+    finally:
+        _MANGA_RUNNING[0] = False
+        app.after(0, lambda: _manga_set_running(False))
+        app.after(0, lambda: update_progress(0, 1))
+
+
+# --- UI trang "Tải truyện" ---
+manga_url_var = ctk.StringVar()
+manga_chap_var = ctk.StringVar()
+manga_out_var = ctk.StringVar(
+    value=os.path.join(os.path.expanduser("~"), "Downloads", "Truyen"))
+manga_format_var = ctk.StringVar(value="Ảnh (thư mục)")
+manga_gallerydl_var = ctk.BooleanVar(value=False)
+manga_cookies_var = ctk.StringVar(value="(Không)")
+
+_sec_manga = _make_section(
+    "Tải truyện Webtoon", "Tải chương / cả bộ về máy đọc offline · truyenqq + tự nhận diện trang khác",
+    "#e06ad0", ws="manga")
+
+_mg_r1 = _sec_row(_sec_manga)
+ctk.CTkLabel(_mg_r1, text="URL truyện:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_mg_r1, textvariable=manga_url_var,
+             placeholder_text="https://truyenqq.com.vn/ten-truyen  (hoặc URL 1 chương)"
+             ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+_mg_r2 = _sec_row(_sec_manga)
+ctk.CTkLabel(_mg_r2, text="Chương:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_mg_r2, textvariable=manga_chap_var, width=200,
+             placeholder_text="vd: 1-10 hoặc 1,2,5  (rỗng = cả bộ)"
+             ).pack(side="left", padx=4, pady=4)
+ctk.CTkLabel(_mg_r2, text="Định dạng:", font=("Arial", 12),
+             anchor="w").pack(side="left", padx=(12, 4))
+ctk.CTkOptionMenu(_mg_r2, variable=manga_format_var, width=170,
+                  values=["Ảnh (thư mục)", "PDF mỗi chương", "CBZ mỗi chương",
+                          "1 PDF cả bộ", "1 CBZ cả bộ"]).pack(side="left", padx=4)
+
+_mg_r3 = _sec_row(_sec_manga)
+ctk.CTkLabel(_mg_r3, text="Lưu vào:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_mg_r3, textvariable=manga_out_var,
+             placeholder_text="Thư mục lưu...").pack(side="left", expand=True,
+                                                     fill="x", padx=4, pady=4)
+ctk.CTkButton(_mg_r3, text="Browse", width=80,
+              command=lambda: (lambda d: manga_out_var.set(d) if d else None)(
+                  filedialog.askdirectory(title="Chọn thư mục lưu truyện"))
+              ).pack(side="left", padx=4)
+
+_mg_rg = _sec_row(_sec_manga)
+ctk.CTkCheckBox(_mg_rg, variable=manga_gallerydl_var,
+                text="🌐 Truyện nước ngoài (gallery-dl) — MangaDex, mangakakalot, "
+                     "webtoons...", font=("Arial", 12)).pack(side="left", padx=8, pady=2)
+ctk.CTkLabel(_mg_rg, text="Cookie (vượt Cloudflare):", font=("Arial", 11),
+             text_color="#8a93ad").pack(side="left", padx=(14, 4))
+ctk.CTkOptionMenu(_mg_rg, variable=manga_cookies_var, width=120,
+                  values=["(Không)", "chrome", "edge", "firefox", "brave",
+                          "chromium", "vivaldi", "opera"]).pack(side="left", padx=4)
+
+_mg_r4 = _sec_row(_sec_manga)
+btn_manga_run = ctk.CTkButton(_mg_r4, text="⬇ Tải truyện", height=38,
+                              fg_color="#b8439e", hover_color="#d24fb4",
+                              font=("Arial", 14, "bold"),
+                              command=lambda: _manga_start())
+btn_manga_run.pack(side="left", expand=True, fill="x", padx=4, pady=6)
+btn_manga_stop = ctk.CTkButton(_mg_r4, text="⏹ Dừng", height=38, width=120,
+                               fg_color="#7a3b3b", hover_color="#9a4b4b",
+                               state="disabled", command=lambda: _manga_stop())
+btn_manga_stop.pack(side="left", padx=4, pady=6)
+ctk.CTkButton(_mg_r4, text="📂 Mở thư mục", height=38, width=130,
+              command=lambda: (os.makedirs(manga_out_var.get(), exist_ok=True),
+                               os.startfile(manga_out_var.get()))
+              if manga_out_var.get() else None).pack(side="left", padx=4, pady=6)
+
+ctk.CTkLabel(
+    _sec_manga,
+    text="ℹ Chỉ tải để đọc cá nhân. Trang Việt: truyenqq + tự nhận diện (best-effort). "
+         "Truyện nước ngoài: tick gallery-dl (cần  pip install -U gallery-dl). "
+         "Trang chặn Cloudflare: chọn Cookie = trình duyệt mày đã đăng nhập/mở trang đó "
+         "(đóng trình duyệt trước khi tải để tránh khoá file cookie). "
+         "CBZ mở bằng app đọc truyện (CDisplayEx, YACReader...).",
+    font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
+    wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
 
 # Mo workspace mac dinh khi khoi dong — Bảng điều khiển (trang tổng quan)
 show_workspace("dashboard")
