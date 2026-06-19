@@ -77,6 +77,7 @@
 - [ ] Định dạng **1 PDF cả bộ** với `1-2` → ra 1 file `<tên>.pdf` mở xem được; **1 CBZ cả bộ** → ra 1 file `<tên>.cbz`
 - [ ] Đang tải bấm **⏹ Dừng** → dừng trong vài giây, nút Tải bật lại, thanh tiến trình reset
 - [ ] URL sai/để trống → log ❌ hướng dẫn, không treo
+- [ ] **hentaivnx** (adapter riêng): URL 1 chương `https://www.hentaivnx.com/truyen-hentai/<slug>/chapter-N/<id>` → tải đủ ảnh, thư mục đặt tên `chapter-N` (không phải ID số); URL cả bộ `.../<slug>-<id>` → lấy đủ danh sách chương, lọc `1-2` đúng (ảnh từ `*.2tcdn.cfd`, bỏ logo/banner)
 - [ ] **🌐 Truyện nước ngoài (gallery-dl)**: tick checkbox + URL 1 chương MangaDex/mangakakalot (đã `pip install gallery-dl`) → tải ảnh, gộp được PDF/CBZ; bấm ⏹ Dừng → tiến trình gallery-dl bị kill
 - [ ] Tick gallery-dl nhưng CHƯA cài → log ❌ `pip install -U gallery-dl`, không treo, không ảnh hưởng nút khác
 - [ ] Trang nước ngoài chặn Cloudflare: chọn **Cookie = trình duyệt đã mở trang đó** (đóng trình duyệt trước) → tải được; log hiện `(cookies: <browser>)`

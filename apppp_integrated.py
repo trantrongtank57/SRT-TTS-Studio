@@ -5889,6 +5889,25 @@ _MANGA_ADAPTERS = [
         "backfill": True,
         "chap_url": lambda base, i: f"{base}/chapter-{i}",
     },
+    {
+        # hentaivnx.com / .live — render TĨNH, không bị Cloudflare chặn UA.
+        # Danh sách chương ở trang truyện (.../<slug>-<id>): mỗi chương là
+        #   <a href=".../chapter-N/<id-số>" data-id="..">Chapter N</a>.
+        # URL chương có ID số KHÔNG đoán được → backfill=False (lấy đủ từ list).
+        # Ảnh nằm sẵn ở src trên CDN 2tcdn.cfd; regex 2 là dự phòng nếu đổi CDN
+        # (bắt mọi src là file đánh số /N.jpg — kiểu của trang đọc truyện).
+        # Lưu ý: trang truyện dùng nháy kép cho href, nhưng trang đọc chương
+        # có khi dùng nháy ĐƠN cho thẻ <img src='...'> → regex chấp nhận cả hai.
+        "name": "hentaivnx",
+        "match": ["hentaivnx"],
+        "chapter_link_re":
+            r'''<a\s+href=["']([^"']+/chapter-[^"']+)["']\s+data-id=["']\d+["'][^>]*>(.*?)</a>''',
+        "image_res": [
+            r'''<img[^>]+src=["'](https?://[^"']*2tcdn\.cfd[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["']''',
+            r'''<img[^>]+src=["']([^"']+/\d+\.(?:jpg|jpeg|png|webp)[^"']*)["']''',
+        ],
+        "backfill": False,
+    },
 ]
 _MANGA_IMG_JUNK = ("placeholder", "loading", "logo", "banner", "avatar",
                    "/ads", "nocover", "blank", "/icon")
@@ -6519,9 +6538,17 @@ def _manga_worker(url, out_dir, fmt, rng, delay):
         os.makedirs(out_dir, exist_ok=True)
         # 1 chương lẻ
         if "/chapter-" in url or "/chuong-" in url:
-            title = _manga_safe_name(url.rstrip("/").split("/")[-2])
+            _parts = url.rstrip("/").split("/")
+            # đoạn cuối là ID số (hentaivnx: .../chapter-8/612561) → tên chương
+            # là đoạn áp chót; ngược lại (truyenqq: .../chapter-5) lấy như cũ.
+            if len(_parts) >= 3 and _parts[-1].isdigit() and \
+                    re.search(r"chapter-|chuong-", _parts[-2], re.I):
+                title = _manga_safe_name(_parts[-3])
+                name = _parts[-2]
+            else:
+                title = _manga_safe_name(_parts[-2])
+                name = _parts[-1]
             root = os.path.join(out_dir, title)
-            name = url.rstrip("/").split("/")[-1]
             chapters = [(name, url)]
             log_color(f"📚 Tải 1 chương: {name}", "#7cf")
         else:
