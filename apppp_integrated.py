@@ -5840,12 +5840,25 @@ def _manga_safe_name(s):
     return re.sub(r'[<>:"/\\|?*]', "_", s).strip().strip(".") or "untitled"
 
 
-def _manga_http(url, referer, binary=False, timeout=40):
-    req = urllib.request.Request(
-        url, headers={"User-Agent": _MANGA_UA, "Referer": referer})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = r.read()
-    return data if binary else data.decode("utf-8", "replace")
+def _manga_http(url, referer, binary=False, timeout=40, retries=3):
+    """Tải 1 URL, thử lại khi gặp lỗi mạng tạm thời (host đóng kết nối:
+    WinError 10054 / 'Remote end closed connection' / reset). Backoff tăng dần
+    để tránh bị chặn do gọi quá nhanh."""
+    last = None
+    for attempt in range(max(1, retries)):
+        if _MANGA_STOP[0]:
+            raise RuntimeError("stopped")
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": _MANGA_UA, "Referer": referer})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+            return data if binary else data.decode("utf-8", "replace")
+        except Exception as e:
+            last = e
+            if attempt < retries - 1:
+                time.sleep(1.5 * (attempt + 1))   # 1.5s, 3s, 4.5s...
+    raise last
 
 
 def _manga_chapter_exists(url, referer):
@@ -5991,19 +6004,42 @@ def _manga_chapter_images(chapter_url):
     return _manga_extract_images(html, adapter)
 
 
-def _manga_download_image(url, dest, referer):
-    if os.path.exists(dest) and os.path.getsize(dest) > 1024:
-        return True
-    for attempt in range(3):
+def _manga_image_ok(path):
+    """True nếu file ảnh giải mã được trọn vẹn (phát hiện ảnh tải dở/đứt → tránh
+    lỗi 'image file is truncated' khi gộp PDF)."""
+    try:
+        from PIL import ImageFile as _IF
+        _prev = _IF.LOAD_TRUNCATED_IMAGES
+        _IF.LOAD_TRUNCATED_IMAGES = False   # nghiêm: ảnh thiếu byte = lỗi
         try:
-            data = _manga_http(url, referer, binary=True, timeout=60)
+            with Image.open(path) as im:
+                im.load()                   # ép giải mã toàn bộ pixel
+        finally:
+            _IF.LOAD_TRUNCATED_IMAGES = _prev
+        return True
+    except Exception:
+        return False
+
+
+def _manga_download_image(url, dest, referer):
+    if os.path.exists(dest) and os.path.getsize(dest) > 1024 and _manga_image_ok(dest):
+        return True
+    # Tải + kiểm tra ảnh trọn vẹn; ảnh đứt (do host đóng kết nối) → thử lại.
+    for attempt in range(4):
+        if _MANGA_STOP[0]:
+            return False
+        try:
+            data = _manga_http(url, referer, binary=True, timeout=60, retries=2)
             tmp = dest + ".part"
             with open(tmp, "wb") as f:
                 f.write(data)
-            os.replace(tmp, dest)
-            return True
+            if _manga_image_ok(tmp):
+                os.replace(tmp, dest)
+                return True
+            os.remove(tmp)                  # ảnh bị cắt → bỏ, thử lại
         except Exception:
-            time.sleep(1.5)
+            pass
+        time.sleep(1.5 * (attempt + 1))
     return False
 
 
@@ -6018,18 +6054,29 @@ def _manga_img_files(folder):
 def _manga_imgs_to_pdf(img_paths, pdf_path, log_cb):
     if not img_paths:
         return False
+    # Cho phép đọc ảnh hơi thiếu byte (vẫn hiện được) thay vì văng lỗi cả PDF.
+    try:
+        from PIL import ImageFile as _IF
+        _IF.LOAD_TRUNCATED_IMAGES = True
+    except Exception:
+        pass
     try:
         pages = []
+        skipped = 0
         for p in img_paths:
             try:
                 im = Image.open(p)
-                if im.mode in ("RGBA", "P", "LA"):
+                im.load()                       # ép giải mã ngay để bắt ảnh hỏng
+                if im.mode != "RGB":
                     im = im.convert("RGB")
                 pages.append(im)
             except Exception:
-                pass
+                skipped += 1                    # ảnh hỏng → bỏ qua, không phá cả PDF
         if not pages:
+            log_cb("❌ Lỗi tạo PDF: không có ảnh hợp lệ.")
             return False
+        if skipped:
+            log_cb(f"   ⚠ Bỏ qua {skipped} ảnh hỏng khi tạo PDF.")
         pages[0].save(pdf_path, save_all=True, append_images=pages[1:])
         log_cb(f"📕 PDF: {pdf_path}")
         return True
@@ -6053,6 +6100,182 @@ def _manga_imgs_to_cbz(img_paths, cbz_path, log_cb, prefix=False):
     except Exception as e:
         log_cb(f"❌ Lỗi tạo CBZ: {e}")
         return False
+
+
+# ── Chuyển định dạng truyện: Ảnh ↔ CBZ ↔ PDF (không cần thêm thư viện) ──────────
+_MANGA_CONV_RUNNING = [False]
+_MANGA_IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+
+
+def _manga_natkey(s):
+    """Sắp tên file/đường dẫn theo thứ tự tự nhiên (1,2,10 thay vì 1,10,2)."""
+    return [int(t) if t.isdigit() else t.lower()
+            for t in re.split(r"(\d+)", s)]
+
+
+def _manga_imgs_from_dir(folder):
+    return sorted(
+        [os.path.join(folder, f) for f in os.listdir(folder)
+         if f.lower().endswith(_MANGA_IMG_EXTS)],
+        key=lambda p: _manga_natkey(os.path.basename(p)))
+
+
+def _manga_extract_cbz(cbz_path, tmp_dir):
+    """Giải nén ảnh trong .cbz/.zip ra tmp_dir → list ảnh (đúng thứ tự tự nhiên)."""
+    import zipfile as _zip
+    out = []
+    with _zip.ZipFile(cbz_path) as z:
+        names = sorted(
+            [n for n in z.namelist()
+             if not n.endswith("/") and n.lower().endswith(_MANGA_IMG_EXTS)],
+            key=_manga_natkey)
+        for i, n in enumerate(names):
+            ext = os.path.splitext(n)[1] or ".jpg"
+            dest = os.path.join(tmp_dir, f"{i+1:05d}{ext}")
+            with z.open(n) as src, open(dest, "wb") as f:
+                f.write(src.read())
+            out.append(dest)
+    return out
+
+
+def _manga_extract_pdf_imgs(pdf_path, tmp_dir):
+    """Lấy ảnh nhúng trong PDF (truyện = mỗi trang 1 ảnh) qua pypdf → list ảnh."""
+    from pypdf import PdfReader
+    out = []
+    reader = PdfReader(pdf_path)
+    for pi, page in enumerate(reader.pages):
+        try:
+            imgs = list(page.images)
+        except Exception:
+            imgs = []
+        for ii, img in enumerate(imgs):
+            nm = getattr(img, "name", "") or f"{ii}.jpg"
+            ext = os.path.splitext(nm)[1].lower() or ".jpg"
+            if ext not in _MANGA_IMG_EXTS:
+                ext = ".png"
+            dest = os.path.join(tmp_dir, f"{pi+1:04d}_{ii+1:02d}{ext}")
+            try:
+                with open(dest, "wb") as f:
+                    f.write(img.data)
+                out.append(dest)
+            except Exception:
+                pass
+    return out
+
+
+def _manga_load_source_imgs(src, tmp_dir):
+    """Đưa 1 nguồn (thư mục ảnh / .cbz / .zip / .pdf) về list đường dẫn ảnh."""
+    low = src.lower()
+    if os.path.isdir(src):
+        return _manga_imgs_from_dir(src)
+    if low.endswith((".cbz", ".zip")):
+        return _manga_extract_cbz(src, tmp_dir)
+    if low.endswith(".pdf"):
+        return _manga_extract_pdf_imgs(src, tmp_dir)
+    return []
+
+
+def _manga_conv_collect(path):
+    """Gom danh sách nguồn cần chuyển từ 1 đường dẫn người dùng chọn.
+       - file .cbz/.zip/.pdf → [file] (1 truyện)
+       - thư mục chứa ảnh trực tiếp → [thư mục] (1 truyện/chương)
+       - thư mục chứa nhiều .cbz/.pdf hoặc nhiều thư mục con ảnh → mỗi cái 1 nguồn (hàng loạt)
+    """
+    if os.path.isfile(path):
+        return [path] if path.lower().endswith((".cbz", ".zip", ".pdf")) else []
+    if not os.path.isdir(path):
+        return []
+    if _manga_imgs_from_dir(path):          # thư mục có ảnh ngay → 1 nguồn
+        return [path]
+    srcs = []
+    for nm in sorted(os.listdir(path), key=_manga_natkey):
+        full = os.path.join(path, nm)
+        if os.path.isfile(full) and nm.lower().endswith((".cbz", ".zip", ".pdf")):
+            srcs.append(full)
+        elif os.path.isdir(full) and _manga_imgs_from_dir(full):
+            srcs.append(full)
+    return srcs
+
+
+def _manga_convert_worker(path, out_fmt, out_dir):
+    try:
+        import tempfile
+        srcs = _manga_conv_collect(path)
+        if not srcs:
+            log("❌ Không tìm thấy nguồn để chuyển (cần thư mục ảnh, .cbz/.zip hoặc .pdf).")
+            return
+        os.makedirs(out_dir, exist_ok=True)
+        log_color(f"🔄 Chuyển {len(srcs)} mục → {out_fmt}...", "#7cf")
+        total = len(srcs)
+        update_progress(0, total)
+        ok_cnt = 0
+        for idx, src in enumerate(srcs, 1):
+            if _MANGA_STOP[0]:
+                log("⏹ Đã dừng.")
+                break
+            base = _manga_safe_name(
+                os.path.basename(src.rstrip("/\\"))
+                if os.path.isdir(src) else os.path.splitext(os.path.basename(src))[0])
+            log_color(f"[{idx}/{total}] {base}", "#9cf")
+            tmp = tempfile.mkdtemp(prefix="mgconv_")
+            try:
+                imgs = _manga_load_source_imgs(src, tmp)
+                if not imgs:
+                    log(f"   [!] Không có ảnh trong nguồn này — bỏ qua.")
+                    continue
+                if out_fmt == "PDF":
+                    if _manga_imgs_to_pdf(imgs, os.path.join(out_dir, base + ".pdf"), log):
+                        ok_cnt += 1
+                elif out_fmt == "CBZ":
+                    if _manga_imgs_to_cbz(imgs, os.path.join(out_dir, base + ".cbz"),
+                                          log, prefix=True):
+                        ok_cnt += 1
+                else:  # Ảnh (thư mục)
+                    dest_folder = os.path.join(out_dir, base)
+                    os.makedirs(dest_folder, exist_ok=True)
+                    for i, p in enumerate(imgs):
+                        ext = os.path.splitext(p)[1] or ".jpg"
+                        shutil.copy2(p, os.path.join(dest_folder, f"{i+1:04d}{ext}"))
+                    log(f"🖼 Ảnh: {dest_folder} ({len(imgs)} trang)")
+                    ok_cnt += 1
+            except Exception as e:
+                log(f"   ❌ Lỗi chuyển '{base}': {e}")
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+                update_progress(idx, total)
+        if not _MANGA_STOP[0]:
+            log_color(f"✅ Xong! Chuyển được {ok_cnt}/{total} mục. Lưu tại: {out_dir}", "#6f6")
+            try:
+                _reveal_output(out_dir)
+            except Exception:
+                pass
+            app.after(0, show_fireworks)
+    except Exception as e:
+        log(f"❌ Lỗi chuyển định dạng: {e}")
+    finally:
+        _MANGA_CONV_RUNNING[0] = False
+        app.after(0, lambda: _manga_set_running(False))
+        app.after(0, lambda: update_progress(0, 1))
+
+
+def _manga_convert_start():
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0]:
+        log("⏳ Đang có tác vụ truyện chạy, vui lòng đợi/dừng trước.")
+        return
+    path = manga_conv_src_var.get().strip()
+    if not path or not os.path.exists(path):
+        log("❌ Chọn nguồn cần chuyển (thư mục ảnh, .cbz/.zip hoặc .pdf).")
+        return
+    out_dir = manga_conv_out_var.get().strip()
+    if not out_dir:
+        out_dir = (path if os.path.isdir(path) else os.path.dirname(path))
+        manga_conv_out_var.set(out_dir)
+    out_fmt = manga_conv_fmt_var.get()
+    _MANGA_STOP[0] = False
+    _MANGA_CONV_RUNNING[0] = True
+    _manga_set_running(True)
+    threading.Thread(target=_manga_convert_worker,
+                     args=(path, out_fmt, out_dir), daemon=True).start()
 
 
 def _manga_parse_range(s):
@@ -6084,9 +6307,9 @@ def _manga_set_running(on):
 
 
 def _manga_stop():
-    if _MANGA_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0]:
         _MANGA_STOP[0] = True
-        log("⏹ Đang dừng tải truyện...")
+        log("⏹ Đang dừng...")
         # Dừng cả tiến trình gallery-dl (nếu đang chạy)
         _p = _MANGA_PROC[0]
         if _p is not None:
@@ -6100,8 +6323,8 @@ def _manga_stop():
 
 
 def _manga_start():
-    if _MANGA_RUNNING[0]:
-        log("⚠ Đang tải truyện rồi, đợi xong hoặc bấm Dừng.")
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0]:
+        log("⚠ Đang có tác vụ truyện chạy, đợi xong hoặc bấm Dừng.")
         return
     url = manga_url_var.get().strip()
     if not url or "http" not in url:
@@ -6577,23 +6800,22 @@ def _manga_worker(url, out_dir, fmt, rng, delay):
         done_folders = []
         total = len(chapters)
         update_progress(0, total)
-        for idx, (name, churl) in enumerate(chapters, 1):
-            if _MANGA_STOP[0]:
-                log("⏹ Đã dừng theo yêu cầu.")
-                break
-            log_color(f"[{idx}/{total}] {name}", "#9cf")
+
+        def _grab_chapter(label, name, churl):
+            """Tải 1 chương. Trả về True nếu tải đủ tất cả trang, False nếu lỗi
+            (lấy ảnh thất bại / không có ảnh / thiếu trang). Trang đã có thì bỏ
+            qua nên gọi lại = chỉ tải phần còn thiếu (resume)."""
+            log_color(f"{label} {name}", "#9cf")
             folder = os.path.join(root, _manga_safe_name(name))
             os.makedirs(folder, exist_ok=True)
             try:
                 imgs = _manga_chapter_images(churl)
             except Exception as e:
                 log(f"   ❌ Lỗi lấy ảnh chương: {e}")
-                update_progress(idx, total)
-                continue
+                return False, folder
             if not imgs:
                 log(f"   [!] Không tìm thấy ảnh trong {churl}")
-                update_progress(idx, total)
-                continue
+                return False, folder
             ok = 0
             for i, img_url in enumerate(imgs):
                 if _MANGA_STOP[0]:
@@ -6604,17 +6826,61 @@ def _manga_worker(url, out_dir, fmt, rng, delay):
                     ok += 1
                 time.sleep(delay)
             log(f"   ✔ {ok}/{len(imgs)} trang")
-            if per_pdf:
-                _manga_imgs_to_pdf(_manga_img_files(folder), folder + ".pdf", log)
-            if per_cbz:
-                _manga_imgs_to_cbz(_manga_img_files(folder), folder + ".cbz", log)
-            done_folders.append(folder)
+            full = (ok == len(imgs))
+            if full:
+                if per_pdf:
+                    _manga_imgs_to_pdf(_manga_img_files(folder), folder + ".pdf", log)
+                if per_cbz:
+                    _manga_imgs_to_cbz(_manga_img_files(folder), folder + ".cbz", log)
+            else:
+                log(f"   ⚠ Chương '{name}' thiếu trang — sẽ thử lại sau.")
+            return full, folder
+
+        failed = []   # [(name, churl)] các chương lỗi/thiếu trang
+        for idx, (name, churl) in enumerate(chapters, 1):
+            if _MANGA_STOP[0]:
+                log("⏹ Đã dừng theo yêu cầu.")
+                break
+            full, folder = _grab_chapter(f"[{idx}/{total}]", name, churl)
+            if full:
+                done_folders.append(folder)
+            else:
+                failed.append((name, churl))
             update_progress(idx, total)
 
-        # Gộp cả bộ thành 1 file
+        # Tự thử lại các chương bị lỗi (host hay đóng kết nối → thường qua lần 2)
+        for _pass in range(1, 3):
+            if not failed or _MANGA_STOP[0]:
+                break
+            retry, failed = failed, []
+            log_color(f"🔁 Thử lại {len(retry)} chương lỗi (lần {_pass})...", "#fc6")
+            time.sleep(3)
+            for j, (name, churl) in enumerate(retry, 1):
+                if _MANGA_STOP[0]:
+                    failed.extend(retry[j-1:])
+                    break
+                full, folder = _grab_chapter(f"   🔁[{j}/{len(retry)}]", name, churl)
+                if full:
+                    done_folders.append(folder)
+                else:
+                    failed.append((name, churl))
+
+        if failed and not _MANGA_STOP[0]:
+            log_color(f"⚠ Còn {len(failed)} chương chưa tải đủ "
+                      f"(trang chặn/đóng kết nối). Chạy lại sẽ tải tiếp phần thiếu:",
+                      "#f96")
+            for name, churl in failed:
+                log(f"     • {name}  →  {churl}")
+
+        # Gộp cả bộ thành 1 file — theo ĐÚNG thứ tự chương (chương tải lại ở
+        # cuối các pass nên done_folders bị xáo trộn; sắp lại theo chapters).
         if (merge_pdf or merge_cbz) and done_folders and not _MANGA_STOP[0]:
+            _done_set = set(done_folders)
+            ordered = [os.path.join(root, _manga_safe_name(nm))
+                       for nm, _u in chapters
+                       if os.path.join(root, _manga_safe_name(nm)) in _done_set]
             all_imgs = []
-            for folder in done_folders:
+            for folder in ordered:
                 all_imgs.extend(_manga_img_files(folder))
             log_color(f"🧩 Gộp cả bộ: {len(all_imgs)} trang từ "
                       f"{len(done_folders)} chương...", "#7cf")
@@ -6647,6 +6913,9 @@ manga_out_var = ctk.StringVar(
 manga_format_var = ctk.StringVar(value="Ảnh (thư mục)")
 manga_gallerydl_var = ctk.BooleanVar(value=False)
 manga_cookies_var = ctk.StringVar(value="(Không)")
+manga_conv_src_var = ctk.StringVar()
+manga_conv_out_var = ctk.StringVar()
+manga_conv_fmt_var = ctk.StringVar(value="PDF")
 
 _sec_manga = _make_section(
     "Tải truyện Webtoon", "Tải chương / cả bộ về máy đọc offline · truyenqq + tự nhận diện trang khác",
@@ -6714,6 +6983,58 @@ ctk.CTkLabel(
          "Trang chặn Cloudflare: chọn Cookie = trình duyệt mày đã đăng nhập/mở trang đó "
          "(đóng trình duyệt trước khi tải để tránh khoá file cookie). "
          "CBZ mở bằng app đọc truyện (CDisplayEx, YACReader...).",
+    font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
+    wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
+
+# ── Card: Chuyển định dạng truyện (Ảnh ↔ CBZ ↔ PDF) ───────────────────────────
+_sec_mconv = _make_section(
+    "Chuyển định dạng truyện",
+    "Ảnh ↔ CBZ ↔ PDF · chọn 1 file (.cbz/.zip/.pdf) hoặc thư mục (gồm nhiều file/chương = chuyển hàng loạt)",
+    "#6ad0c0", ws="manga")
+
+_mc_r1 = _sec_row(_sec_mconv)
+ctk.CTkLabel(_mc_r1, text="Nguồn:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_mc_r1, textvariable=manga_conv_src_var,
+             placeholder_text="Thư mục ảnh / .cbz / .zip / .pdf  (hoặc thư mục chứa nhiều file)"
+             ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_mc_r1, text="📄 File", width=70,
+              command=lambda: (lambda f: manga_conv_src_var.set(f) if f else None)(
+                  filedialog.askopenfilename(
+                      title="Chọn file truyện cần chuyển",
+                      filetypes=[("Truyện", "*.cbz *.zip *.pdf"), ("Tất cả", "*.*")]))
+              ).pack(side="left", padx=2)
+ctk.CTkButton(_mc_r1, text="📁 Thư mục", width=90,
+              command=lambda: (lambda d: manga_conv_src_var.set(d) if d else None)(
+                  filedialog.askdirectory(title="Chọn thư mục nguồn"))
+              ).pack(side="left", padx=2)
+
+_mc_r2 = _sec_row(_sec_mconv)
+ctk.CTkLabel(_mc_r2, text="Chuyển sang:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkOptionMenu(_mc_r2, variable=manga_conv_fmt_var, width=160,
+                  values=["PDF", "CBZ", "Ảnh (thư mục)"]).pack(side="left", padx=4)
+ctk.CTkLabel(_mc_r2, text="Lưu vào:", font=("Arial", 12),
+             anchor="w").pack(side="left", padx=(12, 4))
+ctk.CTkEntry(_mc_r2, textvariable=manga_conv_out_var,
+             placeholder_text="rỗng = cùng chỗ nguồn").pack(
+    side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_mc_r2, text="Browse", width=80,
+              command=lambda: (lambda d: manga_conv_out_var.set(d) if d else None)(
+                  filedialog.askdirectory(title="Chọn thư mục lưu"))
+              ).pack(side="left", padx=4)
+
+_mc_r3 = _sec_row(_sec_mconv)
+ctk.CTkButton(_mc_r3, text="🔄 Chuyển định dạng", height=36,
+              fg_color="#2c9c8a", hover_color="#37b8a3",
+              font=("Arial", 13, "bold"),
+              command=lambda: _manga_convert_start()).pack(
+    side="left", expand=True, fill="x", padx=4, pady=6)
+
+ctk.CTkLabel(
+    _sec_mconv,
+    text="ℹ Nguồn PDF: lấy ảnh nhúng trong từng trang (hợp với truyện PDF mỗi trang 1 ảnh). "
+         "Dùng nút ⏹ Dừng ở phần trên để hủy.",
     font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
     wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
 
