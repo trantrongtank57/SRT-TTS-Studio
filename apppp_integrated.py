@@ -10699,9 +10699,16 @@ def _run_mux_thread():
     if burn_srt:
         filt = f"[0:v]subtitles={_ff_sub_filterpath(burn_srt)}[vout];" + filt
         vmap = "[vout]"
-        vcodec = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast"]
+        # Burn sub buộc re-encode video. Dùng GPU NVENC nếu có (CPU không bị 100%,
+        # nhanh hơn nhiều); chỉ fallback libx264 (CPU) khi không có GPU NVIDIA.
+        if DETECTED_GPU:
+            vcodec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "23", "-b:v", "0"]
+            _enc_note = f"GPU NVENC ({DETECTED_GPU})"
+        else:
+            vcodec = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast"]
+            _enc_note = "CPU libx264"
         app.after(0, lambda: log(f"[Ghép Audio] 📝 Gắn phụ đề cứng: {os.path.basename(burn_srt)} "
-                                 "(re-encode video — chậm hơn -c:v copy)"))
+                                 f"(re-encode video bằng {_enc_note})"))
     else:
         vmap = "0:v:0"
         vcodec = ["-c:v", "copy"]
