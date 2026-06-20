@@ -6061,23 +6061,31 @@ def _manga_imgs_to_pdf(img_paths, pdf_path, log_cb):
     except Exception:
         pass
     try:
-        pages = []
-        skipped = 0
-        for p in img_paths:
-            try:
-                im = Image.open(p)
-                im.load()                       # ép giải mã ngay để bắt ảnh hỏng
-                if im.mode != "RGB":
-                    im = im.convert("RGB")
-                pages.append(im)
-            except Exception:
-                skipped += 1                    # ảnh hỏng → bỏ qua, không phá cả PDF
-        if not pages:
+        # Stream từng ảnh thay vì nạp HẾT vào RAM cùng lúc (tránh ngốn vài GB
+        # với chương nhiều trang / "1 PDF cả bộ"). PIL encode từng trang rồi
+        # giải phóng ảnh trước, nên đỉnh bộ nhớ chỉ ~1–2 ảnh.
+        _skip = [0]
+
+        def _gen(paths):
+            for p in paths:
+                try:
+                    im = Image.open(p)
+                    im.load()               # ép giải mã ngay để bắt ảnh hỏng
+                    if im.mode != "RGB":
+                        im = im.convert("RGB")
+                    yield im
+                except Exception:
+                    _skip[0] += 1           # ảnh hỏng → bỏ qua, không phá cả PDF
+
+        gen = _gen(img_paths)
+        try:
+            first = next(gen)               # trang đầu hợp lệ đầu tiên
+        except StopIteration:
             log_cb("❌ Lỗi tạo PDF: không có ảnh hợp lệ.")
             return False
-        if skipped:
-            log_cb(f"   ⚠ Bỏ qua {skipped} ảnh hỏng khi tạo PDF.")
-        pages[0].save(pdf_path, save_all=True, append_images=pages[1:])
+        first.save(pdf_path, save_all=True, append_images=gen)
+        if _skip[0]:
+            log_cb(f"   ⚠ Bỏ qua {_skip[0]} ảnh hỏng khi tạo PDF.")
         log_cb(f"📕 PDF: {pdf_path}")
         return True
     except Exception as e:
