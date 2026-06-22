@@ -24,6 +24,8 @@
 - [ ] **🎧 Thử 3 dòng đầu** (chọn Output trước) → nghe 3 dòng đúng giọng đang cấu hình
 - [ ] Chạy **TTS** với Edge: log có `⚡ Edge TTS song song ×4`, các dòng `OK` ra không theo thứ tự — bình thường
 - [ ] SRT có dòng lặp (2 dòng giống hệt nhau) → dòng sau hiện `♻ OK n (dòng trùng — dùng lại audio)`
+- [ ] **Cache bền qua phiên**: chạy TTS 1 SRT xong → thoát app → mở lại → xóa Output → chạy lại CÙNG SRT/giọng → các dòng hiện `♻` (dùng lại từ `tts_cache/` cạnh settings.json) thay vì gọi API
+- [ ] **🤖 Tự phân vai (AI)**: tạo ≥2 hồ sơ giọng (tên gợi ý vd `nam_tre`/`nu_gia`) + nhập API key dịch → Load SRT hội thoại → **🎭 Phân vai** → **🤖 Tự phân vai (AI)** → chờ phân tích → bảng phân vai mở lại với các luật tự gán → **🎬 Lưu & Chạy** đọc đúng nhiều giọng
 - [ ] Bấm **Stop** giữa chừng → dừng êm; bấm TTS lại → `SKIP` các dòng đã có
 - [ ] Xong batch: nếu có FAIL → **📋 Báo cáo QC** liệt kê; **🎧 Nghe dòng lỗi** mở dialog ▶/🔁; **🧩 Tạo lại dòng thiếu** chạy được
 - [ ] Sửa text 1 dòng (Regenerate Line) → file cũ thành `line_NNNN.old.mp3`
@@ -81,6 +83,15 @@
 - [ ] **🌐 Truyện nước ngoài (gallery-dl)**: tick checkbox + URL 1 chương MangaDex/mangakakalot (đã `pip install gallery-dl`) → tải ảnh, gộp được PDF/CBZ; bấm ⏹ Dừng → tiến trình gallery-dl bị kill
 - [ ] Tick gallery-dl nhưng CHƯA cài → log ❌ `pip install -U gallery-dl`, không treo, không ảnh hưởng nút khác
 - [ ] Trang nước ngoài chặn Cloudflare: chọn **Cookie = trình duyệt đã mở trang đó** (đóng trình duyệt trước) → tải được; log hiện `(cookies: <browser>)`
+
+## H2. Dịch truyện nước ngoài → Tiếng Việt (card "Dịch truyện → Tiếng Việt")
+- [ ] Cài trước: `voxcpm_env\Scripts\python.exe -m pip install easyocr`; chọn engine dịch ở trang Dịch (Claude/Gemini/OpenAI có key, hoặc Offline có model)
+- [ ] Chọn **Nguồn** = thư mục ảnh 1 chương (vài trang tiếng Anh) → tiếng gốc `Tiếng Anh` → 🌐 Dịch → ra ảnh đã ghi chữ Việt trong `<nguồn>\_vi\<chương>\`, có `_script_dich.txt`, pháo hoa + mở thư mục
+- [ ] Nguồn = thư mục chứa NHIỀU thư mục chương → mỗi chương ra 1 thư mục `_vi\<tên chương>\`
+- [ ] Đóng gói `PDF mỗi chương` / `CBZ mỗi chương` → tạo đúng file
+- [ ] Bấm ⏹ Dừng giữa lúc OCR/dịch → dừng được (kill tiến trình OCR), không treo, không pháo hoa
+- [ ] CHƯA cài easyocr → log ❌ `pip install easyocr`, không treo, các nút khác vẫn chạy
+- [ ] Provider online thiếu API key → báo lỗi sớm trước khi chạy OCR
 
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK

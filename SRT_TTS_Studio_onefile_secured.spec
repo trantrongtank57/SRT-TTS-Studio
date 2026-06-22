@@ -46,6 +46,7 @@ a = Analysis(
         ('vieneu_helper.py',           '.'),
         ('f5tts_helper.py',            '.'),
         ('omnivoice_helper.py',        '.'),
+        ('manga_ocr_helper.py',        '.'),
     ],
     hiddenimports=[
         'edge_tts', 'edge_tts.communicate', 'srt',

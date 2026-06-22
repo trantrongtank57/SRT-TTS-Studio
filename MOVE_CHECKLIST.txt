@@ -126,6 +126,23 @@
                                             install -U yt-dlp
                                     Thiếu → chỉ tính năng YouTube báo lỗi rõ,
                                     phần còn lại vẫn chạy bình thường.
+ [ ] easyocr              model      cần cho: 📚 Tải truyện → Dịch truyện sang
+                          ~100MB/    Tiếng Việt (OCR ảnh truyện)
+                          ngôn ngữ   CÀI: voxcpm_env\Scripts\python.exe -m pip
+                                          install easyocr
+                                    Model OCR tự tải lần đầu vào %USERPROFILE%\
+                                    .EasyOCR\. Thiếu → chỉ card dịch truyện báo
+                                    lỗi rõ, phần còn lại vẫn chạy.
+                                    ⚠ QUAN TRỌNG: cài easyocr sẽ GỠ torch GPU
+                                    (cu126) thay bằng torch CPU → hỏng GPU cho
+                                    cả voxcpm_env. SAU KHI cài easyocr phải cài
+                                    LẠI torch CUDA:
+                                      voxcpm_env\Scripts\python.exe -m pip install
+                                      --index-url https://download.pytorch.org/whl/cu126
+                                      --force-reinstall --no-deps torch==2.12.1
+                                      torchvision==0.27.1
+                                    Kiểm tra: python -c "import torch;
+                                      print(torch.cuda.is_available())" → True
 
  ⚠ TORCH GPU theo TỪNG ENV: mỗi *_env dùng GPU chỉ khi env đó cài torch bản
    CUDA. Hiện tại (máy gốc): voxcpm_env=cu126, vieneu_env=cu128, f5tts_env=cu126

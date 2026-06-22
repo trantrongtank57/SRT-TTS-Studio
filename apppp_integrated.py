@@ -5821,6 +5821,8 @@ _MANGA_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 _MANGA_RUNNING = [False]
 _MANGA_STOP = [False]
 _MANGA_PROC = [None]   # tiến trình gallery-dl đang chạy (để dừng được)
+_MANGA_TR_RUNNING = [False]   # job DỊCH truyện đang chạy
+_MANGA_TR_PROC = [None]       # tiến trình manga_ocr_helper đang chạy
 
 
 class _MangaNoRedirect(urllib.request.HTTPRedirectHandler):
@@ -6267,7 +6269,7 @@ def _manga_convert_worker(path, out_fmt, out_dir):
 
 
 def _manga_convert_start():
-    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
         log("⏳ Đang có tác vụ truyện chạy, vui lòng đợi/dừng trước.")
         return
     path = manga_conv_src_var.get().strip()
@@ -6315,23 +6317,29 @@ def _manga_set_running(on):
 
 
 def _manga_stop():
-    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
         _MANGA_STOP[0] = True
+        # Job dịch: dừng cả pha _translate_segments (online + offline) đang chạy
+        if _MANGA_TR_RUNNING[0]:
+            global TRANSLATE_STOP, TRANSLATE_PAUSED
+            TRANSLATE_STOP = True
+            TRANSLATE_PAUSED = False
+            _translate_send_proc("STOP")   # offline subprocess (nếu có)
         log("⏹ Đang dừng...")
-        # Dừng cả tiến trình gallery-dl (nếu đang chạy)
-        _p = _MANGA_PROC[0]
-        if _p is not None:
-            try:
-                _proc_tree_action(_p, "kill")
-            except Exception:
+        # Dừng cả tiến trình gallery-dl / OCR (nếu đang chạy)
+        for _p in (_MANGA_PROC[0], _MANGA_TR_PROC[0]):
+            if _p is not None:
                 try:
-                    _p.kill()
+                    _proc_tree_action(_p, "kill")
                 except Exception:
-                    pass
+                    try:
+                        _p.kill()
+                    except Exception:
+                        pass
 
 
 def _manga_start():
-    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
         log("⚠ Đang có tác vụ truyện chạy, đợi xong hoặc bấm Dừng.")
         return
     url = manga_url_var.get().strip()
@@ -6913,6 +6921,348 @@ def _manga_worker(url, out_dir, fmt, rng, delay):
         app.after(0, lambda: update_progress(0, 1))
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# DỊCH TRUYỆN NƯỚC NGOÀI → TIẾNG VIỆT  (OCR ảnh → dịch → ghi chữ Việt đè lên ảnh)
+#   - OCR: manga_ocr_helper.py (EasyOCR) chạy trong env có torch (voxcpm_env)
+#   - Dịch: tái dùng _translate_segments (theo dropdown Claude/Gemini/OpenAI/Offline)
+#   - Typeset: PIL + _find_unicode_font, đè ô trắng + chữ Việt vào đúng vị trí
+# ══════════════════════════════════════════════════════════════════════════════
+_MANGA_OCR_LANGS = ["en", "chinese_sim", "chinese_cht", "japan", "korean"]
+_MANGA_OCR_LANG_LABELS = {
+    "Tiếng Anh": "en", "Tiếng Trung (giản thể)": "chinese_sim",
+    "Tiếng Trung (phồn thể)": "chinese_cht", "Tiếng Nhật": "japan",
+    "Tiếng Hàn": "korean",
+}
+
+
+def _find_manga_ocr_helper():
+    """Tìm manga_ocr_helper.py (MEIPASS → cạnh app/exe → cạnh script)."""
+    name = "manga_ocr_helper.py"
+    search = [
+        getattr(sys, "_MEIPASS", None),
+        os.path.dirname(__file__) if "__file__" in globals() else None,
+        os.path.dirname(sys.argv[0]),
+        os.path.dirname(sys.executable),
+    ]
+    for d in search:
+        if d:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def _find_manga_ocr_python():
+    """Env chạy OCR ảnh — ưu tiên override OCR riêng, rồi voxcpm_env (đã có torch)."""
+    ov = globals().get("MANGA_OCR_ENV_OVERRIDE", "")
+    if ov and os.path.isfile(ov):
+        return ov
+    return _find_voxcpm_python(globals().get("voxcpm_ckpt_var").get()
+                               if globals().get("voxcpm_ckpt_var") else "")
+
+
+def _manga_tr_wrap_text(draw, text, font, max_w):
+    """Ngắt dòng theo chiều rộng tối đa (PIL). Trả về list dòng."""
+    words = text.split()
+    if not words:
+        return [""]
+    lines, cur = [], words[0]
+    for w in words[1:]:
+        trial = cur + " " + w
+        if draw.textlength(trial, font=font) <= max_w:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    lines.append(cur)
+    return lines
+
+
+def _manga_tr_fit_font(draw, text, font_path, box_w, box_h):
+    """Chọn cỡ font lớn nhất để text vừa trong (box_w, box_h). Trả về (font, lines)."""
+    from PIL import ImageFont
+    pad = 6
+    avail_w = max(10, box_w - 2 * pad)
+    avail_h = max(10, box_h - 2 * pad)
+    size = max(10, min(int(box_h * 0.8), 48))
+    while size >= 9:
+        try:
+            font = ImageFont.truetype(font_path, size)
+        except Exception:
+            font = ImageFont.load_default()
+            return font, _manga_tr_wrap_text(draw, text, font, avail_w)
+        lines = _manga_tr_wrap_text(draw, text, font, avail_w)
+        line_h = size + 4
+        total_h = line_h * len(lines)
+        widest = max((draw.textlength(ln, font=font) for ln in lines), default=0)
+        if total_h <= avail_h and widest <= avail_w:
+            return font, lines
+        size -= 2
+    return font, lines  # nhỏ nhất rồi vẫn dùng (sẽ tràn nhẹ)
+
+
+def _manga_tr_render_page(img_path, blocks, translations, out_path, font_path, log_cb):
+    """Đè ô trắng + chữ Việt vào từng khối → lưu out_path."""
+    from PIL import Image, ImageDraw, ImageFont
+    try:
+        from PIL import ImageFile as _IF
+        _IF.LOAD_TRUNCATED_IMAGES = True
+    except Exception:
+        pass
+    try:
+        im = Image.open(img_path)
+        im.load()
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        draw = ImageDraw.Draw(im)
+        for blk, vi in zip(blocks, translations):
+            vi = (vi or "").strip()
+            if not vi:
+                continue
+            x1, y1, x2, y2 = blk["box"]
+            bw, bh = max(8, x2 - x1), max(8, y2 - y1)
+            # Ô trắng phủ chữ gốc (nới nhẹ ra ngoài cho kín)
+            mx, my = 3, 3
+            draw.rectangle([x1 - mx, y1 - my, x2 + mx, y2 + my],
+                           fill=(255, 255, 255), outline=(210, 210, 210))
+            if font_path:
+                font, lines = _manga_tr_fit_font(draw, vi, font_path, bw, bh)
+            else:
+                font = ImageFont.load_default()
+                lines = _manga_tr_wrap_text(draw, vi, font, bw - 8)
+            try:
+                size = font.size
+            except Exception:
+                size = 14
+            line_h = size + 4
+            total_h = line_h * len(lines)
+            ty = y1 + max(0, (bh - total_h) // 2)
+            for ln in lines:
+                lw = draw.textlength(ln, font=font)
+                tx = x1 + max(0, (bw - lw) // 2)
+                draw.text((tx, ty), ln, fill=(15, 15, 15), font=font)
+                ty += line_h
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        im.save(out_path)
+        return True
+    except Exception as e:
+        log_cb(f"   ⚠ Lỗi ghi chữ ảnh {os.path.basename(img_path)}: {e}")
+        return False
+
+
+def _manga_tr_collect_images(src):
+    """Nguồn dịch = thư mục ảnh, hoặc thư mục chứa nhiều thư mục chương.
+    Trả về list (nhãn_chương, [ảnh...]) giữ nguyên thứ tự."""
+    src = src.strip().strip('"')
+    if not src or not os.path.isdir(src):
+        return []
+    direct = _manga_imgs_from_dir(src)
+    if direct:
+        return [(os.path.basename(src.rstrip("\\/")) or "truyen", direct)]
+    # không có ảnh trực tiếp → coi mỗi thư mục con là 1 chương
+    out = []
+    for name in sorted(os.listdir(src), key=_manga_natkey):
+        sub = os.path.join(src, name)
+        if os.path.isdir(sub):
+            imgs = _manga_imgs_from_dir(sub)
+            if imgs:
+                out.append((name, imgs))
+    return out
+
+
+def _manga_tr_set_running(on):
+    try:
+        btn_manga_tr.configure(state="disabled" if on else "normal")
+        btn_manga_stop.configure(state="normal" if on else "disabled")
+    except Exception:
+        pass
+
+
+def _manga_translate_start():
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
+        log("⚠ Đang có tác vụ truyện chạy, đợi xong đã.")
+        return
+    src = manga_tr_src_var.get().strip()
+    chapters = _manga_tr_collect_images(src)
+    if not chapters:
+        log("❌ Nguồn dịch trống — chọn thư mục ảnh truyện (hoặc thư mục chứa các chương).")
+        return
+    # Preflight: helper + env OCR
+    helper = _find_manga_ocr_helper()
+    if not helper:
+        log("❌ Không tìm thấy manga_ocr_helper.py (cạnh app/exe).")
+        return
+    ocr_py = _find_manga_ocr_python()
+    if not ocr_py:
+        log("❌ Không tìm thấy python có torch để OCR (voxcpm_env). "
+            "Đặt voxcpm_env cạnh app, hoặc khai báo ở ⚙ Cài đặt.")
+        return
+    # Preflight engine dịch (online cần key; offline cần model — báo sớm)
+    if (TRANSLATE_PROVIDER or "") != "Offline":
+        try:
+            _translate_active_key()
+        except Exception as e:
+            log(f"❌ {e}")
+            return
+    lang = _MANGA_OCR_LANG_LABELS.get(manga_tr_lang_var.get(), "en")
+    out_fmt = manga_tr_fmt_var.get()
+    write_script = bool(manga_tr_script_var.get())
+    global TRANSLATE_STOP, TRANSLATE_PAUSED
+    TRANSLATE_STOP = False
+    TRANSLATE_PAUSED = False
+    _MANGA_STOP[0] = False
+    _MANGA_TR_RUNNING[0] = True
+    _manga_tr_set_running(True)
+    log_color(f"🌐 Dịch truyện ({manga_tr_lang_var.get()} → Tiếng Việt) "
+              f"bằng {TRANSLATE_PROVIDER or 'Claude'} — {len(chapters)} chương", "#7ec8ff")
+    threading.Thread(
+        target=_manga_translate_worker,
+        args=(chapters, lang, out_fmt, write_script, helper, ocr_py, src),
+        daemon=True).start()
+
+
+def _manga_tr_ocr_chapter(helper, ocr_py, imgs, lang, log_cb):
+    """Chạy manga_ocr_helper cho 1 chương → list pages (dict). None nếu lỗi/dừng."""
+    import tempfile
+    td = tempfile.mkdtemp(prefix="mocr_")
+    in_json = os.path.join(td, "imgs.json")
+    out_json = os.path.join(td, "out.json")
+    try:
+        with open(in_json, "w", encoding="utf-8") as f:
+            json.dump(imgs, f, ensure_ascii=False)
+        cmd = [ocr_py, helper, "--images-json", in_json, "--out-json", out_json,
+               "--lang", lang, "--device", "auto"]
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+        _MANGA_TR_PROC[0] = proc
+        for line in proc.stdout:
+            line = line.rstrip()
+            if not line:
+                continue
+            if line.startswith("PROGRESS:"):
+                try:
+                    _, d, t = line.split(":")
+                    update_progress(int(d), int(t))
+                except Exception:
+                    pass
+            elif line.startswith("PROGRESS_MSG:"):
+                log_cb(f"   ℹ {line.split(':', 1)[1]}")
+            elif line.startswith("WARN:"):
+                log_cb(f"   ⚠ {line.split(':', 1)[1]}")
+            elif line.startswith("ERROR:"):
+                log_cb(f"   ❌ OCR: {line.split(':', 1)[1]}")
+            elif line.startswith("DONE:"):
+                pass
+        proc.wait()
+        _MANGA_TR_PROC[0] = None
+        if _MANGA_STOP[0]:
+            return None
+        if proc.returncode not in (0, None) or not os.path.isfile(out_json):
+            return None
+        with open(out_json, "r", encoding="utf-8") as f:
+            return json.load(f).get("pages", [])
+    except Exception as e:
+        log_cb(f"   ❌ Lỗi OCR chương: {e}")
+        return None
+    finally:
+        _MANGA_TR_PROC[0] = None
+        try:
+            import shutil as _sh
+            _sh.rmtree(td, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _manga_translate_worker(chapters, lang, out_fmt, write_script, helper, ocr_py, root):
+    def log_cb(m):
+        app.after(0, lambda: log(m))
+
+    font_path = _find_unicode_font()
+    if not font_path:
+        log_cb("⚠ Không thấy font Unicode — chữ Việt có thể thiếu dấu.")
+    out_root = manga_tr_out_var.get().strip() or os.path.join(root, "_vi")
+    done_ch = 0
+    try:
+        for ch_name, imgs in chapters:
+            if _MANGA_STOP[0]:
+                break
+            log_color(f"📖 Chương: {ch_name} ({len(imgs)} trang)", "#9ad27e")
+            pages = _manga_tr_ocr_chapter(helper, ocr_py, imgs, lang, log_cb)
+            if _MANGA_STOP[0]:
+                break
+            if pages is None:
+                log_cb(f"   ❌ Bỏ qua chương {ch_name} (OCR lỗi).")
+                continue
+            # Gom toàn bộ text của chương → dịch 1 lần (giữ ngữ cảnh, ít gọi API)
+            flat, index = [], []   # index[k] = (page_i, block_i)
+            for pi, pg in enumerate(pages):
+                for bi, blk in enumerate(pg.get("blocks", [])):
+                    flat.append(blk["text"])
+                    index.append((pi, bi))
+            if not flat:
+                log_cb(f"   ⚠ Không OCR ra chữ nào ở chương {ch_name}.")
+                continue
+            log_cb(f"   🌐 Dịch {len(flat)} cụm thoại...")
+            translated = _translate_segments(
+                flat, _translate_default_context(),
+                progress_cb=lambda d, t: update_progress(d, t), log_cb=log_cb)
+            if _MANGA_STOP[0]:
+                break
+            # map kết quả về từng trang
+            per_page = {}
+            for k, (pi, bi) in enumerate(index):
+                per_page.setdefault(pi, []).append(translated[k])
+            ch_out_dir = os.path.join(out_root, ch_name)
+            out_imgs = []
+            for pi, pg in enumerate(pages):
+                if _MANGA_STOP[0]:
+                    break
+                blocks = pg.get("blocks", [])
+                vis = per_page.get(pi, [])
+                base = os.path.basename(pg["image"])
+                op = os.path.join(ch_out_dir, base)
+                if _manga_tr_render_page(pg["image"], blocks, vis, op,
+                                         font_path, log_cb):
+                    out_imgs.append(op)
+            # file script đối chiếu
+            if write_script and flat:
+                try:
+                    sp = os.path.join(ch_out_dir, "_script_dich.txt")
+                    os.makedirs(ch_out_dir, exist_ok=True)
+                    with open(sp, "w", encoding="utf-8") as f:
+                        for k, (pi, bi) in enumerate(index):
+                            f.write(f"[Trang {pi+1}] {flat[k]}\n   → {translated[k]}\n\n")
+                    log_cb(f"   📝 Script: {sp}")
+                except Exception as e:
+                    log_cb(f"   ⚠ Lỗi ghi script: {e}")
+            # đóng gói PDF/CBZ nếu chọn
+            if out_imgs and out_fmt == "PDF mỗi chương":
+                _manga_imgs_to_pdf(out_imgs, ch_out_dir + ".pdf", log_cb)
+            elif out_imgs and out_fmt == "CBZ mỗi chương":
+                _manga_imgs_to_cbz(out_imgs, ch_out_dir + ".cbz", log_cb)
+            done_ch += 1
+            log_color(f"   ✅ Xong chương {ch_name} → {ch_out_dir}", "#9ad27e")
+        if _MANGA_STOP[0]:
+            log_color(f"⏹ Đã dừng. Dịch xong {done_ch} chương.", "#ffcf6e")
+        else:
+            log_color(f"🎉 Dịch truyện hoàn tất: {done_ch} chương → {out_root}", "#9ad27e")
+            app.after(0, show_fireworks)
+            try:
+                app.after(0, lambda: os.startfile(out_root)
+                          if os.path.isdir(out_root) else None)
+            except Exception:
+                pass
+    except Exception as e:
+        log_cb(f"❌ Lỗi dịch truyện: {e}")
+    finally:
+        _MANGA_TR_RUNNING[0] = False
+        _MANGA_TR_PROC[0] = None
+        app.after(0, lambda: _manga_tr_set_running(False))
+        app.after(0, lambda: update_progress(0, 1))
+
+
 # --- UI trang "Tải truyện" ---
 manga_url_var = ctk.StringVar()
 manga_chap_var = ctk.StringVar()
@@ -6924,6 +7274,11 @@ manga_cookies_var = ctk.StringVar(value="(Không)")
 manga_conv_src_var = ctk.StringVar()
 manga_conv_out_var = ctk.StringVar()
 manga_conv_fmt_var = ctk.StringVar(value="PDF")
+manga_tr_src_var = ctk.StringVar()
+manga_tr_out_var = ctk.StringVar()
+manga_tr_lang_var = ctk.StringVar(value="Tiếng Anh")
+manga_tr_fmt_var = ctk.StringVar(value="Ảnh (thư mục)")
+manga_tr_script_var = ctk.BooleanVar(value=True)
 
 _sec_manga = _make_section(
     "Tải truyện Webtoon", "Tải chương / cả bộ về máy đọc offline · truyenqq + tự nhận diện trang khác",
@@ -7043,6 +7398,65 @@ ctk.CTkLabel(
     _sec_mconv,
     text="ℹ Nguồn PDF: lấy ảnh nhúng trong từng trang (hợp với truyện PDF mỗi trang 1 ảnh). "
          "Dùng nút ⏹ Dừng ở phần trên để hủy.",
+    font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
+    wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
+
+# ── Card: Dịch truyện nước ngoài → Tiếng Việt (OCR → dịch → ghi chữ lên ảnh) ───
+_sec_mtr = _make_section(
+    "Dịch truyện → Tiếng Việt",
+    "OCR chữ trong ảnh → dịch → ghi chữ Việt đè lên ảnh · dùng lại engine dịch đang chọn",
+    "#d0a06a", ws="manga")
+
+_mt_r1 = _sec_row(_sec_mtr)
+ctk.CTkLabel(_mt_r1, text="Nguồn:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_mt_r1, textvariable=manga_tr_src_var,
+             placeholder_text="Thư mục ảnh truyện (hoặc thư mục chứa nhiều chương)"
+             ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_mt_r1, text="📁 Thư mục", width=100,
+              command=lambda: (lambda d: manga_tr_src_var.set(d) if d else None)(
+                  filedialog.askdirectory(title="Chọn thư mục ảnh truyện cần dịch"))
+              ).pack(side="left", padx=2)
+
+_mt_r2 = _sec_row(_sec_mtr)
+ctk.CTkLabel(_mt_r2, text="Tiếng gốc:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkOptionMenu(_mt_r2, variable=manga_tr_lang_var, width=170,
+                  values=["Tiếng Anh", "Tiếng Trung (giản thể)",
+                          "Tiếng Trung (phồn thể)", "Tiếng Nhật", "Tiếng Hàn"]
+                  ).pack(side="left", padx=4)
+ctk.CTkLabel(_mt_r2, text="Đóng gói:", font=("Arial", 12),
+             anchor="w").pack(side="left", padx=(12, 4))
+ctk.CTkOptionMenu(_mt_r2, variable=manga_tr_fmt_var, width=160,
+                  values=["Ảnh (thư mục)", "PDF mỗi chương", "CBZ mỗi chương"]
+                  ).pack(side="left", padx=4)
+ctk.CTkCheckBox(_mt_r2, variable=manga_tr_script_var, text="Xuất file script",
+                font=("Arial", 11)).pack(side="left", padx=(12, 4))
+
+_mt_r3 = _sec_row(_sec_mtr)
+ctk.CTkLabel(_mt_r3, text="Lưu vào:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_mt_r3, textvariable=manga_tr_out_var,
+             placeholder_text="rỗng = <thư mục nguồn>\\_vi").pack(
+    side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_mt_r3, text="Browse", width=80,
+              command=lambda: (lambda d: manga_tr_out_var.set(d) if d else None)(
+                  filedialog.askdirectory(title="Chọn thư mục lưu truyện đã dịch"))
+              ).pack(side="left", padx=4)
+
+_mt_r4 = _sec_row(_sec_mtr)
+btn_manga_tr = ctk.CTkButton(_mt_r4, text="🌐 Dịch truyện sang Tiếng Việt", height=38,
+                             fg_color="#c2843a", hover_color="#d99a4a",
+                             font=("Arial", 13, "bold"),
+                             command=lambda: _manga_translate_start())
+btn_manga_tr.pack(side="left", expand=True, fill="x", padx=4, pady=6)
+
+ctk.CTkLabel(
+    _sec_mtr,
+    text="ℹ Engine dịch dùng theo dropdown ở trang Dịch (Claude/Gemini/OpenAI/Offline). "
+         "OCR cần EasyOCR trong voxcpm_env:  voxcpm_env\\Scripts\\python.exe -m pip install easyocr "
+         "(lần đầu sẽ tự tải model). Dùng nút ⏹ Dừng ở phần trên để hủy. "
+         "OCR/typeset có thể lệch ở bong bóng phức tạp — bật 'Xuất file script' để đối chiếu/sửa.",
     font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
     wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
 
@@ -11126,8 +11540,8 @@ async def _generate_pdf_tts():
 
         # ♻ đoạn trùng → copy audio đã pass QC, khỏi gọi API (trừ khi RVC bật)
         if not RVC_ENABLED:
-            _cf = _TTS_CACHE.get(_tts_cache_key(text))
-            if _cf and os.path.isfile(_cf):
+            _cf = _tts_cache_get(text)
+            if _cf:
                 try:
                     shutil.copy2(_cf, filename)
                     log(f"♻ [PDF] OK {current_index} (đoạn trùng — dùng lại audio)")
@@ -11176,7 +11590,7 @@ async def _generate_pdf_tts():
             log(f"[PDF] OK {current_index}")
             _BATCH_STATS["gen"] += 1
             if not RVC_ENABLED:
-                _TTS_CACHE[_tts_cache_key(text)] = filename
+                _tts_cache_put(text, filename)
             if RVC_ENABLED and os.path.exists(filename):
                 try:
                     log(f"  RVC convert {current_index}...")
@@ -12227,12 +12641,93 @@ _TTS_PARALLEL_N = 4
 # file đã gen + pass QC thay vì gọi API lần nữa — nhanh hơn và tiết kiệm quota.
 # KHÔNG dùng khi RVC bật (file bị convert in-place sau QC → copy sẽ dính double
 # convert). Entry chỉ được ghi sau khi audio pass QC; path chết được isfile-guard.
+#
+# Cache BỀN qua phiên: ngoài dict RAM, mỗi entry còn được copy vào
+# <_CONFIG_DIR>/tts_cache/<key>.mp3 — nên phim BỘ tái dùng câu trùng giữa các TẬP
+# (qua nhiều lần mở app), không chỉ trong 1 batch. Disk cache bị giới hạn dung
+# lượng (_TTS_CACHE_MAX_MB) bằng prune theo mtime cũ nhất, chạy 1 lần khi resolve
+# thư mục. Toàn bộ I/O bọc try/except — lỗi cache không bao giờ chặn TTS.
 _TTS_CACHE = {}
+_TTS_CACHE_MAX_MB = 2048          # trần dung lượng disk cache (~2 GB)
+_TTS_CACHE_DIR_CACHED = [None]    # None=chưa thử, ""=thử & thất bại, str=ok
 
 def _tts_cache_key(text):
     base = "|".join((TTS_PROVIDER, VOICE, _edge_rate(), _edge_pitch(),
                      _apply_glossary(text)))
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
+
+def _tts_cache_dir():
+    """Thư mục disk cache (lazy-create dưới _CONFIG_DIR); None nếu không dùng được."""
+    d = _TTS_CACHE_DIR_CACHED[0]
+    if d is not None:
+        return d or None
+    try:
+        path = os.path.join(os.path.dirname(_SETTINGS_FILE), "tts_cache")
+        os.makedirs(path, exist_ok=True)
+        _TTS_CACHE_DIR_CACHED[0] = path
+        _tts_cache_prune(path)    # giữ dung lượng trong trần — chạy 1 lần
+        return path
+    except Exception:
+        _TTS_CACHE_DIR_CACHED[0] = ""
+        return None
+
+def _tts_cache_prune(path):
+    """Nếu vượt trần, xóa file cũ nhất (theo mtime) xuống còn ~75% trần."""
+    try:
+        files = []
+        total = 0
+        for n in os.listdir(path):
+            p = os.path.join(path, n)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            files.append((st.st_mtime, st.st_size, p))
+            total += st.st_size
+        cap = _TTS_CACHE_MAX_MB * 1024 * 1024
+        if total <= cap:
+            return
+        target = int(cap * 0.75)
+        for _mt, sz, p in sorted(files):       # cũ nhất trước
+            if total <= target:
+                break
+            try:
+                os.remove(p)
+                total -= sz
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+def _tts_cache_get(text):
+    """Path audio đã cache cho text (RAM trước rồi disk), đã xác minh tồn tại; hoặc None."""
+    key = _tts_cache_key(text)
+    f = _TTS_CACHE.get(key)
+    if f and os.path.isfile(f):
+        return f
+    try:
+        d = _tts_cache_dir()
+        if d:
+            p = os.path.join(d, key + ".mp3")
+            if os.path.isfile(p):
+                _TTS_CACHE[key] = p      # nạp lại vào RAM cho lần sau
+                return p
+    except Exception:
+        pass
+    return None
+
+def _tts_cache_put(text, filename):
+    """Lưu file vừa pass QC vào cache RAM + disk (bền qua phiên)."""
+    key = _tts_cache_key(text)
+    _TTS_CACHE[key] = filename
+    try:
+        d = _tts_cache_dir()
+        if d:
+            p = os.path.join(d, key + ".mp3")
+            if not os.path.isfile(p):
+                shutil.copy2(filename, p)
+    except Exception:
+        pass
 
 
 # ── Thống kê batch + ước phí + lịch sử tốc độ (các luồng provider) ────────────
@@ -12362,8 +12857,8 @@ async def _tts_par_one(idx, text, sem, state, dmin, dmax,
             return
         filename = os.path.join(OUTPUT_DIR, f"{prefix}{idx:04d}.mp3")
         # ♻ dòng trùng → copy audio đã pass QC, khỏi gọi API
-        _cf = _TTS_CACHE.get(_tts_cache_key(text))
-        if _cf and os.path.isfile(_cf):
+        _cf = _tts_cache_get(text)
+        if _cf:
             try:
                 shutil.copy2(_cf, filename)
                 log(f"♻ {label}OK {idx} (dòng trùng — dùng lại audio)")
@@ -12406,7 +12901,7 @@ async def _tts_par_one(idx, text, sem, state, dmin, dmax,
         if ok and not _bad:
             log(f"{label}OK {idx}")
             _BATCH_STATS["gen"] += 1
-            _TTS_CACHE[_tts_cache_key(text)] = filename
+            _tts_cache_put(text, filename)
         elif ok and _bad:
             _rename_bad_audio(filename, idx, _reason, _detail,
                               label.strip(" []") if label else "")
@@ -12602,8 +13097,8 @@ async def generate_tts():
 
         # ♻ dòng trùng → copy audio đã pass QC, khỏi gọi API (trừ khi RVC bật)
         if not RVC_ENABLED:
-            _cf = _TTS_CACHE.get(_tts_cache_key(text))
-            if _cf and os.path.isfile(_cf):
+            _cf = _tts_cache_get(text)
+            if _cf:
                 try:
                     shutil.copy2(_cf, filename)
                     log(f"♻ OK {current_index} (dòng trùng — dùng lại audio)")
@@ -12657,7 +13152,7 @@ async def generate_tts():
             log(f"OK {current_index}")
             _BATCH_STATS["gen"] += 1
             if not RVC_ENABLED:
-                _TTS_CACHE[_tts_cache_key(text)] = filename
+                _tts_cache_put(text, filename)
             if RVC_ENABLED and os.path.exists(filename):
                 try:
                     log(f"  RVC convert {current_index}...")
@@ -16879,6 +17374,137 @@ def run_multivoice_batch():
 
     threading.Thread(target=_run, daemon=True).start()
 
+
+# ── 🤖 Tự phân vai bằng LLM ───────────────────────────────────────────────────
+# Gửi toàn bộ SRT cho LLM (Claude/Gemini/OpenAI — dùng lại key dịch), nhờ nó nhận
+# diện nhân vật nào nói dòng nào rồi gán mỗi nhân vật một HỒ SƠ GIỌNG phù hợp từ
+# danh sách hiện có → tự sinh CASTING_RULES. Người dùng xem/sửa lại trước khi chạy.
+# Decoupled như nút dịch: tự khóa bằng _AUTOCAST_RUNNING, không đụng set_mode.
+_AUTOCAST_RUNNING = [False]
+_AUTOCAST_BATCH = 80
+
+def _autocast_build_rules(line_profiles, total):
+    """Gộp các dòng liên tiếp cùng hồ sơ thành luật {from,to,profile}.
+    Dòng không có hồ sơ → bỏ (dùng giọng UI hiện tại khi chạy)."""
+    rules = []
+    i = 0
+    while i < total:
+        prof = line_profiles.get(i)
+        if not prof:
+            i += 1
+            continue
+        j = i
+        while j + 1 < total and line_profiles.get(j + 1) == prof:
+            j += 1
+        rules.append({"from": i, "to": j, "profile": prof})
+        i = j + 1
+    return rules
+
+def _autocast_extract_json(raw):
+    """Trích object JSON đầu tiên trong text LLM trả về (bỏ rào ```json)."""
+    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    if not m:
+        raise ValueError("Không tìm thấy JSON trong kết quả LLM.")
+    return json.loads(m.group(0))
+
+_AUTOCAST_SYS = (
+    "Bạn là trợ lý phân vai lồng tiếng phim. Với một đoạn phụ đề (mỗi dòng có số "
+    "thứ tự dạng [n]), hãy xác định NHÂN VẬT đang nói ở mỗi dòng, rồi gán cho mỗi "
+    "nhân vật MỘT hồ sơ giọng phù hợp nhất chọn TRONG danh sách cho sẵn (suy luận "
+    "giới tính/độ tuổi từ tên hồ sơ). Chỉ trả về JSON thuần, không giải thích.")
+
+def _auto_cast_worker(provider, api_key, model, lines, profiles):
+    speakers = {}        # tên nhân vật → tên hồ sơ
+    line_profiles = {}   # idx → tên hồ sơ
+    total = len(lines)
+    try:
+        for start in range(0, total, _AUTOCAST_BATCH):
+            if not _AUTOCAST_RUNNING[0]:
+                break
+            chunk = lines[start:start + _AUTOCAST_BATCH]
+            numbered = "\n".join(
+                f"[{start + k}] {t}" for k, t in enumerate(chunk) if t)
+            known = json.dumps(speakers, ensure_ascii=False)
+            user = (
+                "Danh sách hồ sơ giọng (chỉ chọn trong danh sách này): "
+                + json.dumps(profiles, ensure_ascii=False) + "\n"
+                "Nhân vật đã gán giọng ở phần trước (GIỮ NGUYÊN, tái dùng): "
+                + known + "\n\nPhụ đề:\n" + numbered + "\n\n"
+                "Trả về JSON đúng định dạng:\n"
+                '{ "speakers": { "<tên nhân vật>": "<tên hồ sơ trong danh sách>" }, '
+                '"lines": { "<số dòng>": "<tên nhân vật>" } }\n'
+                '- "speakers" gồm mọi nhân vật xuất hiện ở đoạn này.\n'
+                '- "lines" gán mỗi số dòng cho đúng một tên nhân vật.\n'
+                '- Lời dẫn/độc thoại không rõ người nói → nhân vật "Người kể".')
+            try:
+                raw = _llm_call(provider, api_key, model, _AUTOCAST_SYS, user)
+                obj = _autocast_extract_json(raw)
+            except Exception as e:
+                log(f"🤖 ⚠ Bỏ qua đoạn dòng {start}: {e}")
+                continue
+            for name, prof in (obj.get("speakers") or {}).items():
+                if prof in profiles:
+                    speakers[name] = prof
+            for k, name in (obj.get("lines") or {}).items():
+                try:
+                    idx = int(k)
+                except (ValueError, TypeError):
+                    continue
+                prof = speakers.get(name)
+                if prof in profiles:
+                    line_profiles[idx] = prof
+            done = min(start + _AUTOCAST_BATCH, total)
+            update_progress(done, total)
+        rules = _autocast_build_rules(line_profiles, total)
+        n_sp = len(speakers)
+        n_ln = len(line_profiles)
+        app.after(0, lambda: _autocast_apply(rules, n_sp, n_ln))
+    except Exception as e:
+        app.after(0, lambda e=e: log(f"❌ Tự phân vai thất bại: {e}"))
+    finally:
+        _AUTOCAST_RUNNING[0] = False
+
+def _autocast_apply(rules, n_speakers, n_lines):
+    if not rules:
+        log("🤖 [Tự phân vai] LLM không gán được dòng nào cho hồ sơ hiện có. "
+            "Thử đặt tên hồ sơ gợi ý giới tính/tuổi (vd: nam_tre, nu_gia).")
+        return
+    CASTING_RULES.clear()
+    CASTING_RULES.extend(rules)
+    log(f"🤖 [Tự phân vai] Đã tạo {len(rules)} luật từ {n_speakers} nhân vật "
+        f"({n_lines} dòng được gán). Xem/sửa lại rồi bấm '🎬 Lưu & Chạy'.")
+    open_casting_dialog()
+
+def start_auto_cast():
+    """Khởi động tự phân vai (gọi từ nút trong dialog phân vai)."""
+    if _AUTOCAST_RUNNING[0] or _MULTIVOICE_RUNNING[0]:
+        log("[Tự phân vai] Đang chạy — vui lòng đợi xong.")
+        return
+    if not subtitles_cache:
+        load_subtitles(force_select=False)
+    if not subtitles_cache:
+        msg.showinfo("Tự phân vai", "Hãy Load SRT trước.")
+        return
+    profiles = sorted(_voice_profiles_load().keys())
+    if len(profiles) < 2:
+        msg.showinfo("Tự phân vai",
+                     "Cần ít nhất 2 hồ sơ giọng để phân vai. Tạo thêm ở tab "
+                     "Giọng nói → '💾 Lưu giọng hiện tại'.")
+        return
+    try:
+        provider, api_key, model = _translate_active_key()
+    except Exception as e:
+        msg.showerror("Tự phân vai", str(e))
+        return
+    lines = [clean_text(s.content) for s in subtitles_cache]
+    _AUTOCAST_RUNNING[0] = True
+    update_progress(0, len(lines))
+    log(f"🤖 [Tự phân vai] Phân tích {len(lines)} dòng bằng {provider} "
+        f"({model})... (có thể mất chút thời gian với SRT dài)")
+    threading.Thread(target=_auto_cast_worker,
+                     args=(provider, api_key, model, lines, profiles),
+                     daemon=True).start()
+
 def open_casting_dialog():
     """Cửa sổ quản lý luật phân vai: từ dòng – đến dòng – hồ sơ giọng."""
     if not subtitles_cache:
@@ -16936,6 +17562,12 @@ def open_casting_dialog():
     btn_row.pack(fill="x", padx=10, pady=(4, 8))
     ctk.CTkButton(btn_row, text="➕ Thêm luật", command=lambda: _add_rule_row(0, 0, profiles[0]),
                   width=120).pack(side="left", padx=4)
+
+    def _auto_cast_click():
+        win.destroy()
+        start_auto_cast()
+    ctk.CTkButton(btn_row, text="🤖 Tự phân vai (AI)", command=_auto_cast_click,
+                  fg_color="#7c5cff", hover_color="#8f72ff", width=160).pack(side="left", padx=4)
 
     def _save_rules():
         new_rules = []

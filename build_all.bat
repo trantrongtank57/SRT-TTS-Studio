@@ -52,6 +52,7 @@ if not exist "translate_helper.py"              ( echo   [!] Missing: translate_
 if not exist "vieneu_helper.py"                 ( echo   [!] Missing: vieneu_helper.py                 & set MISSING=1 )
 if not exist "f5tts_helper.py"                  ( echo   [!] Missing: f5tts_helper.py                  & set MISSING=1 )
 if not exist "omnivoice_helper.py"              ( echo   [!] Missing: omnivoice_helper.py              & set MISSING=1 )
+if not exist "manga_ocr_helper.py"              ( echo   [!] Missing: manga_ocr_helper.py              & set MISSING=1 )
 
 :: --- RVC model files ---
 if not exist "hubert_base.pt"                   ( echo   [!] Missing: hubert_base.pt                   & set MISSING=1 )
@@ -324,7 +325,7 @@ set DIST_DIR=dist\SRT_TTS_Studio
 set G6_FAIL=0
 
 :: Companion scripts — verify each landed in dist after copy
-for %%f in (rvc_helper.py voxcpm_helper.py whisper_stt.py audio_enhancer.py pdf_helper.py srt_align_helper.py videocr_helper.py video_stt_helper.py translate_helper.py vieneu_helper.py f5tts_helper.py omnivoice_helper.py) do (
+for %%f in (rvc_helper.py voxcpm_helper.py whisper_stt.py audio_enhancer.py pdf_helper.py srt_align_helper.py videocr_helper.py video_stt_helper.py translate_helper.py vieneu_helper.py f5tts_helper.py omnivoice_helper.py manga_ocr_helper.py) do (
     if exist "%%f" (
         copy /Y "%%f" "%DIST_DIR%\%%f" >nul
         if exist "%DIST_DIR%\%%f" ( echo   [OK] %%f ) else ( echo   [ERROR] copy failed: %%f & set G6_FAIL=1 )
@@ -509,7 +510,7 @@ if exist "dist\SRT_TTS_Studio_Trial.exe" (
 
 :: --- Companion scripts + models can cac onefile exe ---
 echo   Dong goi companion scripts + models vao output\Portable\...
-for %%f in (rvc_helper.py voxcpm_helper.py whisper_stt.py audio_enhancer.py pdf_helper.py srt_align_helper.py videocr_helper.py video_stt_helper.py translate_helper.py vieneu_helper.py f5tts_helper.py omnivoice_helper.py hubert_base.pt rmvpe.pt) do (
+for %%f in (rvc_helper.py voxcpm_helper.py whisper_stt.py audio_enhancer.py pdf_helper.py srt_align_helper.py videocr_helper.py video_stt_helper.py translate_helper.py vieneu_helper.py f5tts_helper.py omnivoice_helper.py manga_ocr_helper.py hubert_base.pt rmvpe.pt) do (
     if exist "%%f" copy /Y "%%f" "output\Portable\%%f" >nul
 )
 
