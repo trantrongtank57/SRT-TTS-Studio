@@ -129,6 +129,51 @@
 - [ ] Rút mạng rồi bấm ⏹ Dừng trong lúc đang chờ → dừng trong ~1 giây
 - [ ] Chế độ song song (Edge ×4) cũng tự hồi phục như tuần tự
 
+## M. Đợt 2026-07-02 (5): ASS/VTT + Script→Audio + Thu âm mic
+- [ ] **Load .ass**: Load SRT chọn file .ass (anime fansub) → log "🔄 Đã chuyển ... _conv.srt" → danh sách dòng hiện đúng, không còn tag {\\...}, chạy TTS bình thường
+- [ ] **Load .vtt** (YouTube xuất) → convert OK, timestamps đúng; file lỗi/rỗng → báo lỗi rõ, không crash
+- [ ] Trang Dịch → "Dịch SRT" chọn file .ass → convert rồi dịch, ra `_conv_vi.srt`
+- [ ] **🔊 Script → Audio**: sau khi Dịch truyện có `_script_dich.txt` → bấm nút trên card dịch truyện → chọn file → nhảy sang trang Tài liệu với các đoạn lời thoại → Đọc (TTS) + Merge ra file audio đọc truyện
+- [ ] File txt thường (không có dòng "→") → báo lỗi hướng dẫn, không nạp
+- [ ] **🎙 Thu âm**: panel VoxCPM/VieNeu/F5/Omni → nút 🎙 cạnh Browse → dialog liệt kê đúng micro của máy → Thu 15s (đếm ngược) → xong tự điền đường dẫn wav vào ô Audio mẫu → ▶ Nghe lại đúng giọng vừa thu
+- [ ] Bấm ⏹ Dừng giữa lúc thu (vd giây thứ 5) → file vẫn được lưu (~5s) và điền vào ô
+- [ ] Máy không có mic (rút hết) → báo "Không tìm thấy thiết bị thu âm", không crash
+
+## N. Đợt 2026-07-02 (6): Podcast + sidecar phân vai + phân vai lai
+- [ ] **🎙 Podcast**: tạo 2 hồ sơ giọng khác nhau + có API key dịch → trang Tài liệu → card Podcast → chọn 1 file docx/txt vài trang → Tạo Podcast → kịch bản `podcast_script.txt` xuất hiện trong `<file>_podcast\` → các lượt A/B được đọc bằng đúng 2 giọng → tự merge ra 1 file mp3, nghe như hội thoại
+- [ ] Bấm ⏹ giữa lúc đọc → dừng; chạy lại wizard cùng file → các lượt đã đọc được skip (resume)
+- [ ] Xong podcast → giọng đang cấu hình ở tab Giọng nói được trả về như trước khi chạy
+- [ ] Provider Offline / thiếu key / <2 hồ sơ → báo lỗi sớm, không chạy
+- [ ] Chọn file PDF làm nguồn → extract qua pdf_helper OK (cần python có pypdf)
+- [ ] **Sidecar phân vai**: gán vài luật trong 🎭 → 💾 Lưu → thấy `<srt>.cast.json` cạnh SRT → đóng app mở lại → Load đúng SRT đó → log "🎭 Đã nạp N luật..." → mở 🎭 thấy đủ luật
+- [ ] Xóa hết luật rồi Lưu → file sidecar bị xóa; Load SRT khác (không có sidecar) → luật trong RAM giữ nguyên
+- [ ] **Phân vai lai**: chạy 🚻 (video 2 giới) xong → chạy 🤖 Tự phân vai → log "🚻 Dùng N hint giới tính..." → nhân vật nam không bị gán hồ sơ giọng nữ; Load SRT khác → hint bị xóa (log 🤖 không nhắc hint)
+
+## O. Đợt 2026-07-02 (7): Tìm & thay + dòng lặp + Groq/DeepSeek
+- [ ] **🔁 Tìm & thay**: Load SRT → nút 🔁 (cột io) → nhập tìm/thay → Xem trước hiện đúng số dòng + ví dụ trước/sau → Thay & lưu → `_edit.srt` tự nạp lại
+- [ ] Các dòng bị đổi đã có audio → hỏi "Xóa audio N dòng..." → Yes → file mp3 các dòng đó bị xóa → 🧩 đọc lại đúng text mới
+- [ ] Tick Regex + pattern sai (vd `[`) → báo "❌ Regex lỗi", không crash; bỏ tick "Phân biệt HOA/thường" → khớp cả hoa lẫn thường
+- [ ] **Dòng lặp**: SRT có 3+ dòng giống hệt liên tiếp → 🩺 Khám báo "lặp giống hệt N dòng liên tiếp"; 🔧 Sửa SRT → log "Gộp N dòng lặp...", file `_fixed.srt` chỉ còn 1 dòng với khe kéo dài; 2 dòng lặp (chủ ý kịch) → không đụng
+- [ ] **Groq/DeepSeek**: ⚙ Cài đặt có 2 ô key mới (che *) → nhập key Groq → trang Dịch chọn provider Groq → dịch 1 SRT ngắn OK; DeepSeek tương tự; đổi model qua dropdown "Groq — llama-3.1-8b-instant" cũng chạy
+- [ ] Chọn Groq nhưng chưa nhập key → báo "Chưa nhập API key cho Groq" sớm
+- [ ] Các tính năng LLM khác (✂ Rút gọn AI, 🤖 Tự phân vai, 🎙 Podcast) chạy được với provider Groq/DeepSeek
+
+## P. Đợt 2026-07-02 (8): Việc cần làm + m4b + tooltip
+- [ ] **📋 Việc cần làm**: sau 1 batch có FAIL/dòng lỗi → log có dòng 💡 → bấm nút 📋 (đầu cột io) → dialog liệt kê đúng: dòng lỗi QC (kèm loại), dòng thiếu, dòng tràn khe — bấm nút từng mục chạy đúng chức năng
+- [ ] Output sạch (không lỗi gì) → panel hiện "✅ Sạch sẽ!"
+- [ ] **Tooltip**: rê chuột đứng yên ~0.5s trên 🩺/🔧/✂/🎲/📋... → hiện chú thích; rời chuột/bấm → biến mất; hover color của nút vẫn hoạt động
+- [ ] **📚 m4b**: Load Word/EPUB có heading "Chương 1/2/3..." → TTS → tick "Xuất .m4b có chương" → Merge Audio → ngoài mp3 có thêm `.m4b`; mở bằng player (VLC/Apple Books) → tua theo đúng chương
+- [ ] Tài liệu không có heading → m4b vẫn ra với 1 chương "Mở đầu"
+- [ ] Bỏ tick m4b → chỉ ra mp3 như cũ; m4b lỗi (thiếu codec) → log ⚠ nhưng mp3 vẫn nguyên
+
+## Q. Đợt 2026-07-02 (9): Bảng phụ đề + đọc theo đoạn + webhook
+- [ ] **📝 Bảng phụ đề**: Load SRT (có vài dòng lỗi lint + vài dòng đã có audio) → nút 📝 → bảng hiện đủ dòng, cột TT có ❌/⚠/✅/🔴 đúng; SRT >1000 dòng cuộn mượt
+- [ ] Chọn dòng → sửa text ở ô dưới → ✏ Cập nhật → cột TT thêm ✏; ▶ Nghe phát đúng audio dòng; 🔁 Đọc lại → audio mới theo text vừa sửa
+- [ ] 💾 Lưu file → `_edit.srt` tự nạp lại; các dòng sửa-chưa-regen được hỏi xóa audio; Đóng không lưu → SRT gốc nguyên vẹn
+- [ ] **📖 Từ đoạn/đến**: Load Word dài → "Từ đoạn 10 đến 20" → Đọc (TTS) → chỉ ra `pdf_line_0010..0020`; log có dòng 📖; rỗng → đọc tất cả; nhập ngược (20→10) tự đảo
+- [ ] Range cũng áp cho engine local (VoxCPM/VieNeu/F5/Omni đọc PDF)
+- [ ] **📨 Webhook**: dán URL webhook Discord vào ⚙ Cài đặt → chạy 1 batch xong → tin nhắn hiện trong kênh Discord (kèm số dòng/FAIL); xóa URL → không gửi nữa; URL sai → không crash, không chậm app
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

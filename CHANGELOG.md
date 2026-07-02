@@ -26,7 +26,46 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 - **⚠ Cảnh báo giọng lệch ngôn ngữ** — Load SRT tiếng Anh khi đang chọn giọng tiếng Việt
   (hoặc ngược lại) sẽ được nhắc ngay, khỏi chạy cả nghìn dòng mới phát hiện.
 
+- **Hỗ trợ phụ đề .ass / .ssa / .vtt** — Load SRT và Dịch SRT giờ nhận cả phụ đề anime/fansub
+  (.ass) và YouTube (.vtt): tự chuyển sang SRT (bỏ tag định dạng) rồi chạy như thường.
+- **🔊 Truyện tranh → truyện audio** — nút mới trên card Dịch truyện: nạp file script dịch
+  (`_script_dich.txt`) vào pipeline Tài liệu → Audio, ra file đọc truyện chỉ với vài click.
+- **🎙 Thu âm giọng mẫu ngay trong app** — nút 🎙 cạnh ô Audio mẫu của cả 4 engine nhân bản
+  giọng: chọn micro, thu 3–120 giây (dừng sớm vẫn giữ phần đã thu), tự điền vào ô và nghe lại.
+
+- **🎙 Podcast 2 giọng từ tài liệu (AI)** — kiểu NotebookLM: PDF/Word/EPUB/TXT → AI viết
+  kịch bản hội thoại MC + chuyên gia → đọc bằng 2 hồ sơ giọng → tự ghép thành 1 file podcast.
+  Kịch bản lưu .txt để xem/sửa; chạy lại là resume.
+
+- **🔁 Tìm & thay trong SRT** — sửa hàng loạt (thường/regex, phân biệt hoa-thường), xem trước
+  số dòng khớp, lưu `_edit.srt` và mời xóa audio các dòng bị đổi để đọc lại — sửa tên nhân vật
+  dịch sai cả tập phim trong một phút.
+- **Nhà cung cấp dịch giá rẻ: Groq & DeepSeek** — thêm 2 provider mới cho mọi tính năng LLM
+  (dịch, rút gọn, phân vai AI, podcast); chi phí thấp hơn ~10–20 lần, Groq có gói miễn phí.
+
+- **📋 Việc cần làm** — một bảng gộp mọi vấn đề còn tồn sau batch (dòng audio lỗi, dòng thiếu,
+  dòng tràn khe) kèm nút xử lý ngay từng mục — khỏi phải nhớ 4 nút rời.
+- **📚 Audiobook .m4b có chương** — Merge Audio (Tài liệu) có tùy chọn xuất thêm file .m4b
+  với mốc chương tự nhận từ heading "Chương N…" — tua theo chương trên mọi player.
+
+- **📝 Bảng phụ đề (sửa nhanh)** — toàn bộ SRT trong một cửa sổ dạng bảng: trạng thái từng
+  dòng (lỗi timing, audio lỗi, đã có audio), sửa text, nghe, đọc lại từng dòng — không phải
+  nhớ số dòng và bấm qua lại nhiều nút nữa.
+- **📨 Webhook báo xong** — dán URL Discord/Telegram vào Cài đặt, mỗi job hoàn tất app tự
+  nhắn (kèm số dòng, số FAIL) — batch qua đêm khỏi ngồi canh máy.
+
 ### Cải tiến
+- **📖 Đọc từ đoạn X đến Y** (Tài liệu → Audio) — đọc riêng một chương của tài liệu dài
+  không cần cắt file, áp dụng cho mọi engine.
+- **💬 Chú thích nút (tooltip)** — rê chuột lên các nút chính sẽ hiện giải thích ngắn,
+  người mới không phải đoán nghĩa các nút emoji.
+- **🩺 Khám SRT / 🔧 Sửa SRT bắt dòng lặp** — phát hiện và tự gộp các cụm ≥3 dòng giống hệt
+  liên tiếp (lỗi ảo giác của nhận dạng giọng nói) — hết cảnh TTS đọc lặp một câu 5 lần.
+- **🎭 Luật phân vai được lưu kèm SRT** (`<tên>.cast.json`) — đóng app mở lại, Load đúng SRT
+  là luật tự nạp về, công gán vai không mất.
+- **Phân vai lai 🚻+🤖** — chạy 🚻 (đo giọng nam/nữ từ âm thanh) trước rồi 🤖 Tự phân vai:
+  AI tách nhân vật theo lời thoại nhưng bám giới tính đo được → nhân vật nam không còn bị
+  gán nhầm giọng nữ.
 - **✂ Rút gọn AI** giờ hỏi phạm vi: chỉ dòng ❌ tràn khe, hoặc gồm cả dòng ⚠ hơi hẹp —
   chọn "Có" thì mọi dòng đọc ở tốc độ tự nhiên 1.0×, không dòng nào bị tăng tốc khi merge.
 - **Merge timeline**: fade 30ms đầu/cuối từng dòng — hết tiếng "click/tạch" ở điểm nối
