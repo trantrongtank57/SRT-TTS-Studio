@@ -3,6 +3,44 @@
 Tất cả thay đổi đáng chú ý của phần mềm được ghi lại trong tệp này.
 Định dạng dựa trên [Keep a Changelog](https://keepachangelog.com/vi/1.0.0/).
 
+## [Chưa phát hành]
+
+### Thêm mới
+- **🎼 Tách nhạc nền khi ghép video (demucs)** — checkbox mới ở Mux (hiện khi "Giữ audio gốc"):
+  bỏ hẳn lời thoại gốc, mix **nhạc nền sạch + giọng lồng tiếng** thay cho ducking —
+  chất lượng "phim chiếu rạp". Tự fallback về ducking nếu máy thiếu voxcpm_env/model.
+  Trợ lý lồng tiếng tự động dùng chung lựa chọn này.
+- **⏸ Nghỉ giữa đoạn khi Merge Audio (Doc/PDF TTS)** — ô "Nghỉ giữa đoạn (ms)" (mặc định 300):
+  chèn khoảng lặng giữa các đoạn để truyện audio nghe có nhịp thở tự nhiên; 0 = tắt.
+
+- **🔍 Dub thử 60 giây đầu** — nút mới trong Trợ lý lồng tiếng: cắt 60s đầu video, chạy đủ
+  5 bước trên clip rồi tự mở xem — duyệt giọng đọc/bản dịch/mix trước khi chạy full hàng giờ.
+- **🎲 Gen 3 take, chọn bản ưng** — nút mới ở trang SRT: sinh 3 bản đọc khác nhau cho 1 dòng
+  (TTS mỗi lần đọc một kiểu), nghe A/B/C rồi chọn; đóng không chọn thì bản cũ được khôi phục.
+
+- **📶 Tự hồi phục khi rớt mạng giữa batch** — mất mạng lúc đang đọc (Edge/provider online)
+  không còn dừng hẳn: phần mềm tự chờ mạng quay lại (tối đa 30 phút) rồi đọc tiếp —
+  batch qua đêm / hàng đợi / watch folder sống sót qua các cú rớt mạng ngắn.
+- **Đọc teencode/viết tắt chat** — "ko, dc, vs, mn, tks…" được đọc thành từ đầy đủ
+  (chỉ từ viết thường nguyên chữ — "BT", "VS Code", "100k" không bị đụng; tắt được).
+- **⚠ Cảnh báo giọng lệch ngôn ngữ** — Load SRT tiếng Anh khi đang chọn giọng tiếng Việt
+  (hoặc ngược lại) sẽ được nhắc ngay, khỏi chạy cả nghìn dòng mới phát hiện.
+
+### Cải tiến
+- **✂ Rút gọn AI** giờ hỏi phạm vi: chỉ dòng ❌ tràn khe, hoặc gồm cả dòng ⚠ hơi hẹp —
+  chọn "Có" thì mọi dòng đọc ở tốc độ tự nhiên 1.0×, không dòng nào bị tăng tốc khi merge.
+- **Merge timeline**: fade 30ms đầu/cuối từng dòng — hết tiếng "click/tạch" ở điểm nối
+  giữa các câu sát nhau.
+- **✂ Rút gọn AI (dòng tràn khe)** — nút mới ở trang SRT: dùng LLM dịch (Claude/Gemini/OpenAI)
+  viết lại NGẮN HƠN các dòng phụ đề tràn khe thời gian (dài hơn khe dù merge tăng tốc 2×
+  — nhóm lỗi mà 🔧 Sửa SRT tự động không xử lý được), giữ nguyên nghĩa và ngôn ngữ,
+  xuất `<tên>_ai.srt` và tự nạp lại.
+- **🚻 Phân vai Nam/Nữ theo âm thanh gốc** — nút mới trong bảng 🎭 Phân vai: đo cao độ giọng
+  (F0) từng dòng trên audio gốc của video theo timestamp SRT, phân cụm tương đối trong chính
+  video (cụm thấp = nam, cao = nữ) rồi tự gán 2 hồ sơ giọng nam/nữ thành luật phân vai —
+  không cần API key, không thêm thư viện. Dòng sát biên kế thừa vai dòng trước; video chỉ có
+  một giọng sẽ được báo thay vì gán bừa.
+
 ## [1.0.0] — 2026-06-23
 
 Bản phát hành đầu tiên. Phần mềm chuyển phụ đề SRT / PDF / Word / TXT thành giọng đọc (TTS),

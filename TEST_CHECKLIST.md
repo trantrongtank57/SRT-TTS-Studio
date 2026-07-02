@@ -96,6 +96,39 @@
 - [ ] CHƯA cài easyocr → log ❌ `pip install easyocr`, không treo, các nút khác vẫn chạy
 - [ ] Provider online thiếu API key → báo lỗi sớm trước khi chạy OCR
 
+## I. Đợt 2026-07-02: Rút gọn AI + Phân vai Nam/Nữ theo âm thanh
+- [ ] **✂ Rút gọn AI (dòng tràn khe)**: Load SRT có dòng ❌ "tràn khe" (🩺 Khám SRT thấy) + có API key dịch → bấm ✂ → ra `<tên>_ai.srt` tự nạp lại → 🩺 Khám lại: số dòng ❌ giảm; nội dung dòng được viết ngắn hơn giữ nghĩa
+- [ ] SRT không có dòng tràn khe → bấm ✂ → log "✅ Không có dòng nào tràn khe", không tạo file
+- [ ] Provider dịch = Offline → bấm ✂ → log ❌ hướng dẫn chọn Claude/Gemini/OpenAI, không chạy
+- [ ] Thiếu API key → báo lỗi sớm, không tạo file
+- [ ] **🚻 Phân vai Nam/Nữ theo âm thanh**: tạo 2 hồ sơ giọng (vd `nam_tre`, `nu_tre`) → Load SRT khớp video có cả giọng nam + nữ → 🎭 Phân vai → nút 🚻 → chọn video gốc + hồ sơ nam/nữ → Phân tích → log cụm `nam ~XHz / nữ ~YHz` + bảng phân vai mở lại với luật tự gán → nghe thử vài dòng đúng giới
+- [ ] Video chỉ có 1 giọng → log ❌ "chỉ có MỘT giọng", không gán bừa
+- [ ] Chọn cùng 1 hồ sơ cho cả nam và nữ → báo lỗi "phải khác nhau"
+
+## J. Đợt 2026-07-02 (2): Tách nhạc demucs + Rút gọn ⚠ + Nghỉ giữa đoạn
+- [ ] **✂ Rút gọn AI hỏi phạm vi**: SRT vừa có dòng ❌ vừa có ⚠ → bấm ✂ → dialog hỏi "Gồm cả N dòng ⚠?"; chọn Có → sau khi xong 🩺 Khám lại: cả cảnh báo "hơi hẹp" cũng giảm (mọi dòng đọc 1.0×)
+- [ ] **🎼 Tách nhạc nền (mux)**: tick "Giữ audio gốc" → checkbox 🎼 hiện ra (bỏ tick thì ẩn cùng ducking) → mux video có nhạc + lời thoại → log "🎼 Tách nhạc nền..." + progress demucs → video ra nghe **nhạc nền rõ, KHÔNG còn lời thoại gốc**, giọng dub sạch
+- [ ] Máy không có voxcpm_env (hoặc đổi tạm override sai) → log ⚠ fallback ducking, mux vẫn hoàn tất
+- [ ] Bấm ⏹ Dừng giữa lúc demucs đang chạy → dừng được, không treo, thư mục temp `mux_demucs_*` bị dọn
+- [ ] Wizard lồng tiếng với "Giữ audio gốc" + 🎼 đã tick từ trang video → bước mux của wizard cũng tách nhạc
+- [ ] **⏸ Nghỉ giữa đoạn**: Load Word/TXT → TTS → đặt "Nghỉ giữa đoạn (ms)" = 500 → Merge Audio → log "⏸ Chèn 500ms..." → file ra có khoảng lặng rõ giữa các đoạn; đặt 0 → merge liền như cũ
+- [ ] Giá trị rác trong ô (vd "abc") → merge không khoảng nghỉ, không crash
+
+## K. Đợt 2026-07-02 (3): 3 take + Dub thử 60s + fade
+- [ ] **🎲 Gen 3 take**: Load SRT + Output có sẵn audio → bấm 🎲 → nhập số dòng → 3 take gen lần lượt (✅ hiện dần) → ▶ nghe từng bản khác nhau → ✔ chọn 1 → `line_NNNN.mp3` là bản đã chọn, các file `.takeK.mp3` bị xóa, bản gốc còn ở `.old.mp3`
+- [ ] Đóng dialog không chọn gì → bản cũ được khôi phục (line_NNNN.mp3 như trước khi gen)
+- [ ] Bấm ✔ khi đang gen dở → báo "đợi gen xong"; các file .takeK không lọt vào Merge/QC/missing scan
+- [ ] **🔍 Thử 60s đầu (wizard)**: chọn video dài + cấu hình như thật → bấm 🔍 → clip 60s được cắt vào `<video>_preview_dub\` → chạy đủ 5 bước trên clip → tự mở bản thử; chạy full sau đó không đụng thư mục preview
+- [ ] Dán link YouTube rồi bấm 🔍 → báo lỗi hướng dẫn (chỉ nhận file)
+- [ ] **Fade chống click**: merge SRT có các dòng sát nhau → final không còn tiếng "tạch" ở điểm nối (so với bản merge cũ nếu có)
+
+## L. Đợt 2026-07-02 (4): teencode + cảnh báo ngôn ngữ + tự hồi phục mạng
+- [ ] **Teencode**: Quick TTS gõ "anh ko bik dc đâu, tks nha" → Nghe thử → đọc "anh không biết được đâu, cảm ơn nha"; gõ "BT là Bến Tre, giá 100k" → đọc nguyên văn (hoa + số không đổi); tắt checkbox "Đọc teencode" → đọc nguyên văn cả câu đầu
+- [ ] **Cảnh báo ngôn ngữ**: Load SRT tiếng Anh khi giọng đang là vi-VN → logbox có dòng ⚠ "SRT có vẻ không phải tiếng Việt..."; Load SRT tiếng Việt + giọng en-US → ⚠ ngược lại; SRT + giọng cùng tiếng Việt → không cảnh báo
+- [ ] **Tự hồi phục mạng**: chạy batch Edge → rút mạng giữa chừng → log "📶 Mất mạng — tự chờ..." (không dừng) → cắm mạng lại → trong ~30s log "📶 ✅ Mạng đã trở lại" + batch tự chạy tiếp đến hết
+- [ ] Rút mạng rồi bấm ⏹ Dừng trong lúc đang chờ → dừng trong ~1 giây
+- [ ] Chế độ song song (Edge ×4) cũng tự hồi phục như tuần tự
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)
