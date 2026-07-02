@@ -8367,14 +8367,49 @@ def _abortable_llm_call(provider, api_key, model, system, user):
     return box.get("raw", ""), False
 
 
+# Ngôn ngữ đích của bước dịch (cloud LLM). Mặc định Tiếng Việt — chọn ngôn ngữ
+# khác là mở đường dub NGƯỢC (video Việt → Anh/Nhật/...; Edge có giọng ~70 thứ
+# tiếng). Provider Offline (NLLB/envit5) chỉ dịch sang tiếng Việt — bị bỏ qua.
+_TRANSLATE_TARGETS = {
+    "Tiếng Việt": "tiếng Việt",
+    "English": "English (tiếng Anh)",
+    "中文": "tiếng Trung giản thể (中文)",
+    "日本語": "tiếng Nhật (日本語)",
+    "한국어": "tiếng Hàn (한국어)",
+    "Français": "tiếng Pháp (français)",
+    "Español": "tiếng Tây Ban Nha (español)",
+    "ไทย": "tiếng Thái (ไทย)",
+    "Bahasa Indonesia": "tiếng Indonesia",
+}
+
+def _translate_target():
+    """Tên ngôn ngữ đích hiện chọn (label); lỗi/chưa có UI → Tiếng Việt."""
+    try:
+        t = translate_target_var.get()
+        return t if t in _TRANSLATE_TARGETS else "Tiếng Việt"
+    except Exception:
+        return "Tiếng Việt"
+
+
 def _translate_system_prompt(context):
-    sys_p = (
-        "Bạn là dịch giả phụ đề phim chuyên nghiệp người Việt. "
-        "Dịch sang tiếng Việt TỰ NHIÊN, đúng văn phong nói của người Việt, "
-        "không dịch word-by-word, giữ đúng sắc thái (trang trọng/suồng sã/đùa/mỉa mai). "
-        "Chọn đại từ xưng hô (tôi/anh/em/cậu/tớ/ông/bà...) cho hợp ngữ cảnh và nhất quán. "
-        "Giữ nguyên tên riêng, thuật ngữ không cần dịch."
-    )
+    target = _translate_target()
+    tdesc = _TRANSLATE_TARGETS[target]
+    if target == "Tiếng Việt":
+        sys_p = (
+            "Bạn là dịch giả phụ đề phim chuyên nghiệp người Việt. "
+            "Dịch sang tiếng Việt TỰ NHIÊN, đúng văn phong nói của người Việt, "
+            "không dịch word-by-word, giữ đúng sắc thái (trang trọng/suồng sã/đùa/mỉa mai). "
+            "Chọn đại từ xưng hô (tôi/anh/em/cậu/tớ/ông/bà...) cho hợp ngữ cảnh và nhất quán. "
+            "Giữ nguyên tên riêng, thuật ngữ không cần dịch."
+        )
+    else:
+        sys_p = (
+            "Bạn là dịch giả phụ đề phim chuyên nghiệp. "
+            f"Dịch sang {tdesc} TỰ NHIÊN, đúng văn phong hội thoại của người bản ngữ, "
+            "không dịch word-by-word, giữ đúng sắc thái (trang trọng/suồng sã/đùa/mỉa mai), "
+            "xưng hô/kính ngữ nhất quán theo chuẩn ngôn ngữ đích. "
+            "Giữ nguyên tên riêng, thuật ngữ không cần dịch."
+        )
     if context.strip():
         sys_p += f"\n\nNgữ cảnh / quan hệ nhân vật / xưng hô do người dùng cung cấp:\n{context.strip()}"
     # Tên riêng/thuật ngữ trong Từ điển phát âm → buộc giữ NGUYÊN khi dịch:
@@ -8389,7 +8424,7 @@ def _translate_system_prompt(context):
         pass
     sys_p += (
         "\n\nĐầu vào gồm nhiều dòng, mỗi dòng có dạng [[n]] nội_dung. "
-        "Hãy dịch phần nội_dung của TỪNG dòng sang tiếng Việt và trả về ĐÚNG định dạng "
+        f"Hãy dịch phần nội_dung của TỪNG dòng sang {tdesc} và trả về ĐÚNG định dạng "
         "[[n]] bản_dịch, đúng số dòng, đúng thứ tự, KHÔNG thêm giải thích, "
         "KHÔNG gộp dòng, KHÔNG bỏ dòng. Giữ nguyên số n của mỗi dòng."
     )
@@ -8532,7 +8567,13 @@ def _translate_segments(segments, context, progress_cb=None, log_cb=None):
         if context.strip() and log_cb:
             log_cb("ℹ️ Model offline không dùng ô ngữ cảnh/xưng hô "
                    "(chỉ áp dụng cho Claude/Gemini/OpenAI).")
+        if _translate_target() != "Tiếng Việt" and log_cb:
+            log_cb("ℹ️ Dịch Offline chỉ hỗ trợ đích TIẾNG VIỆT — "
+                   "muốn dịch sang ngôn ngữ khác hãy dùng Claude/Gemini/OpenAI.")
         return _translate_segments_local(segments, progress_cb, log_cb)
+    if _translate_target() != "Tiếng Việt" and log_cb:
+        log_cb(f"🌍 Ngôn ngữ đích: {_translate_target()} — nhớ chọn GIỌNG ĐỌC "
+               "cùng ngôn ngữ ở tab Giọng nói nếu định TTS bản dịch.")
     provider, api_key, model = _translate_active_key()
     if log_cb:
         log_cb(f"🌐 Dịch bằng {provider} ({model}) — {len(segments)} dòng/đoạn...")
@@ -15667,7 +15708,8 @@ def _autodub_translate(srt_path, out_dir):
     app.after(0, lambda: _set_translate_buttons("disabled"))
     app.after(0, lambda: _translate_set_controls(True))
     try:
-        log(f"[Lồng tiếng] 🌐 Dịch {len(subs)} dòng sang tiếng Việt ({TRANSLATE_PROVIDER})...")
+        log(f"[Lồng tiếng] 🌐 Dịch {len(subs)} dòng sang {_translate_target()} "
+            f"({TRANSLATE_PROVIDER})...")
         translated = _translate_segments(
             sources, _translate_default_context(),
             progress_cb=_make_translate_progress_cb(),
@@ -15790,7 +15832,7 @@ def _autodub_chain_sync(video, stt_model, stt_lang, do_translate, keep_orig,
 
         # ── 2) Dịch ──
         if do_translate:
-            log_color("▶ Bước 2/5: Dịch sang tiếng Việt...", "#7c5cff")
+            log_color(f"▶ Bước 2/5: Dịch sang {_translate_target()}...", "#7c5cff")
             srt_vi, _stopped = _autodub_translate(srt_path, out_dir)
             if not srt_vi:
                 return False
@@ -20396,6 +20438,13 @@ translate_provider_menu = ctk.CTkOptionMenu(
     command=set_translate_provider, width=110, font=("Arial", 12))
 translate_provider_menu.pack(side="left", padx=(0, 6))
 
+translate_target_var = ctk.StringVar(value="Tiếng Việt")
+ctk.CTkLabel(_g4_opt, text="Sang:", font=("Arial", 12)).pack(side="left", padx=(2, 2))
+translate_target_menu = ctk.CTkOptionMenu(
+    _g4_opt, variable=translate_target_var,
+    values=list(_TRANSLATE_TARGETS.keys()), width=120, font=("Arial", 12))
+translate_target_menu.pack(side="left", padx=(0, 6))
+
 ctk.CTkLabel(_g4_opt, text="Ngữ cảnh/xưng hô:", font=("Arial", 12)).pack(side="left", padx=(2, 2))
 translate_context_entry = ctk.CTkEntry(
     _g4_opt, textvariable=translate_context_var, width=200, font=("Arial", 11),
@@ -21114,6 +21163,7 @@ def _ui_prefs_register():
         "watch_dir": watch_dir_var,   # CHỈ đường dẫn — trạng thái bật không persist
         "translate_bilingual": translate_bilingual_var,
         "translate_then_tts": translate_then_tts_var,
+        "translate_target": translate_target_var,
         "mux_keep_orig": mux_keep_orig_var, "mux_duck": mux_duck_var,
     })
 

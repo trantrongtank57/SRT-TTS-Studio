@@ -58,6 +58,7 @@
 - [ ] Mở wizard, đổi model/checkbox → đóng app mở lại → wizard giữ nguyên lựa chọn
 - [ ] Wizard → Browse chọn 2 video ngắn (Ctrl+click) → entry hiện "(2 video)..." → chạy → dub tuần tự cả 2, cuối có tổng kết ✅/❌ từng video
 - [ ] Tools → Watch folder: chọn thư mục, Bật theo dõi → copy 1 file .srt vào → ~8s sau tự chạy TTS + merge; copy video vào → tự chạy wizard; file đã xử lý không chạy lại khi bật lại
+- [ ] Trang Dịch → "Sang:" chọn English → dịch 1 SRT ngắn (Claude/Gemini) → bản dịch ra tiếng Anh + log nhắc chọn giọng cùng ngôn ngữ; chọn lại Tiếng Việt → hành vi như cũ; provider Offline + Sang≠Việt → log thông báo bỏ qua
 
 ## G. Bảng điều khiển (dashboard — trang mặc định khi mở app)
 - [ ] App mở thẳng vào **📊 Bảng điều khiển**; thẻ **Trạng thái phiên** hiện mode/giọng/GPU/thư mục cấu hình đúng
