@@ -31,6 +31,7 @@ Args:
 import sys
 import os
 import io
+import re
 import json
 import argparse
 
@@ -80,6 +81,51 @@ def _to_rect(box):
     xs = [float(p[0]) for p in box]
     ys = [float(p[1]) for p in box]
     return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+
+
+# Từ nối tiếng Anh hay bị OCR nuốt dấu nháy — map trả lại ('its' bỏ qua vì
+# trùng sở hữu cách; 'ill'/'id'/'were' bỏ qua vì trùng từ thật)
+_APOS_FIX = {"hes": "he's", "shes": "she's", "thats": "that's",
+             "dont": "don't", "didnt": "didn't", "doesnt": "doesn't",
+             "cant": "can't", "couldnt": "couldn't", "wont": "won't",
+             "wouldnt": "wouldn't", "isnt": "isn't", "arent": "aren't",
+             "wasnt": "wasn't", "werent": "weren't", "im": "I'm",
+             "ive": "I've", "youre": "you're", "theyre": "they're",
+             "whats": "what's", "lets": "let's"}
+_APOS_RE = re.compile(r"(?i)\b(" + "|".join(_APOS_FIX) + r")\b")
+
+
+def _clean_block_text(text):
+    """Dọn lỗi OCR đặc trưng comic TRƯỚC khi đưa đi dịch — model dịch (nhất là
+    NLLB offline) rất dễ loạn với text bẩn:
+      • '!' cuối từ in hoa bị đọc thành 'i'/'l' (OFFi → OFF!)
+      • ';' hầu hết là ','/'.' đọc sai; '_' lạc (thường là '...')
+      • đuôi chữ số lạc (sfx dính vào khối)
+      • hoa/thường lộn xộn (ThiS To Be) → chuẩn về sentence-case cho MT dễ nhai
+        (comic vốn ALL-CAPS nên không mất thông tin; CJK không có hoa/thường
+        nên các rule này vô hại với ja/ko/zh)."""
+    t = text
+    t = re.sub(r"\b([A-Z]{2,})[il]\b", r"\1!", t)      # OFFi / OFFl → OFF!
+    t = re.sub(r"(?i)\b([a-z]*ff)i\b", r"\1!", t)      # Offi → Off!
+    t = t.replace("_", " ")
+    t = t.replace(";", ",")
+    t = re.sub(r"(\s+\d{1,2})+\s*$", "", t)            # đuôi số lạc
+    t = re.sub(r"\s+([,.!?])", r"\1", t)
+    t = re.sub(r",\s*([.!?])", r"\1", t)               # ',.' → '.'
+    t = re.sub(r"\s{2,}", " ", t).strip(" '\"")
+    letters = [c for c in t if c.isalpha()]
+    if letters:
+        up = sum(1 for c in letters if c.isupper()) / len(letters)
+        if up >= 0.3:                                  # lẫn nhiều hoa lộn xộn → sentence case
+            t = t[:1].upper() + t[1:].lower()
+    # OCR nuốt dấu ' của từ nối tiếng Anh (Hes/dont/cant) — trả lại cho MT dễ dịch
+    def _apos(m):
+        w = m.group(0)
+        f = _APOS_FIX[w.lower()]
+        return (f[0].upper() + f[1:]) if w[0].isupper() else f
+    t = _APOS_RE.sub(_apos, t)
+    t = re.sub(r"\bi\b", "I", t)                       # đại từ 'i' lẻ → 'I'
+    return t.strip()
 
 
 def _merge_lines(items):
@@ -152,6 +198,7 @@ def _merge_lines(items):
                 text = text[:-1] + pline
             else:
                 text = (text + " " + pline).strip()
+        text = _clean_block_text(text)
         if not text:
             continue
         xs1 = min(r[0] for r, _, _ in g)
