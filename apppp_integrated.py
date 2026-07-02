@@ -6494,25 +6494,54 @@ def _manga_wts_parts(url):
 
 
 # UA giả-Firefox để cf_clearance (cookie Cloudflare cấp bởi Firefox) chấp nhận request urllib.
+# Chỉ là fallback — cf_clearance bị RÀNG BUỘC với đúng UA của Firefox đã vượt challenge,
+# nên _manga_firefox_ua() đọc version thật từ profile (compatibility.ini) để UA luôn khớp
+# (Firefox tự cập nhật → UA cứng lệch version → Cloudflare trả 403 dù cookie còn hạn).
 _MANGA_WTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) "
                  "Gecko/20100101 Firefox/152.0")
+
+
+def _manga_firefox_profile_db():
+    """Đường dẫn cookies.sqlite của profile Firefox mới dùng nhất, '' nếu không có."""
+    try:
+        import glob
+        pats = [os.path.expandvars(r"%APPDATA%\Mozilla\Firefox\Profiles\*\cookies.sqlite"),
+                os.path.expanduser("~/.mozilla/firefox/*/cookies.sqlite")]
+        cands = []
+        for p in pats:
+            cands += glob.glob(p)
+        return max(cands, key=os.path.getmtime) if cands else ""
+    except Exception:
+        return ""
+
+
+def _manga_firefox_ua():
+    """UA khớp ĐÚNG version Firefox thật của máy (đọc compatibility.ini trong profile).
+    cf_clearance bị bind với UA đã vượt challenge → UA phải khớp version, không thì 403."""
+    try:
+        db = _manga_firefox_profile_db()
+        if db:
+            ini = os.path.join(os.path.dirname(db), "compatibility.ini")
+            with open(ini, "r", encoding="utf-8", errors="replace") as f:
+                m = re.search(r"LastVersion\s*=\s*(\d+)\.", f.read())
+            if m:
+                v = m.group(1)
+                return (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{v}.0) "
+                        f"Gecko/20100101 Firefox/{v}.0")
+    except Exception:
+        pass
+    return _MANGA_WTS_UA
 
 
 def _manga_firefox_cookie_header(host_like="webtoonscan"):
     """Đọc cookie Firefox cho 1 host (Firefox lưu plaintext trong cookies.sqlite, không cần
     giải mã như Chrome) → chuỗi 'k=v; ...' để gắn header Cookie. '' nếu không có."""
     try:
-        import glob
         import sqlite3
         import tempfile
-        pats = [os.path.expandvars(r"%APPDATA%\Mozilla\Firefox\Profiles\*\cookies.sqlite"),
-                os.path.expanduser("~/.mozilla/firefox/*/cookies.sqlite")]
-        cands = []
-        for p in pats:
-            cands += glob.glob(p)
-        if not cands:
+        db = _manga_firefox_profile_db()
+        if not db:
             return ""
-        db = max(cands, key=os.path.getmtime)
         tmp = os.path.join(tempfile.gettempdir(), "_wts_ff_ck.sqlite")
         shutil.copy2(db, tmp)                  # copy tránh khoá file khi Firefox đang mở
         con = sqlite3.connect(tmp)
@@ -6540,7 +6569,7 @@ def _manga_wts_list_chapters(series_base, slug):
         return []
     try:
         req = urllib.request.Request(series_base + "/", headers={
-            "User-Agent": _MANGA_WTS_UA,
+            "User-Agent": _manga_firefox_ua(),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Cookie": ck, "Referer": "https://webtoonscan.com/"})
@@ -6599,10 +6628,15 @@ def _manga_wts_gdl_worker(url, out_dir, fmt, rng, cookies=""):
         dest = os.path.join(out_dir, slug)
         os.makedirs(dest, exist_ok=True)
         ck_args = ["--cookies-from-browser", cookies] if cookies else []
+        # cf_clearance bind với UA của Firefox đã vượt challenge → ép gallery-dl gửi
+        # đúng UA đó (mặc định gallery-dl gửi UA riêng ≠ Firefox thật → Cloudflare 403).
+        _ua = _manga_firefox_ua()
+        ck_args += ["-o", "user-agent=" + _ua]
         filt = ["--filter", "'cdn' in imageurl"]
         base = series.rstrip("/")
         log_color(f"🌐 webtoonscan: {slug}"
                   + (f"  (cookies: {cookies})" if cookies else ""), "#7cf")
+        log(f"   UA: ...Firefox/{_ua.rsplit('/', 1)[-1]}")
 
         def _dl_chapter(label, chap_url, report=False):
             """Tải 1 chương (URL cụ thể) vào dest/chapter-<label> → số ảnh tải được.
@@ -7065,10 +7099,12 @@ def _manga_tr_render_page(img_path, blocks, translations, out_path, font_path, l
                 continue
             x1, y1, x2, y2 = blk["box"]
             bw, bh = max(8, x2 - x1), max(8, y2 - y1)
-            # Ô trắng phủ chữ gốc (nới nhẹ ra ngoài cho kín)
-            mx, my = 3, 3
+            # Ô trắng phủ chữ gốc — nới theo cỡ block (box OCR ôm sát chữ,
+            # 3px cứng hay hở đuôi ký tự/dấu câu); không viền cho tàng hình
+            mx = max(5, min(14, bw // 14))
+            my = max(5, min(14, bh // 14))
             draw.rectangle([x1 - mx, y1 - my, x2 + mx, y2 + my],
-                           fill=(255, 255, 255), outline=(210, 210, 210))
+                           fill=(255, 255, 255))
             if font_path:
                 font, lines = _manga_tr_fit_font(draw, vi, font_path, bw, bh)
             else:
