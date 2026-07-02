@@ -54,7 +54,13 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 - **📨 Webhook báo xong** — dán URL Discord/Telegram vào Cài đặt, mỗi job hoàn tất app tự
   nhắn (kèm số dòng, số FAIL) — batch qua đêm khỏi ngồi canh máy.
 
+- **🪄 Sửa SRT bằng AI theo yêu cầu tùy ý** — gõ bất kỳ yêu cầu nào ("viết trang trọng hơn",
+  "đổi xưng hô", "bỏ từ tục", "sửa chính tả") — AI áp dụng cho toàn bộ phụ đề, dòng không
+  cần đổi giữ nguyên văn, không bao giờ mất nội dung.
+
 ### Cải tiến
+- **🎨 Tùy chỉnh chữ phụ đề gắn cứng** — chọn cỡ (Nhỏ/Vừa/To) và màu (Trắng/Vàng/Xanh lá)
+  ngay trong Trợ lý lồng tiếng; video đăng YouTube nhìn chuyên nghiệp hơn.
 - **📖 Đọc từ đoạn X đến Y** (Tài liệu → Audio) — đọc riêng một chương của tài liệu dài
   không cần cắt file, áp dụng cho mọi engine.
 - **💬 Chú thích nút (tooltip)** — rê chuột lên các nút chính sẽ hiện giải thích ngắn,

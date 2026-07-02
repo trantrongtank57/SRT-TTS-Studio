@@ -10469,6 +10469,148 @@ def srt_ai_shorten():
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def open_srt_ai_transform_dialog():
+    """🪄 Biến đổi SRT bằng AI theo YÊU CẦU TÙY Ý — tổng quát hóa ✂ Rút gọn AI:
+    người dùng gõ prompt tự do ("viết lại trang trọng hơn", "đổi 'tôi' thành
+    'tớ'", "bỏ từ chửi thề", "sửa dấu câu"…), toàn bộ dòng chạy qua LLM dịch
+    theo batch [[n]] → <tên>_ai.srt + mời xóa audio các dòng bị đổi. Dòng LLM
+    không trả về giữ nguyên gốc (không bao giờ mất nội dung). Dùng chung khóa
+    _SRT_AI_RUNNING với Rút gọn AI."""
+    if _SRT_AI_RUNNING[0]:
+        log("[Sửa AI] Đang chạy — đợi xong đã.")
+        return
+    if not subtitles_cache or not SRT_FILE:
+        msg.showinfo("🪄 Sửa SRT bằng AI", "Hãy Load SRT trước.")
+        return
+    if (TRANSLATE_PROVIDER or "") == "Offline":
+        msg.showinfo("🪄 Sửa SRT bằng AI",
+                     "Provider Offline không làm được — chọn Claude/Gemini/"
+                     "OpenAI/Groq/DeepSeek ở trang Dịch.")
+        return
+    try:
+        provider, api_key, model = _translate_active_key()
+    except Exception as e:
+        msg.showerror("🪄 Sửa SRT bằng AI", str(e))
+        return
+
+    win = ctk.CTkToplevel(app)
+    win.title("🪄 Sửa SRT bằng AI (yêu cầu tùy ý)")
+    win.geometry("620x300")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    ctk.CTkLabel(win, text=f"Gõ yêu cầu — AI sẽ áp dụng cho TOÀN BỘ {len(subtitles_cache)} dòng "
+                           f"(bằng {provider}):",
+                 font=("Arial", 12, "bold")).pack(pady=(12, 4), padx=14, anchor="w")
+    prompt_box = ctk.CTkTextbox(win, height=90, wrap="word")
+    prompt_box.pack(fill="x", padx=14)
+    try:
+        _attach_telex_input(prompt_box, quick_tts_telex_var)
+    except Exception:
+        pass
+    ctk.CTkLabel(win, text="Ví dụ:  viết lại cho trang trọng hơn · đổi xưng hô 'tôi-bạn' "
+                           "thành 'anh-em' · bỏ từ tục · thêm dấu câu đúng ngữ pháp · "
+                           "sửa lỗi chính tả tiếng Việt",
+                 font=("Arial", 10), text_color="#888", wraplength=580,
+                 justify="left").pack(padx=14, pady=(4, 2), anchor="w")
+
+    def _run():
+        user_req = prompt_box.get("1.0", "end").strip()
+        if len(user_req) < 5:
+            msg.showwarning("🪄 Sửa SRT bằng AI", "Yêu cầu quá ngắn.")
+            return
+        win.destroy()
+        _SRT_AI_RUNNING[0] = True
+        snap = [{"start": s.start, "end": s.end, "content": s.content}
+                for s in subtitles_cache]
+        texts0 = [clean_text(s.content) for s in subtitles_cache]
+        src_path = SRT_FILE
+        log(f"🪄 [Sửa AI] Áp dụng cho {len(texts0)} dòng bằng {provider}: “{user_req[:80]}”…")
+
+        def _worker():
+            system = (
+                "Bạn là biên tập viên phụ đề. Với mỗi dòng được đánh dấu [[n]], hãy "
+                "áp dụng YÊU CẦU của người dùng bên dưới. Giữ nguyên nghĩa và ngôn "
+                "ngữ của câu trừ khi yêu cầu nói khác; KHÔNG thêm bình luận. Dòng "
+                "không cần thay đổi thì trả về NGUYÊN VĂN. Chỉ trả về các dòng dạng: "
+                "[[n]] nội-dung — không giải thích gì thêm.\n"
+                f"YÊU CẦU CỦA NGƯỜI DÙNG: {user_req}")
+            results = {}
+            n_fail = 0
+            done = 0
+            try:
+                idxs = [i for i, t in enumerate(texts0) if t]
+                for bs in range(0, len(idxs), _SRT_AI_BATCH):
+                    batch = idxs[bs:bs + _SRT_AI_BATCH]
+                    user = "\n".join(f"[[{k + 1}]] {texts0[i]}"
+                                     for k, i in enumerate(batch))
+                    raw = None
+                    for _try in range(2):
+                        try:
+                            raw = _llm_call(provider, api_key, model, system, user)
+                            break
+                        except Exception as e:
+                            if _try == 0:
+                                time.sleep(2)
+                            else:
+                                n_fail += len(batch)
+                                app.after(0, lambda e=e, nb=len(batch): log(
+                                    f"🪄 [Sửa AI] ⚠ Lỗi API — giữ nguyên {nb} dòng: {e}"))
+                    if raw:
+                        parsed = _parse_marked(raw, len(batch))
+                        for k, i in enumerate(batch):
+                            new = (parsed.get(k) or "").strip()
+                            if new and new != texts0[i]:
+                                results[i] = new
+                    done += len(batch)
+                    update_progress(done, len(idxs))
+
+                subs_out = [srt.Subtitle(index=k + 1, start=it["start"],
+                                         end=it["end"],
+                                         content=results.get(k, it["content"]))
+                            for k, it in enumerate(snap)]
+                out_path = os.path.splitext(src_path)[0] + "_ai.srt"
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(srt.compose(subs_out))
+
+                def _apply():
+                    global SRT_FILE, current_index
+                    log(f"🪄 [Sửa AI] Đổi {len(results)}/{len(texts0)} dòng"
+                        + (f" ({n_fail} dòng lỗi API giữ gốc)" if n_fail else "")
+                        + f" → {os.path.basename(out_path)} — nạp lại…")
+                    SRT_FILE = out_path
+                    current_index = 0
+                    load_subtitles(force_select=False)
+                    set_mode("srt")
+                    if results and OUTPUT_DIR and os.path.isdir(OUTPUT_DIR):
+                        _have = [i for i in results if os.path.isfile(
+                            os.path.join(OUTPUT_DIR, f"line_{i:04d}.mp3"))]
+                        if _have and msg.askyesno(
+                                "🪄 Sửa SRT bằng AI",
+                                f"{len(_have)} dòng vừa đổi đã có audio (đọc text CŨ).\n"
+                                "Xóa audio các dòng đó để đọc lại?"):
+                            for i in _have:
+                                try:
+                                    os.remove(os.path.join(
+                                        OUTPUT_DIR, f"line_{i:04d}.mp3"))
+                                except Exception:
+                                    pass
+                            log(f"🪄 [Sửa AI] Đã xóa {len(_have)} audio cũ — "
+                                "🧩 hoặc TTS/Resume để đọc lại.")
+                app.after(0, _apply)
+            except Exception as e:
+                app.after(0, lambda e=e: log(f"🪄 [Sửa AI] ❌ Lỗi: {e}"))
+            finally:
+                _SRT_AI_RUNNING[0] = False
+                update_progress(0, 1)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    ctk.CTkButton(win, text="🪄 Chạy trên toàn bộ SRT", command=_run,
+                  fg_color="#6b4fa0", hover_color="#8B5CF6", height=40,
+                  font=("Arial", 13, "bold")).pack(fill="x", padx=14, pady=(8, 14))
+
+
 def open_srt_replace_dialog():
     """🔁 Tìm & thay trong SRT đang nạp (thường / regex, phân biệt hoa-thường
     tùy chọn) → ghi <tên>_edit.srt và nạp lại; hỏi xóa audio các dòng bị đổi
@@ -12419,6 +12561,21 @@ def _mux_demucs_music(vid, ffmpeg_path):
         return "", tmps
 
 
+def _burn_sub_style():
+    """🎨 Chuỗi force_style cho filter subtitles (phụ đề gắn cứng) theo 2 lựa
+    chọn Cỡ/Màu của wizard. ASS PrimaryColour dạng &HAABBGGRR (kênh BGR).
+    Cú pháp đã kiểm chứng với ffmpeg 8.0 (2026-07-02)."""
+    size_map = {"Nhỏ": 18, "Vừa": 24, "To": 32}
+    color_map = {"Trắng": "&H00FFFFFF&", "Vàng": "&H0000FFFF&",
+                 "Xanh lá": "&H0000FF00&"}
+    try:
+        fs = size_map.get(mux_substyle_size_var.get(), 24)
+        pc = color_map.get(mux_substyle_color_var.get(), "&H00FFFFFF&")
+    except Exception:
+        fs, pc = 24, "&H00FFFFFF&"
+    return f"FontSize={fs},PrimaryColour={pc},Outline=2,BorderStyle=1"
+
+
 def _run_mux_thread():
     global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR, _VIDEOTOOL_PROC, _VIDEOTOOL_OUT
     global VIDEOTOOL_PAUSED, VIDEOTOOL_STOP
@@ -12523,7 +12680,8 @@ def _run_mux_thread():
     # buộc re-encode video (không -c:v copy được khi có filter).
     burn_srt = MUX_BURN_SRT if (MUX_BURN_SRT and os.path.isfile(MUX_BURN_SRT)) else ""
     if burn_srt:
-        filt = f"[0:v]subtitles={_ff_sub_filterpath(burn_srt)}[vout];" + filt
+        filt = (f"[0:v]subtitles={_ff_sub_filterpath(burn_srt)}"
+                f":force_style='{_burn_sub_style()}'[vout];") + filt
         vmap = "[vout]"
         # Burn sub buộc re-encode video. Dùng GPU NVENC nếu có (CPU không bị 100%,
         # nhanh hơn nhiều); chỉ fallback libx264 (CPU) khi không có GPU NVIDIA.
@@ -18586,6 +18744,15 @@ def open_autodub_dialog():
     row4.pack(fill="x", padx=14, pady=4)
     ctk.CTkCheckBox(row4, text="Gắn phụ đề cứng vào video (re-encode — chậm hơn)",
                     variable=autodub_burnsub_var, font=("Arial", 12)).pack(side="left")
+    # 🎨 style chữ burn-in (chỉ có tác dụng khi ô trên được tick)
+    ctk.CTkLabel(row4, text="Cỡ:", font=("Arial", 12)).pack(side="left", padx=(12, 3))
+    ctk.CTkOptionMenu(row4, variable=mux_substyle_size_var,
+                      values=["Nhỏ", "Vừa", "To"], width=76,
+                      font=("Arial", 12)).pack(side="left")
+    ctk.CTkLabel(row4, text="Màu:", font=("Arial", 12)).pack(side="left", padx=(8, 3))
+    ctk.CTkOptionMenu(row4, variable=mux_substyle_color_var,
+                      values=["Trắng", "Vàng", "Xanh lá"], width=92,
+                      font=("Arial", 12)).pack(side="left")
 
     ctk.CTkLabel(win, text="Có thể Tạm dừng/Dừng từng bước bằng các nút điều khiển sẵn có\n"
                            "(STT ở trang Tách Nội Dung; Dịch ở trang Dịch; TTS/Mux bằng nút chung trên thanh tiêu đề).",
@@ -22801,6 +22968,12 @@ btn_srt_table = ctk.CTkButton(_g1_io, text="📝 Bảng phụ đề (sửa nhanh
                               fg_color="#2f6ea5", hover_color="#3f83bf")
 btn_srt_table.pack(side="top", fill="x", padx=4, pady=4)
 
+btn_srt_ai_free = ctk.CTkButton(_g1_io, text="🪄 Sửa SRT bằng AI (yêu cầu)",
+                                command=open_srt_ai_transform_dialog,
+                                height=36, font=("Arial", 13),
+                                fg_color="#6b4fa0", hover_color="#8B5CF6")
+btn_srt_ai_free.pack(side="top", fill="x", padx=4, pady=4)
+
 btn_qc_listen = ctk.CTkButton(_g1_io, text="🎧 Nghe dòng lỗi", command=open_qc_listen_dialog,
                               height=36, font=("Arial", 13))
 btn_qc_listen.pack(side="top", fill="x", padx=4, pady=4)
@@ -23145,6 +23318,10 @@ mux_duck_var = ctk.BooleanVar(value=True)
 mux_duck_check = ctk.CTkCheckBox(
     _g5_mux2, text="Hạ tiếng gốc khi có giọng đọc", variable=mux_duck_var,
     width=200, font=("Arial", 12))
+
+# 🎨 Style phụ đề gắn cứng (wizard đọc qua _burn_sub_style khi burn-in)
+mux_substyle_size_var = ctk.StringVar(value="Vừa")
+mux_substyle_color_var = ctk.StringVar(value="Trắng")
 
 # 🎼 Tách nhạc nền demucs: bỏ hẳn lời thoại gốc, mix nhạc sạch + giọng đọc
 # (thay cho ducking — chất lượng "phim chiếu rạp"; cần voxcpm_env + model htdemucs)
@@ -23967,6 +24144,8 @@ def _ui_prefs_register():
         "translate_target": translate_target_var,
         "mux_keep_orig": mux_keep_orig_var, "mux_duck": mux_duck_var,
         "mux_demucs": mux_demucs_var,
+        "mux_substyle_size": mux_substyle_size_var,
+        "mux_substyle_color": mux_substyle_color_var,
         "pdf_gap_ms": pdf_gap_var, "pdf_m4b": pdf_m4b_var,
     })
 
@@ -24092,6 +24271,7 @@ _TOOLTIP_TEXTS = {
     "btn_srt_ai":      "Dùng AI viết NGẮN lại các dòng dài hơn khe thời gian (thứ 🔧 không sửa nổi) → giọng đọc không bị tăng tốc. Cần API key dịch.",
     "btn_srt_replace": "Tìm & thay hàng loạt trong SRT (hỗ trợ regex) → _edit.srt; mời xóa audio các dòng bị đổi để đọc lại.",
     "btn_srt_table":   "Bảng toàn bộ phụ đề: trạng thái từng dòng (lỗi/đã có audio), sửa text, nghe, đọc lại — tất cả trong 1 cửa sổ.",
+    "btn_srt_ai_free": "Gõ yêu cầu tùy ý (viết trang trọng hơn, đổi xưng hô, bỏ từ tục…) — AI áp dụng cho toàn bộ SRT. Cần API key dịch.",
     "btn_qc_report":   "Tổng hợp các dòng audio LỖI (câm / quá dài / quá ngắn) và dòng thiếu file sau batch.",
     "btn_qc_regen":    "Đọc lại tự động các dòng audio bị đánh dấu lỗi (novoice/toolong/tooshort).",
     "btn_qc_missing":  "Đọc lại các dòng FAIL (có text nhưng thiếu file mp3) — dùng sau khi batch xong còn sót vài dòng.",

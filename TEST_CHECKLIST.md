@@ -174,6 +174,12 @@
 - [ ] Range cũng áp cho engine local (VoxCPM/VieNeu/F5/Omni đọc PDF)
 - [ ] **📨 Webhook**: dán URL webhook Discord vào ⚙ Cài đặt → chạy 1 batch xong → tin nhắn hiện trong kênh Discord (kèm số dòng/FAIL); xóa URL → không gửi nữa; URL sai → không crash, không chậm app
 
+## R. Đợt 2026-07-03: Sửa SRT bằng AI + style burn-in
+- [ ] **🪄 Sửa SRT bằng AI**: Load SRT → nút 🪄 → gõ "đổi hết 'tôi' thành 'tớ'" → chạy → `_ai.srt` nạp lại, đúng các dòng có 'tôi' bị đổi, dòng khác giữ nguyên văn
+- [ ] Dòng đã có audio bị đổi → hỏi xóa như Tìm & thay; prompt quá ngắn (<5 ký tự) → cảnh báo; provider Offline → từ chối kèm hướng dẫn
+- [ ] Đang chạy 🪄 thì bấm ✂ Rút gọn AI → báo "Đang chạy" (chung khóa)
+- [ ] **🎨 Style burn-in**: wizard → tick "Gắn phụ đề cứng" + Cỡ "To" + Màu "Vàng" → video ra chữ vàng to viền đen; đổi "Nhỏ"+"Trắng" → đúng theo; lựa chọn được nhớ sau khi đóng/mở app
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)
