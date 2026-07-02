@@ -6863,10 +6863,24 @@ def _manga_wts_gdl_worker(url, out_dir, fmt, rng, cookies=""):
         except Exception as _e:
             log(f"❌ Không gọi được gallery-dl ({cmd0[0]}): {_e}")
             return
-        if not cookies:
-            log("⚠ webtoonscan có Cloudflare — cần chọn Cookie (trình duyệt) để vượt.")
-            log("   Mở truyện trong Firefox vượt Cloudflare → đóng Firefox → chọn Cookie = firefox.")
-            log("   (Chrome v127+ không dùng được do mã hoá App-Bound; hãy dùng Firefox.)")
+        if cookies != "firefox":
+            # webtoonscan CHỈ dùng được cookie Firefox: họ Chromium (Chrome 127+/Edge/Brave...)
+            # mã hoá cookie kiểu App-Bound nên gallery-dl KHÔNG giải mã được (đã test:
+            # chrome = Permission denied, edge = Failed to decrypt cookie (DPAPI)).
+            # → chưa chọn / chọn nhầm trình duyệt khác: tự chuyển sang Firefox nếu có cookie.
+            if _manga_firefox_cookie_header():
+                if cookies:
+                    log(f"ℹ Cookie '{cookies}' không dùng được với webtoonscan "
+                        "(Chrome/Edge mã hoá App-Bound) → tự chuyển sang cookie Firefox.")
+                else:
+                    log("ℹ Chưa chọn Cookie → tự dùng cookie Firefox (webtoonscan cần vượt Cloudflare).")
+                cookies = "firefox"
+            else:
+                log("⚠ webtoonscan có Cloudflare — chỉ vượt được bằng cookie FIREFOX.")
+                log("   (Chrome/Edge v127+ mã hoá App-Bound nên không đọc được cookie.)")
+                log("   Mở truyện trong Firefox vượt Cloudflare → đóng Firefox → thử lại.")
+                if cookies:
+                    log(f"   Vẫn thử tiếp với cookie '{cookies}' (khả năng cao bị 403)...")
 
         series, chap_seg = _manga_wts_parts(url)
         slug = _manga_safe_name(series.rstrip("/").split("/")[-1]) or "webtoonscan"
