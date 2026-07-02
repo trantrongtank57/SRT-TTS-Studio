@@ -602,6 +602,14 @@ The "textaudio" workspace page. Input is **`quick_tts_textbox`** (multi-line `CT
 
 **Synced SRT (`_write_synced_srt`)**: after a successful merge, `final_synced.srt` is written to `OUTPUT_DIR` with timestamps matching the REAL audio (start includes the silence-centering shift; duration = probed length ÷ atempo factor — the merge loop now probes every line, not just slotted ones). The original SRT drifts a few hundred ms from the voice on stretched/centered lines; this file is exact. The wizard's burn-in step prefers it over the translated SRT when it exists.
 
+## Audio → Video (ảnh nền) — `start_audio_to_video()`
+
+Video page section `_sec_a2v` ("🖼 Audio → Video"): audio (required) + background image (optional — empty = dark `color=` lavfi source) + SRT (optional burn via `_ff_sub_filterpath`) → `<audio>_video.mp4` (720p, 15fps still, `-shortest`, faststart) — for "truyện audio" YouTube channels that need a video container for `final.mp3`. GPU-aware encoder (nvenc / libx264+stillimage, same pattern as mux burn-in); pipeline verified end-to-end on this machine. Translate-button pattern: `_A2V_RUNNING` lock, own ⏹ (`_a2v_stop` kills `_A2V_PROC[0]`), NOT in `set_mode`. Progress from `time=` vs `_probe_duration_sec`.
+
+## EPUB → TTS
+
+`load_doc_tts` also accepts `.epub` via `_epub_extract_text()` (pure stdlib: `zipfile` + regex — container.xml → content.opf → **spine order** with manifest id→href both attribute orders; fallback = sorted html names). Strips script/style, `<br>`/block-close → newlines, tags → space, `html.unescape`. Output feeds the same `_split_text_chunks` → `PDF_CHUNKS` pipeline.
+
 ## Mux Audio → Video (`_run_mux_thread`)
 
 "Ghép Audio Final vào Video" (in the "video" page) — pick a video + a final audio track (e.g. `final.mp3` from Merge FFmpeg), adjust per-source volume, then mux into `<video>_dubbed.mp4`. Functions live just after `open_compress_folder` (`load_mux_video` @8552, `_run_mux_thread` @8623, `start_mux_video` @8785); globals `MUX_VIDEO_FILE` / `MUX_AUDIO_FILE` / `MUX_OUTPUT_DIR` next to the `COMPRESS_*` globals.

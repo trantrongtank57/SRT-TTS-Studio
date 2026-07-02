@@ -5806,6 +5806,50 @@ watch_switch = ctk.CTkCheckBox(_g_watch, text="Bật theo dõi",
                                font=("Arial", 13))
 watch_switch.pack(side="left", padx=8)
 
+# 🖼 Audio → Video: final.mp3 + ảnh nền (+ phụ đề) → MP4 sẵn đăng YouTube
+# (kênh "truyện audio" cần video, không đăng được mp3 trần). Hàm ở dưới → lambda.
+_sec_a2v = _make_section("🖼 Audio → Video",
+                         "Ảnh nền + audio (+ phụ đề tùy chọn) → video MP4 sẵn đăng YouTube",
+                         "#2fa572", ws="video")
+a2v_audio_var = ctk.StringVar(value="")
+a2v_img_var = ctk.StringVar(value="")
+a2v_srt_var = ctk.StringVar(value="")
+_g_a2v1 = _sec_row(_sec_a2v)
+ctk.CTkLabel(_g_a2v1, text="Audio:", font=("Arial", 12), width=60,
+             anchor="w").pack(side="left", padx=(4, 2))
+ctk.CTkEntry(_g_a2v1, textvariable=a2v_audio_var,
+             placeholder_text="final.mp3 / file audio bất kỳ...").pack(
+    side="left", expand=True, fill="x", padx=(0, 4))
+ctk.CTkButton(_g_a2v1, text="Browse", width=70,
+              command=lambda: _a2v_browse(a2v_audio_var, "audio")).pack(side="left", padx=(0, 4))
+_g_a2v2 = _sec_row(_sec_a2v)
+ctk.CTkLabel(_g_a2v2, text="Ảnh nền:", font=("Arial", 12), width=60,
+             anchor="w").pack(side="left", padx=(4, 2))
+ctk.CTkEntry(_g_a2v2, textvariable=a2v_img_var,
+             placeholder_text="(tùy chọn — để trống = nền màu tối)").pack(
+    side="left", expand=True, fill="x", padx=(0, 4))
+ctk.CTkButton(_g_a2v2, text="Browse", width=70,
+              command=lambda: _a2v_browse(a2v_img_var, "image")).pack(side="left", padx=(0, 4))
+_g_a2v3 = _sec_row(_sec_a2v)
+ctk.CTkLabel(_g_a2v3, text="Phụ đề:", font=("Arial", 12), width=60,
+             anchor="w").pack(side="left", padx=(4, 2))
+ctk.CTkEntry(_g_a2v3, textvariable=a2v_srt_var,
+             placeholder_text="(tùy chọn — final_synced.srt để chữ khớp tiếng)").pack(
+    side="left", expand=True, fill="x", padx=(0, 4))
+ctk.CTkButton(_g_a2v3, text="Browse", width=70,
+              command=lambda: _a2v_browse(a2v_srt_var, "srt")).pack(side="left", padx=(0, 4))
+_g_a2v4 = _sec_row(_sec_a2v)
+btn_a2v_run = ctk.CTkButton(_g_a2v4, text="🎬 Tạo Video",
+                            command=lambda: start_audio_to_video(),
+                            height=36, font=("Arial", 13),
+                            fg_color="#2fa572", hover_color="#37b87f")
+btn_a2v_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_a2v_stop = ctk.CTkButton(_g_a2v4, text="⏹ Dừng",
+                             command=lambda: _a2v_stop(),
+                             height=36, font=("Arial", 13),
+                             fg_color="#8B2020", hover_color="#5e1616")
+btn_a2v_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
 _sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#5a6478", ws="system")
 _g6 = _sec_row(_sec6)
 
@@ -11262,6 +11306,135 @@ def open_mux_folder():
         log("[Ghép Audio] Thư mục output chưa xác định.")
 
 
+# =========================
+# 🖼 AUDIO → VIDEO — ảnh nền + audio (+ phụ đề) → MP4 đăng YouTube
+# =========================
+# Pattern translate-button: nút luôn bật, tự khóa qua _A2V_RUNNING; Stop kill
+# thẳng proc ffmpeg. Encoder GPU-aware như bước burn-in của Mux.
+_A2V_RUNNING = [False]
+_A2V_PROC = [None]
+
+def _a2v_browse(var, kind):
+    if kind == "audio":
+        p = filedialog.askopenfilename(
+            title="Chọn file audio",
+            initialdir=OUTPUT_DIR if os.path.isdir(OUTPUT_DIR or "") else None,
+            filetypes=[("Audio", "*.mp3 *.wav *.m4a *.opus *.aac *.flac"),
+                       ("All files", "*.*")])
+    elif kind == "image":
+        p = filedialog.askopenfilename(
+            title="Chọn ảnh nền",
+            filetypes=[("Ảnh", "*.jpg *.jpeg *.png *.bmp *.webp"),
+                       ("All files", "*.*")])
+    else:
+        p = filedialog.askopenfilename(
+            title="Chọn phụ đề (SRT)",
+            initialdir=OUTPUT_DIR if os.path.isdir(OUTPUT_DIR or "") else None,
+            filetypes=[("SRT", "*.srt"), ("All files", "*.*")])
+    if p:
+        var.set(p)
+
+
+def _a2v_stop():
+    p = _A2V_PROC[0]
+    if p:
+        try:
+            p.kill()
+            log("[Audio→Video] ⏹ Đã dừng.")
+        except Exception:
+            pass
+    else:
+        log("[Audio→Video] Không có tiến trình nào đang chạy.")
+
+
+def start_audio_to_video():
+    if _A2V_RUNNING[0]:
+        log("[Audio→Video] Đang chạy — đợi xong đã.")
+        return
+    aud = a2v_audio_var.get().strip()
+    if not aud or not os.path.isfile(aud):
+        log("[Audio→Video] ❌ Chưa chọn file audio hợp lệ.")
+        return
+    img = a2v_img_var.get().strip()
+    if img and not os.path.isfile(img):
+        log("[Audio→Video] ❌ Không thấy file ảnh nền.")
+        return
+    srt_p = a2v_srt_var.get().strip()
+    if srt_p and not os.path.isfile(srt_p):
+        log("[Audio→Video] ❌ Không thấy file phụ đề.")
+        return
+    ffmpeg_ok, ffmpeg_path, guide = _check_ffmpeg_exists()
+    if not ffmpeg_ok:
+        for l in guide.splitlines():
+            log(l)
+        return
+    out_path = os.path.splitext(aud)[0] + "_video.mp4"
+
+    def _run():
+        _A2V_RUNNING[0] = True
+        try:
+            dur = _probe_duration_sec(aud)
+            log(f"[Audio→Video] {os.path.basename(aud)} ({_fmt_dur(dur)}) "
+                f"→ {os.path.basename(out_path)}"
+                + (" | ảnh nền" if img else " | nền màu tối")
+                + (" | burn phụ đề" if srt_p else ""))
+            # scale/pad về 720p chẵn pixel (libx264 kỵ kích thước lẻ)
+            vf = ("scale=1280:720:force_original_aspect_ratio=decrease,"
+                  "pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black")
+            if srt_p:
+                vf += f",subtitles={_ff_sub_filterpath(srt_p)}"
+            if globals().get("DETECTED_GPU"):
+                vcodec = ["-c:v", "h264_nvenc", "-preset", "p5",
+                          "-rc", "vbr", "-cq", "26", "-b:v", "0"]
+            else:
+                vcodec = ["-c:v", "libx264", "-tune", "stillimage",
+                          "-preset", "veryfast", "-crf", "23"]
+            if img:
+                src = ["-loop", "1", "-framerate", "15", "-i", img]
+            else:
+                src = ["-f", "lavfi", "-i", "color=c=0x141a26:s=1280x720:r=15"]
+            cmd = ([ffmpeg_path, "-y"] + src + ["-i", aud, "-vf", vf]
+                   + vcodec
+                   + ["-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p",
+                      "-shortest", "-movflags", "+faststart", out_path])
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW)
+            RUNNING_PROCESSES.append(proc)
+            _A2V_PROC[0] = proc
+            for line in proc.stdout:
+                m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
+                if m and dur > 0:
+                    el = (int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                          + float(m.group(3)))
+                    update_progress(min(el, dur), dur)
+            proc.wait()
+            try:
+                RUNNING_PROCESSES.remove(proc)
+            except ValueError:
+                pass
+            if proc.returncode == 0 and os.path.isfile(out_path):
+                update_progress(1, 1)
+                mb = os.path.getsize(out_path) / 2**20
+                log(f"[Audio→Video] ✅ Xong: {os.path.basename(out_path)} ({mb:.1f} MB)")
+                app.after(0, show_fireworks)
+                try:
+                    _reveal_output(out_path)
+                except Exception:
+                    pass
+            else:
+                log(f"[Audio→Video] ❌ ffmpeg lỗi (exit {proc.returncode}) — "
+                    "xem file log để biết chi tiết.")
+        except Exception as e:
+            log(f"[Audio→Video] ❌ {e}")
+        finally:
+            _A2V_PROC[0] = None
+            _A2V_RUNNING[0] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _find_whisper_python():
     """Tìm python có faster-whisper (voxcpm_env) để chạy srt_align_helper.py."""
     # 0. User override từ Settings
@@ -11438,13 +11611,68 @@ def load_pdf():
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _epub_extract_text(path):
+    """Bóc text từ .epub bằng stdlib (zip chứa xhtml — không cần lib ngoài).
+    Đọc theo đúng thứ tự SPINE trong content.opf (container.xml → opf →
+    manifest/spine); opf hỏng → fallback sort tên file. Trả về text thuần."""
+    import zipfile
+    import html as _html
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        ordered = []
+        try:
+            container = z.read("META-INF/container.xml").decode("utf-8", "replace")
+            m = re.search(r'full-path="([^"]+)"', container)
+            opf_path = m.group(1)
+            opf = z.read(opf_path).decode("utf-8", "replace")
+            opf_dir = os.path.dirname(opf_path)
+            # manifest: id → href
+            man = dict(re.findall(
+                r'<item[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"', opf))
+            man.update(dict(
+                (i, h) for h, i in re.findall(
+                    r'<item[^>]*\bhref="([^"]+)"[^>]*\bid="([^"]+)"', opf)))
+            for idref in re.findall(r'<itemref[^>]*\bidref="([^"]+)"', opf):
+                href = man.get(idref)
+                if not href:
+                    continue
+                full = (opf_dir + "/" + href) if opf_dir else href
+                full = full.replace("\\", "/")
+                if full in names:
+                    ordered.append(full)
+        except Exception:
+            ordered = []
+        if not ordered:   # opf không đọc được → mọi file html theo tên
+            ordered = sorted(n for n in names
+                             if n.lower().endswith((".xhtml", ".html", ".htm")))
+        parts = []
+        for n in ordered:
+            if not n.lower().endswith((".xhtml", ".html", ".htm")):
+                continue
+            try:
+                raw = z.read(n).decode("utf-8", "replace")
+            except Exception:
+                continue
+            raw = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
+            raw = re.sub(r"(?i)<br[^>]*>", "\n", raw)
+            raw = re.sub(r"(?i)</(p|div|h[1-6]|li|tr)>", "\n\n", raw)
+            raw = re.sub(r"<[^>]+>", " ", raw)
+            raw = _html.unescape(raw)
+            raw = re.sub(r"[ \t]+", " ", raw)
+            raw = re.sub(r"\n{3,}", "\n\n", raw).strip()
+            if raw:
+                parts.append(raw)
+    return "\n\n".join(parts)
+
+
 def load_doc_tts():
-    """Nạp file Word (.docx) / TXT vào pipeline PDF_CHUNKS để Đọc (TTS) —
-    dùng chung toàn bộ chức năng với Đọc PDF (TTS)."""
+    """Nạp file Word (.docx) / EPUB / TXT vào pipeline PDF_CHUNKS để Đọc (TTS)
+    — dùng chung toàn bộ chức năng với Đọc PDF (TTS)."""
     global PDF_FILE
     selected = filedialog.askopenfilename(
-        title="Chọn file Word (.docx) / TXT để đọc (TTS)",
-        filetypes=[("Word / Text", "*.docx *.txt"), ("Word", "*.docx"),
+        title="Chọn file Word (.docx) / EPUB / TXT để đọc (TTS)",
+        filetypes=[("Word / EPUB / Text", "*.docx *.epub *.txt"),
+                   ("Word", "*.docx"), ("EPUB (ebook)", "*.epub"),
                    ("Text", "*.txt"), ("All files", "*.*")]
     )
     if not selected:
@@ -11463,6 +11691,8 @@ def load_doc_tts():
                     app.after(0, lambda: log("[DOC] Thiếu python-docx (pip install python-docx)."))
                     return
                 text = "\n\n".join(p.text for p in Document(selected).paragraphs if p.text.strip())
+            elif ext == ".epub":
+                text = _epub_extract_text(selected)
             else:  # .txt / text khác
                 text = _read_text_smart(selected)
             chunks = _split_text_chunks(text)
