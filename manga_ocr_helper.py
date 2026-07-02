@@ -91,8 +91,19 @@ _APOS_FIX = {"hes": "he's", "shes": "she's", "thats": "that's",
              "wouldnt": "wouldn't", "isnt": "isn't", "arent": "aren't",
              "wasnt": "wasn't", "werent": "weren't", "im": "I'm",
              "ive": "I've", "youre": "you're", "theyre": "they're",
-             "whats": "what's", "lets": "let's"}
+             "whats": "what's", "lets": "let's", "letis": "let's",
+             "nows": "now's", "theres": "there's", "whos": "who's"}
 _APOS_RE = re.compile(r"(?i)\b(" + "|".join(_APOS_FIX) + r")\b")
+
+# '!' cuối từ bị EasyOCR đọc thành i/il/iii — chỉ khôi phục cho các từ thoại
+# comic phổ biến (suffix phải BẮT ĐẦU bằng 'i' nên 'tool' không dính; 'me' bị
+# loại khỏi list vì 'Mei' là tên nhân vật hay gặp).
+_EXCL_WORDS = ("us|meet|okay|ok|now|stop|wait|go|run|help|look|out|fire|"
+               "attack|move|come|here|there|die|kill|dodge|hurry|watch|"
+               "careful|front|price|chance|time|too|you|them|him|her|up|"
+               "down|away|enough|right|ready|first|fast|hard|again|back|"
+               "no|yes|what|why|it|off|on|more|wall|shield|sword|leader")
+_EXCL_RE = re.compile(r"(?i)\b(" + _EXCL_WORDS + r")(i[il]{0,2})\b")
 
 
 def _clean_block_text(text):
@@ -107,6 +118,12 @@ def _clean_block_text(text):
     t = text
     t = re.sub(r"\b([A-Z]{2,})[il]\b", r"\1!", t)      # OFFi / OFFl → OFF!
     t = re.sub(r"(?i)\b([a-z]*ff)i\b", r"\1!", t)      # Offi → Off!
+    t = re.sub(r"(?i)\b([a-z]{2,}fu)!", r"\1l", t)     # carefu! → careful (OCR đổi chỗ l↔!)
+    t = _EXCL_RE.sub(lambda m: m.group(1) + "!", t)    # usi/meetil/Okayil → us!/meet!/okay!
+    t = re.sub(r"(?i)\bil!", "I'll", t)                # "il! take care" → "I'll take care"
+    t = re.sub(r"(?i)\bill\b(?=\s+(?:make|take|be|do|get|go|show|give|kill|"
+               r"let|have|never|not|deal|handle|finish|protect|end|see|come|"
+               r"stay|find|hold|leave))", "I'll", t)   # "Ill make you pay" → "I'll ..."
     t = t.replace("_", " ")
     t = t.replace(";", ",")
     t = re.sub(r"(\s+\d{1,2})+\s*$", "", t)            # đuôi số lạc

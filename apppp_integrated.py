@@ -7255,6 +7255,17 @@ def _manga_tr_ocr_chapter(helper, ocr_py, imgs, lang, log_cb):
             pass
 
 
+# Block credit/watermark của nhóm scan (URL, discord, tên staff QC/translator...)
+# — dịch mấy dòng này chỉ sinh miếng vá trắng đè bậy lên tranh; bỏ qua = giữ nguyên.
+_MANGA_TR_SKIP_RE = re.compile(
+    r"(?i)(https?:|www\.|\.com\b|\.net\b|\.gg\b|discord|patreon|scans\b|"
+    r"scanlat|\bstudio\b|translat|proofread|typeset|cleaner|redraw|"
+    r"\bqc\b|raw provider|\bcredits?\b)")
+
+def _manga_tr_skip_block(text):
+    return bool(_MANGA_TR_SKIP_RE.search(text or ""))
+
+
 def _manga_translate_worker(chapters, lang, out_fmt, write_script, helper, ocr_py, root):
     def log_cb(m):
         app.after(0, lambda: log(m))
@@ -7275,25 +7286,32 @@ def _manga_translate_worker(chapters, lang, out_fmt, write_script, helper, ocr_p
             if pages is None:
                 log_cb(f"   ❌ Bỏ qua chương {ch_name} (OCR lỗi).")
                 continue
-            # Gom toàn bộ text của chương → dịch 1 lần (giữ ngữ cảnh, ít gọi API)
+            # Gom toàn bộ text của chương → dịch 1 lần (giữ ngữ cảnh, ít gọi API).
+            # Block credit/URL bị bỏ qua: không dịch + không vá (giữ nguyên tranh).
             flat, index = [], []   # index[k] = (page_i, block_i)
+            n_skip = 0
             for pi, pg in enumerate(pages):
                 for bi, blk in enumerate(pg.get("blocks", [])):
+                    if _manga_tr_skip_block(blk["text"]):
+                        n_skip += 1
+                        continue
                     flat.append(blk["text"])
                     index.append((pi, bi))
             if not flat:
                 log_cb(f"   ⚠ Không OCR ra chữ nào ở chương {ch_name}.")
                 continue
-            log_cb(f"   🌐 Dịch {len(flat)} cụm thoại...")
+            log_cb(f"   🌐 Dịch {len(flat)} cụm thoại..."
+                   + (f" (bỏ qua {n_skip} block credit/watermark)" if n_skip else ""))
             translated = _translate_segments(
                 flat, _translate_default_context(),
                 progress_cb=lambda d, t: update_progress(d, t), log_cb=log_cb)
             if _MANGA_STOP[0]:
                 break
-            # map kết quả về từng trang
-            per_page = {}
+            # map kết quả về đúng CHỈ SỐ block ("" = bỏ qua → render không vá)
+            per_page = {pi: [""] * len(pg.get("blocks", []))
+                        for pi, pg in enumerate(pages)}
             for k, (pi, bi) in enumerate(index):
-                per_page.setdefault(pi, []).append(translated[k])
+                per_page[pi][bi] = translated[k]
             ch_out_dir = os.path.join(out_root, ch_name)
             out_imgs = []
             for pi, pg in enumerate(pages):
