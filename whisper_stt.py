@@ -9,10 +9,17 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--audio",  required=True, help="File audio cần transcribe")
+    parser.add_argument("--audio",  default="", help="File audio cần transcribe")
     parser.add_argument("--model",  default="small", help="Model size: tiny/base/small/medium/large-v3")
     parser.add_argument("--lang",   default="vi",   help="Ngôn ngữ ISO (vi, en, ...)")
+    parser.add_argument("--verify-json", default="", dest="verify_json",
+                        help='File JSON {"items":[{"idx":n,"file":path}]} — '
+                             "transcribe hàng loạt (load model 1 lần), in "
+                             "VERIFY:idx:text mỗi dòng + ALL_DONE (soát đọc sai)")
     args = parser.parse_args()
+    if not args.audio and not args.verify_json:
+        print("ERROR:cần --audio hoặc --verify-json", flush=True)
+        sys.exit(1)
 
     try:
         from faster_whisper import WhisperModel
@@ -26,6 +33,28 @@ def main():
 
     print(f"[Whisper] device={device}, model={args.model}", file=sys.stderr, flush=True)
     model = WhisperModel(args.model, device=device, compute_type=compute)
+
+    if args.verify_json:
+        # Chế độ soát đọc sai: nghe lại từng file line_NNNN.mp3 (clip ngắn) —
+        # vad_filter TẮT (VAD hay nuốt clip 1-2s), beam 1 cho nhanh.
+        import json
+        with open(args.verify_json, "r", encoding="utf-8-sig") as f:
+            items = json.load(f).get("items", [])
+        n = max(len(items), 1)
+        for i, it in enumerate(items):
+            idx = it.get("idx", i)
+            text = ""
+            try:
+                segs, _info = model.transcribe(
+                    it.get("file", ""), language=args.lang,
+                    beam_size=1, vad_filter=False)
+                text = " ".join(s.text.strip() for s in segs).strip()
+            except Exception as e:
+                print(f"WARN:{idx}:{e}", file=sys.stderr, flush=True)
+            print(f"VERIFY:{idx}:{text.replace(chr(10), ' ')}", flush=True)
+            print(f"PROGRESS:{i + 1}:{n}", file=sys.stderr, flush=True)
+        print("ALL_DONE", flush=True)
+        return
 
     segments, info = model.transcribe(
         args.audio,

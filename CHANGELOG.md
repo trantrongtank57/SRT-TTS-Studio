@@ -6,6 +6,49 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **⚡ Kịch bản 1-click** — dropdown mới trong card "Bật/tắt nhanh" (Bảng điều khiển):
+  chọn Lồng tiếng phim / Truyện audio / Podcast là cả cụm tùy chọn (cắt lặng, loudnorm,
+  cân âm lượng, định dạng ra, nghỉ giữa đoạn, m4b...) được set đúng một lượt;
+  "↺ Mặc định" trả về như ban đầu. Giọng đọc không bị đụng.
+- **✂ Chia final theo giờ** — nút mới ở trang SRT: chia file audio dài thành các phần
+  N phút (mặc định 59 — vừa giới hạn upload) bằng stream-copy (không re-encode, chia
+  gần như tức thì); nếu có `final_synced.srt` cạnh audio thì chia kèm SRT từng phần
+  (timestamp tự dời về 0).
+- **🚀 Bắt đầu nhanh** — nút mới trên thanh công cụ Bảng điều khiển cho người mới:
+  chọn tình huống ("có SRT", "có video", "có link YouTube", "có PDF/Word", "muốn dịch",
+  "gõ text thử giọng") → app mở đúng trang và in các bước làm vào ô log.
+- **📚 Thư viện nhân vật series** — 🤖 Tự phân vai giờ nhớ "nhân vật nào giọng nào" vào
+  `series_cast.json` cạnh file SRT (theo thư mục): làm phim bộ, các tập sau nhân vật quen
+  tự giữ ĐÚNG giọng như tập trước — casting tập 2 trở đi gần như tự động và nhất quán cả bộ.
+- **📡 Theo dõi kênh YouTube** — nút mới trong card YouTube của Trợ lý lồng tiếng: lưu danh
+  sách kênh/playlist theo dõi, bấm "Kiểm tra & dub video mới" là liệt kê N video mới nhất
+  mỗi kênh, bỏ qua video đã dub (nhận biết qua file `_dubbed.mp4` trong thư mục tải —
+  sống sót qua restart), video mới tự vào hàng đợi lồng tiếng với tùy chọn wizard hiện tại.
+- **🎵 Nhạc nền khi Merge FFmpeg** — ô "Nhạc nền" mới dưới các tùy chọn merge: chọn 1 file
+  nhạc/ambience, nó tự lặp dưới giọng đọc (âm lượng chỉnh được, mặc định 0.12), tự cắt khi
+  hết lời + fade-out 2 giây — truyện audio không còn "khô". Để trống = tắt; nhớ qua phiên.
+- **📺 Dub cả playlist / kênh YouTube** — ô link YouTube của Trợ lý lồng tiếng giờ nhận
+  luôn link playlist hoặc kênh (`/playlist?list=`, `/@tenkenh`, `/channel/`): tự liệt kê
+  danh sách video (yt-dlp --flat-playlist, trần 100 video) rồi tải → dub tuần tự từng cái.
+  Link video lẻ (kể cả có &list= kèm) vẫn chỉ dub đúng video đó như cũ.
+- **☑ Tự soát đọc sai (STT) khi xong** — checkbox mới cạnh "Tự tạo lại dòng FAIL":
+  batch SRT xong tự chạy 🎙🔍 Soát đọc sai; nếu auto-retry FAIL đang chạy thì chờ rảnh
+  rồi mới soát (soát được luôn các dòng vừa retry). Chạy qua đêm sáng dậy có sẵn báo cáo.
+  Có cả trong card "Bật/tắt nhanh" của Bảng điều khiển; được nhớ qua phiên.
+- **🎨 Màu phân vai trong Bảng phụ đề** — khi SRT có luật phân vai, 📝 Bảng phụ đề thêm
+  cột "Vai" và tô màu nền mỗi vai một màu — nhìn phát thấy ngay luật "từ dòng X đến Y"
+  có lệch dòng không, khỏi phải nhớ số dòng trong đầu.
+- **🎙🔍 Soát đọc sai bằng STT (round-trip QC)** — nút mới ở trang SRT: Whisper nghe lại
+  toàn bộ audio đã tạo rồi so nội dung với text SRT — bắt các dòng đọc thiếu chữ/nuốt vế/
+  đọc sai mà QC âm lượng-thời lượng không thấy. Kết quả mở cửa sổ từng dòng nghi sai
+  kèm ▶ nghe / 🔁 đọc lại. (Cần voxcpm_env; model Whisper small, load 1 lần cho cả batch.)
+- **🕘 Lịch sử job** — 30 batch gần nhất tự được ghi lại (file, output, thống kê, giọng);
+  nút mới ở trang SRT mở danh sách: ↻ nạp lại nguyên cấu hình (SRT + output + giọng)
+  để chạy tập tiếp theo của series, 📂 mở thư mục output cũ.
+- **🎚 Phân vai theo tốc độ/cao độ (Edge)** — mỗi luật phân vai giờ có thêm 2 ô
+  Tốc độ/Cao độ (vd `+20%` / `-3Hz`): cùng 1 giọng Edge nhưng mỗi nhân vật một nhịp —
+  rẻ và nhanh hơn nhiều so với đổi hồ sơ/engine; chọn "(Giọng UI)" để chỉ chỉnh
+  tốc độ/cao độ mà không đổi giọng (không cần tạo hồ sơ nào). Lưu kèm sidecar như cũ.
 - **🎼 Tách nhạc nền khi ghép video (demucs)** — checkbox mới ở Mux (hiện khi "Giữ audio gốc"):
   bỏ hẳn lời thoại gốc, mix **nhạc nền sạch + giọng lồng tiếng** thay cho ducking —
   chất lượng "phim chiếu rạp". Tự fallback về ducking nếu máy thiếu voxcpm_env/model.

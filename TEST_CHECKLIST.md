@@ -180,6 +180,43 @@
 - [ ] Đang chạy 🪄 thì bấm ✂ Rút gọn AI → báo "Đang chạy" (chung khóa)
 - [ ] **🎨 Style burn-in**: wizard → tick "Gắn phụ đề cứng" + Cỡ "To" + Màu "Vàng" → video ra chữ vàng to viền đen; đổi "Nhỏ"+"Trắng" → đúng theo; lựa chọn được nhớ sau khi đóng/mở app
 
+## S. Đợt 2026-07-03 (2): Soát đọc sai STT + Lịch sử job + Phân vai rate/pitch
+- [ ] **🎙🔍 Soát đọc sai (STT)**: chạy 1 batch SRT ngắn xong → nút 🎙🔍 (cột io) → thanh tiến trình chạy → nếu sạch: log "✅ N dòng khớp nội dung"; sửa tay 1 file `line_NNNN.mp3` (thay bằng audio nói câu khác) → chạy lại → dialog mở đúng dòng đó kèm % khớp + "Kỳ vọng/Nghe được" → ▶ nghe đúng file, 🔁 đọc lại xong hiện ✅
+- [ ] Chưa Load SRT / output rỗng / thiếu voxcpm_env → từ chối sớm kèm hướng dẫn, không crash
+- [ ] Đang TTS chạy → bấm 🎙🔍 → báo "Đang có tiến trình khác"
+- [ ] **🕘 Lịch sử job**: chạy xong 1 batch provider → nút 🕘 → dialog có entry mới nhất (thời gian, file, số dòng, giọng); ↻ → SRT + output + giọng được nạp lại đúng (đổi giọng khác trước khi ↻ để thấy giọng bị đổi về); 📂 mở đúng thư mục; entry PDF chỉ áp giọng + output kèm hướng dẫn
+- [ ] `job_history.json` xuất hiện cạnh settings.json, tối đa 30 entry
+- [ ] **🎚 Phân vai rate/pitch**: 🎭 Phân vai → luật chọn "(Giọng UI)" + Tốc độ `+40%` cho dòng 0-2 → 🎬 Lưu & Chạy → 3 dòng đầu đọc nhanh hơn hẳn, các dòng khác bình thường; xong batch ô Tốc độ Edge trên tab Giọng nói trở về giá trị cũ
+- [ ] Luật hồ sơ + override pitch `-5Hz` → nhóm đó vừa đổi giọng vừa trầm hơn; sidecar `.cast.json` lưu cả rate/pitch, load lại SRT vẫn còn
+- [ ] Không có hồ sơ giọng nào vẫn mở được dialog phân vai (chỉ dùng "(Giọng UI)" + rate/pitch)
+
+## T. Đợt 2026-07-03 (3): Auto soát STT + màu phân vai + playlist YouTube
+- [ ] **☑ Tự soát đọc sai (STT) khi xong**: tick checkbox (tab Giọng nói) → chạy 1 batch SRT ngắn → sau khi xong (và sau auto-retry nếu cùng bật) tự thấy log 🎙🔍 + thanh tiến trình soát chạy; có dòng nghi sai → dialog tự mở
+- [ ] Checkbox được nhớ qua phiên (ui_prefs); toggle cũng có trong card "Bật/tắt nhanh" Dashboard và đồng bộ 2 chiều
+- [ ] Bỏ tick → batch xong không tự soát; batch PDF → không tự soát (chỉ SRT)
+- [ ] **🎨 Màu phân vai**: đặt ≥2 luật phân vai (khác hồ sơ hoặc khác rate/pitch) → mở 📝 Bảng phụ đề → có cột "Vai" + mỗi vai một màu nền đúng dải dòng; dòng ngoài luật không màu; SRT không có luật → bảng như cũ (không có cột Vai)
+- [ ] Sửa text 1 dòng có màu → ✏ Cập nhật → dòng vẫn giữ màu vai
+- [ ] **📺 Playlist YouTube**: wizard → ô link dán link playlist ngắn (3-5 video) → chạy → log "📚 Playlist/kênh... ✅ N video trong danh sách" → tải + dub tuần tự từng video, mỗi video một thư mục `_dub`
+- [ ] Link kênh `/@tenkenh` → tự nối `/videos`, liệt kê OK; danh sách >100 → log trần 100
+- [ ] Link watch?v= có `&list=` kèm → vẫn chỉ dub 1 video đó (không nổ ra cả playlist)
+- [ ] Bấm ⏹ giữa chừng playlist → hủy phần còn lại như hàng đợi video thường
+
+## U. Đợt 2026-07-03 (4): Thư viện nhân vật + theo dõi kênh + nhạc nền merge
+- [ ] **📚 Thư viện nhân vật**: đặt 2 SRT cùng thư mục → tập 1 chạy 🤖 Tự phân vai → `series_cast.json` xuất hiện cạnh SRT + log "📚 Đã lưu N nhân vật"; Load tập 2 → 🤖 → log "📚 Nạp N nhân vật đã có giọng" và các nhân vật cũ giữ đúng hồ sơ như tập 1
+- [ ] Xóa 1 hồ sơ giọng có trong thư viện → 🤖 tập sau không lỗi (nhân vật trỏ hồ sơ đã xóa bị bỏ, LLM gán lại)
+- [ ] **📡 Theo dõi kênh**: wizard → card YouTube → nút 📡 → dán 1 link kênh/playlist → 💾 Lưu (ra `yt_watch.json`) → "🔍 Kiểm tra & dub video mới" → log liệt kê "X/N video chưa dub" → các video mới vào hàng đợi dub với đúng tùy chọn wizard
+- [ ] Chạy kiểm tra lần 2 sau khi dub xong → log "✅ Không có video mới"; đang dub mà bấm kiểm tra → từ chối
+- [ ] **🎵 Nhạc nền merge**: chọn file nhạc + Vol 0.12 → Merge FFmpeg → final có nhạc nền nhỏ dưới giọng, tự lặp nếu nhạc ngắn hơn, kết thúc đúng lúc hết lời (fade 2s); nghe rõ lời không bị nhạc đè
+- [ ] Để trống ô nhạc nền → merge như cũ; đường dẫn sai → log ⚠ bỏ qua, merge vẫn chạy; Vol 0.3 → nhạc to hơn rõ rệt; kết hợp loudnorm vẫn OK
+- [ ] Đường dẫn nhạc nền + Vol được nhớ qua phiên (ui_prefs)
+
+## V. Đợt 2026-07-03 (5): Kịch bản 1-click + chia file + Bắt đầu nhanh
+- [ ] **⚡ Kịch bản**: Dashboard → card Bật/tắt nhanh → chọn "📖 Truyện audio" → Áp dụng → các checkbox liên quan đổi đúng (căn giữa khe lặng ON, loudnorm ON, m4b ON, nghỉ đoạn 400); trang Giọng nói/SRT/Doc hiển thị đồng bộ; "↺ Mặc định" trả về ban đầu
+- [ ] Áp kịch bản KHÔNG đổi giọng/provider/engine đang chọn
+- [ ] **✂ Chia final theo giờ**: merge 1 file final dài >2 phút → nút ✂ → đặt "Phút mỗi phần" = 1 → ra `final_p01/p02/...` đúng số phần, mỗi phần đúng ~1 phút, chia xong mở thư mục; có `final_synced.srt` → ra kèm `_pNN.srt` timestamp bắt đầu từ 0
+- [ ] File ngắn hơn 1 phần → log "không cần chia", không ra file; file sai đường dẫn → báo lỗi sớm
+- [ ] **🚀 Bắt đầu nhanh**: Dashboard → nút 🚀 → dialog 6 tình huống; bấm "Có file SRT" → nhảy trang TTS + logbox in 4 bước; bấm "Có video" → mở thẳng wizard lồng tiếng
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)
