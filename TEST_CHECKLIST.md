@@ -236,10 +236,13 @@
 - [ ] URL trống/sai → log ❌ hướng dẫn; trang cần JS/Cloudflare → log ❌ "không tách được nội dung"/"không tìm thấy link chương", không treo
 - [ ] Đang tải truyện chữ thì bấm ⬇ ở card Webtoon (và ngược lại) → log ⚠ "Đang có tác vụ truyện chạy"
 - [ ] **🔊 Đọc TTS**: chọn file `_full.txt` (hoặc nhiều file chương) → `subtitle_list` hiện các đoạn `[i]`, tự sang trang Tài liệu, "Đọc (TTS)" + "Merge Audio" chạy được; bật **Xuất .m4b có chương** → file m4b có mục lục đúng tên "Chương N" (ffprobe show_chapters)
-- [ ] **🚀 Tải → Đọc → Audiobook (1 nút)**: URL bộ truyện + Chương `1-3` + tick `.m4b có chương` → 🚀 → log 3 pha (tải → `🚀 ② Đọc TTS` → `🚀 ③ Merge`) chạy liền mạch bằng giọng đang cấu hình → ra `pdf_output_*.mp3` + `.m4b` trong `<truyện>\audio\` + pháo hoa + mở thư mục
-- [ ] Chạy lại 🚀 cùng URL/khoảng → pha tải log `♻ N/M chương đã có` (KHÔNG log từng chương), pha TTS `SKIP` các đoạn đã có → chỉ merge lại
-- [ ] Đang chạy 🚀 bấm **⏹ Dừng** ở pha TTS → dừng được; chạy lại → resume
-- [ ] **📡 Theo dõi bộ truyện**: thêm 1-2 URL bộ đang ra → 💾 Lưu (ra `novel_watch.json` cạnh settings.json) → 🔍 Kiểm tra: bộ đã tải đủ log "không có chương mới"; bộ có chương mới log `+N chương mới` + cập nhật `_full.txt` + pháo hoa; đóng mở app danh sách còn nguyên
+- [ ] **🚀 Tải → Đọc → Audiobook (1 nút, THEO CHƯƠNG)**: URL bộ truyện + Chương `1-3` + tick `.m4b có chương` → 🚀 → pha tải xong thì đọc TỪNG chương (`🚀 [k/N] Đọc chuong_...`), mỗi chương ra `audio_chap\chuong_NNNNN.mp3` (parts bị xóa sau khi đóng chương), cuối cùng `🚀 ③ Nối` ra `<truyện>_audiobook.mp3` + `.m4b` mục lục đúng tên chương + pháo hoa
+- [ ] Chạy lại 🚀 cùng URL/khoảng → pha tải log `♻ N/M chương đã có`, pha TTS bỏ qua chương đã có mp3, log "Không có chương mới — audiobook giữ nguyên" (không nối lại)
+- [ ] Tải thêm chương mới (tăng khoảng lên `1-5`) → chạy 🚀 → CHỈ đọc 2 chương mới, audiobook nối lại đủ 5 chương đúng thứ tự
+- [ ] Đang chạy 🚀 bấm **⏹ Dừng** ở pha TTS → dừng được; chạy lại → resume mức đoạn (parts của chương dở giữ nguyên)
+- [ ] Xóa 1 file `audio_chap\chuong_00002.mp3` rồi chạy 🚀 → chỉ chương 2 được đọc lại (regen theo chương)
+- [ ] **📡 Theo dõi bộ truyện**: thêm 1-2 URL bộ đang ra → 💾 Lưu (ra `novel_watch.json` cạnh settings.json) → 🔍 Kiểm tra: bộ đã tải đủ log "không có chương mới"; bộ có chương mới log `+N chương mới` + cập nhật `_full.txt` + pháo hoa; đóng mở app danh sách + checkbox 🔊 còn nguyên
+- [ ] **📡 + 🔊 Đọc luôn chương mới**: tick 🔊 → 🔍 → sau pha tải, các bộ có chương mới tự đọc TTS đúng phần mới + audiobook nối lại; bộ không có chương mới KHÔNG bị đọc lại
 - [ ] Đang có tác vụ truyện khác chạy → 🚀/🔍 từ chối với log ⚠, không chen ngang
 
 ## Y. Đợt 2026-07-03 (8): 🎬 Lấy audio mẫu từ video / YouTube
@@ -257,6 +260,43 @@
 - [ ] Chọn giọng `ja-JP`/`en-US` → ▶ → câu mẫu đúng ngôn ngữ đó (không đọc tiếng Việt ngọng)
 - [ ] Bấm ▶ liên tiếp 2 giọng → chỉ bản sau phát (không chồng tiếng)
 - [ ] Đang chạy batch TTS → ▶ → log ⚠ từ chối (giọng dùng chung), không phá batch
+
+## AA. Đợt 2026-07-03 (10): 📰 Đọc báo/RSS + 🌊 Sóng nhạc động
+- [ ] Trang **Tài liệu → Audio** hiện card "📰 Đọc bài báo / RSS → Audio" (Link / Số bài / 2 nút)
+- [ ] Dán link 1 **bài báo** VnExpress/Dân Trí/Tuổi Trẻ → 📰 → log `✔ <tiêu đề> (N ký tự)`, `subtitle_list` hiện các đoạn, mode pdf bật → "Đọc (TTS)" chạy được — nội dung là THÂN BÀI (không dính menu/hộp promo "Chọn VnExpress làm nguồn...")
+- [ ] Dán link **RSS** (`https://vnexpress.net/rss/tin-moi-nhat.rss`) + Số bài `3` → lấy 3 bài mới nhất, mỗi bài header `Phần i: <tiêu đề>`; bài video/quiz (ít chữ) bị bỏ qua với ⚠ — đã verify live 2026-07-03
+- [ ] Merge với **.m4b có chương** sau khi đọc RSS nhiều bài → m4b có mục lục theo bài (ffprobe show_chapters)
+- [ ] Link rác / trang cần JS → log ❌ rõ ràng, không treo; ⏹ Dừng giữa lúc tải nhiều bài → dừng được
+- [ ] **🌊 Sóng nhạc động** (card Audio→Video, trang Video): tick 🌊 + audio + ảnh nền → 🎬 Tạo Video → video ra có dải sóng chạy theo nhạc sát đáy màn hình (đã verify lệnh 2 nhánh ảnh nền/nền màu với ffmpeg 8.0)
+- [ ] 🌊 + phụ đề burn → chữ phụ đề nằm TRÊN dải sóng, không bị che
+- [ ] Bỏ tick 🌊 → hành vi cũ giữ nguyên (ảnh tĩnh, tune stillimage)
+
+## AB. Đợt 2026-07-03 (11): ☕ Bản tin 1 nút
+- [ ] Card 📰 có nút **☕ Bản tin (1 nút)** giữa 📰 và ⏹
+- [ ] Dán RSS (`https://vnexpress.net/rss/tin-moi-nhat.rss`) + Số bài `3` → ☕ → 3 pha liền mạch (tải bài → `☕ ② Đọc TTS` → `☕ ③ Merge`) → ra `pdf_output_*.mp3` + `.m4b` mục lục theo bài trong `Downloads\BanTin\bantin_<stamp>\` + pháo hoa + mở thư mục
+- [ ] Dán link 1 bài lẻ → ☕ → ra mp3 (không .m4b — chỉ 1 bài)
+- [ ] Đang chạy ☕ bấm ⏹ ở pha TTS → dừng được, không treo
+- [ ] Đang có job TTS khác chạy → ☕ từ chối với log ⚠
+- [ ] Nút 📰 thường (nạp không đọc) vẫn hoạt động như cũ
+
+## AC. Đợt 2026-07-03 (12): Khung dọc + Mục lục YouTube + Cắt tại chỗ lặng
+- [ ] **Khung hình Audio→Video**: dropdown "Khung:" có 16:9 / 9:16 / 1:1; chọn **9:16** + ảnh nền + 🌊 → video ra 720×1280 (đã verify lệnh), ảnh được pad giữa, sóng vẫn sát đáy
+- [ ] Chọn 1:1 → ra 720×720; để 16:9 → hành vi cũ (1280×720)
+- [ ] **Mục lục YouTube**: Merge Audio với ".m4b có chương" (tài liệu có heading Chương N) → cạnh output có `youtube_description.txt`, dòng đầu `00:00`, mỗi chương 1 dòng `MM:SS Tên` — dán vào mô tả YouTube hiện chapter
+- [ ] Chuỗi 🚀 truyện chữ với .m4b → `youtube_description.txt` cũng xuất hiện trong thư mục truyện
+- [ ] **🔇 Cắt tại chỗ lặng** (✂ Chia final theo giờ): file dài >2 phần + tick 🔇 → log "Đang dò chỗ lặng..." rồi `🔇 Mốc cắt: ...`, nghe cuối mỗi phần KHÔNG đứt giữa câu; file SRT chia kèm khớp mốc mới
+- [ ] Bỏ tick 🔇 → cắt đúng mốc cứng như cũ; file toàn tiếng không có chỗ lặng → log ⚠ fallback mốc cứng
+
+## AD. Đợt 2026-07-03 (13): 🎵 Nhạc nền audiobook + Batch Audio→Video
+- [ ] Trang Tài liệu → dưới hàng "Nghỉ giữa đoạn" có hàng **🎵 Nhạc nền** (ô path + 📁 + Vol, mặc định 0.12); giá trị được nhớ qua phiên (ui_prefs)
+- [ ] Load TXT ngắn → Đọc TTS → chọn file nhạc + **Merge Audio** → log `[PDF] 🎵 Đã trộn nhạc nền...` → nghe final có nhạc nhẹ dưới giọng, ĐỘ DÀI KHÔNG ĐỔI, nhạc fade nhỏ dần 2s cuối; nhạc ngắn hơn giọng đọc vẫn phủ đủ (loop — đã verify)
+- [ ] Bật ".m4b có chương" cùng nhạc nền → file .m4b cũng có nhạc
+- [ ] Chuỗi 🚀 truyện chữ với ô nhạc nền đã set → `_audiobook.mp3` có nhạc nền
+- [ ] Ô nhạc nền rỗng → hành vi cũ; file nhạc không tồn tại/lỗi → log ⚠, final sạch vẫn còn
+- [ ] **Batch Audio→Video**: Browse audio chọn NHIỀU file (vd các `_pNN.mp3` từ ✂ Chia) → ô hiện `a.mp3; b.mp3;...` → 🎬 → mỗi file ra 1 video `[k/N]`, pháo hoa 1 lần cuối
+- [ ] Batch với các phần có `_pNN.srt` cạnh file → log ℹ bỏ qua ô Phụ đề + mỗi video tự burn đúng SRT cùng tên
+- [ ] Đang chạy loạt bấm **⏹** → hủy cả loạt (không chỉ file hiện tại); 1 file lỗi → log ❌ và chạy tiếp file sau
+- [ ] Chọn 1 file như cũ → hành vi cũ giữ nguyên
 
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
