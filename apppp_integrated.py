@@ -8162,7 +8162,10 @@ def _ainovel_start():
             ainovel_out_var.set(out_dir)
         except Exception:
             pass
-    cfg_dir = os.path.join(out_dir, ".ainovel_cfg")
+    # config.json chứa API key plaintext → ghi vào thư mục cấu hình (cạnh settings.json,
+    # cùng mức tin cậy với các key khác), KHÔNG ghi vào thư mục truyện vì người dùng
+    # có thể zip/chia sẻ thư mục đó → lộ key.
+    cfg_dir = os.path.join(_CONFIG_DIR, "ainovel_cfg")
     ok, res = _ainovel_write_config(cfg_dir)
     if not ok:
         log(f"📖 [Viết truyện AI] ❌ {res}")

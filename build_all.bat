@@ -528,6 +528,16 @@ if exist "F5-TTS-Vietnamese-ViVoice\model_last.pt" (
     echo   [!] Bo qua model F5-TTS: khong thay F5-TTS-Vietnamese-ViVoice\model_last.pt
 )
 
+:: --- Companion binary tuy chon (khong bat buoc) can exe ---
+:: ainovel-cli.exe = binary Go cho tinh nang 'Viet truyen AI' (khong bundle, giong
+:: yt-dlp/gallery-dl). Copy neu co san canh source; thieu thi chi tinh nang do bao loi.
+if exist "ainovel-cli.exe" (
+    echo   Copying ainovel-cli.exe vao output\Portable\...
+    copy /Y "ainovel-cli.exe" "output\Portable\ainovel-cli.exe" >nul
+) else (
+    echo   [!] Bo qua ainovel-cli.exe ^(tuy chon^): khong thay - tinh nang Viet truyen AI se bao loi khi dung
+)
+
 :: --- Huong dan trien khai (neu co) ---
 if exist "MOVE_CHECKLIST.txt" copy /Y "MOVE_CHECKLIST.txt" "output\MOVE_CHECKLIST.txt" >nul
 
@@ -574,7 +584,7 @@ if exist "output\Portable\SRT_TTS_Studio_Trial.exe" (
 )
 
 echo.
-echo   Onefile exes + companion scripts + models + rvc_env + F5-TTS model deu nam trong output\Portable\
+echo   Onefile exes + companion scripts + models + rvc_env + F5-TTS model + ainovel-cli.exe deu nam trong output\Portable\
 echo   (Cac onefile can cac file nay nam CANH exe moi chay du tinh nang)
 
 echo.
