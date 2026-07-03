@@ -649,6 +649,15 @@ Video page section `_sec_a2v` ("🖼 Audio → Video"): audio (required) + backg
 
 `load_doc_tts` also accepts `.epub` via `_epub_extract_text()` (pure stdlib: `zipfile` + regex — container.xml → content.opf → **spine order** with manifest id→href both attribute orders; fallback = sorted html names). Strips script/style, `<br>`/block-close → newlines, tags → space, `html.unescape`. Output feeds the same `_split_text_chunks` → `PDF_CHUNKS` pipeline.
 
+## AI Novel writing — `ainovel-cli` (📖 Viết truyện AI, doc page)
+
+Section `_sec_ainovel` on the "doc" page runs [kentjuno/ainovel-cli](https://github.com/kentjuno/ainovel-cli) — a **Go** multi-agent CLI (Architect→Writer→Editor) that writes a long novel from one prompt — then loads the generated chapters into the Doc-TTS pipeline (novel → audio-story). Follows the **yt-dlp/gallery-dl companion pattern**: `ainovel-cli.exe` is a Go binary, **NOT bundled / NOT a spec hiddenimport / not copied by the build** — resolved by `_find_ainovel()` (PATH → beside exe / parents via `_install_dirs()`). Missing → only this feature errors with guidance.
+
+- **Config from existing keys**: `_ainovel_write_config(dest_dir)` generates `<out>/.ainovel_cfg/config.json` from `TRANSLATE_PROVIDER` + the app's stored LLM key (`_AINOVEL_PROVIDER_MAP` maps Claude→`anthropic`, Gemini→`gemini`, OpenAI→`openai`, DeepSeek→`deepseek`, Groq→custom `type:openai`+`base_url`; **Offline refused**). Model = `ainovel_model_var` (empty = per-provider default); `style` = `ainovel_style_var` (default/suspense/fantasy/romance). The config is passed via `--config` — headless mode **refuses first-run setup**, so writing a complete config file first is what avoids the setup prompt.
+- **Run**: `_ainovel_worker` runs `ainovel-cli --headless --config <path> --prompt "<text>"` with `cwd=out_dir` (output lands at `<out_dir>/output/novel/chapters/NN.md` — CWD-relative, no output flag exists), `stdin=DEVNULL` (unattended — headless can otherwise block on `newTerminalAskUser`), `CREATE_NO_WINDOW`. stdout is the streamed novel text + events; only milestone lines are logged (not every token). On success (rc 0 + ≥1 chapter) → fireworks.
+- **Decoupled from `set_mode`** (translate-button pattern): self-locked via `_AINOVEL_RUNNING`, own ⏹ (`_ainovel_stop` → `_proc_tree_action(_AINOVEL_PROC[0], "kill")`); NOT in `_CTRL_GROUPS`/`_WS_OUTPUT`.
+- **Novel → TTS**: `_ainovel_to_tts()` (mirrors `_manga_script_to_tts`) natural-sorts `chapters/*.md`, light-strips markdown (`_ainovel_md_strip`), joins → `_split_text_chunks` → `PDF_CHUNKS`, `set_mode("pdf")`, jumps to the doc page. The existing Đọc (TTS)/Merge Audio buttons do the rest.
+
 ## Mux Audio → Video (`_run_mux_thread`)
 
 "Ghép Audio Final vào Video" (in the "video" page) — pick a video + a final audio track (e.g. `final.mp3` from Merge FFmpeg), adjust per-source volume, then mux into `<video>_dubbed.mp4`. Functions live just after `open_compress_folder` (`load_mux_video` @12268, `_run_mux_thread` @12422, `start_mux_video` @12621); globals `MUX_VIDEO_FILE` / `MUX_AUDIO_FILE` / `MUX_OUTPUT_DIR` next to the `COMPRESS_*` globals.

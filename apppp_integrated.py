@@ -8040,6 +8040,368 @@ ctk.CTkLabel(
     font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
     wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
 
+# ════════════════════════════════════════════════════════════════════════════
+# 📖 VIẾT TRUYỆN AI (ainovel-cli)
+# CLI Go đa tác tử (Architect→Writer→Editor) sinh tiểu thuyết dài từ 1 câu prompt.
+# Là binary Go — KHÔNG bundle (giống yt-dlp/gallery-dl); người dùng đặt
+# ainovel-cli.exe cạnh app / trên PATH. App tự sinh config.json từ API key đã lưu
+# ở ⚙ Cài đặt, chạy headless, rồi có nút nạp truyện thẳng vào Doc-TTS.
+# Decoupled khỏi set_mode (translate-button pattern): tự khóa _AINOVEL_RUNNING.
+# ════════════════════════════════════════════════════════════════════════════
+_AINOVEL_RUNNING = [False]
+_AINOVEL_STOP    = [False]
+_AINOVEL_PROC    = [None]
+
+# provider app → (key ainovel, tên global chứa api_key, model mặc định, base_url, type)
+_AINOVEL_PROVIDER_MAP = {
+    "Claude":   ("anthropic", "ANTHROPIC_API_KEY", "claude-sonnet-4",           "",                                   ""),
+    "Gemini":   ("gemini",    "GEMINI_API_KEY",    "gemini-2.5-flash",          "",                                   ""),
+    "OpenAI":   ("openai",    "OPENAI_API_KEY",    "gpt-4o",                    "",                                   ""),
+    "DeepSeek": ("deepseek",  "DEEPSEEK_API_KEY",  "deepseek-chat",             "",                                   ""),
+    "Groq":     ("groq",      "GROQ_API_KEY",      "llama-3.3-70b-versatile",   "https://api.groq.com/openai/v1",     "openai"),
+}
+
+
+def _find_ainovel():
+    """Tìm ainovel-cli → list lệnh để Popen. None nếu không có.
+    Ưu tiên ainovel-cli.exe (PATH / cạnh exe / parent)."""
+    exe = shutil.which("ainovel-cli") or shutil.which("ainovel-cli.exe")
+    if exe:
+        return [exe]
+    try:
+        for root in _install_dirs():
+            for name in ("ainovel-cli.exe", "ainovel-cli"):
+                cand = os.path.join(root, name)
+                if os.path.isfile(cand):
+                    return [cand]
+    except Exception:
+        pass
+    return None
+
+
+def _ainovel_write_config(dest_dir):
+    """Sinh config.json cho ainovel-cli từ provider + API key đã lưu trong app.
+    Trả (ok, path_or_msg). style lấy từ ainovel_style_var, model từ ainovel_model_var
+    (rỗng = mặc định theo provider)."""
+    prov = TRANSLATE_PROVIDER
+    if prov == "Offline":
+        return (False, "Provider hiện là 'Offline' — ainovel-cli cần API LLM online. "
+                       "Vào ⚙ Cài đặt đổi Provider dịch sang Claude/Gemini/OpenAI/DeepSeek/Groq "
+                       "(và điền API key).")
+    m = _AINOVEL_PROVIDER_MAP.get(prov)
+    if not m:
+        return (False, f"Provider '{prov}' chưa hỗ trợ cho Viết truyện AI. "
+                       "Dùng Claude/Gemini/OpenAI/DeepSeek/Groq.")
+    key_name, key_global, default_model, base_url, ptype = m
+    api_key = (globals().get(key_global, "") or "").strip()
+    if not api_key:
+        return (False, f"Chưa có API key cho {prov}. Vào ⚙ Cài đặt điền key rồi thử lại.")
+    try:
+        model = (ainovel_model_var.get() or "").strip() or default_model
+    except Exception:
+        model = default_model
+    try:
+        style = (ainovel_style_var.get() or "default").strip() or "default"
+    except Exception:
+        style = "default"
+    pentry = {"api_key": api_key, "models": [model]}
+    if base_url:
+        pentry["base_url"] = base_url
+    if ptype:
+        pentry["type"] = ptype
+    cfg = {"provider": key_name, "model": model,
+           "providers": {key_name: pentry}, "style": style}
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        cfg_path = os.path.join(dest_dir, "config.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return (True, cfg_path)
+    except Exception as e:
+        return (False, f"Không ghi được config.json: {e}")
+
+
+def _ainovel_set_running(on):
+    """Bật/tắt nút (main thread)."""
+    try:
+        btn_ainovel_run.configure(state="disabled" if on else "normal")
+        btn_ainovel_stop.configure(state="normal" if on else "disabled")
+    except Exception:
+        pass
+
+
+def _ainovel_novel_dir(out_dir):
+    """Thư mục gốc truyện ainovel-cli sinh ra (CWD-relative: output/novel)."""
+    return os.path.join(out_dir, "output", "novel")
+
+
+def _ainovel_start():
+    if _AINOVEL_RUNNING[0]:
+        log("⚠ Đang viết truyện, đợi xong hoặc bấm ⏹ Dừng.")
+        return
+    try:
+        prompt = ainovel_prompt_box.get("1.0", "end").strip()
+    except Exception:
+        prompt = ""
+    if not prompt:
+        log("📖 [Viết truyện AI] ❌ Nhập yêu cầu truyện (1 câu hoặc mô tả chi tiết) vào ô trên.")
+        return
+    cli = _find_ainovel()
+    if not cli:
+        log("📖 [Viết truyện AI] ❌ Không tìm thấy ainovel-cli. Tải/biên dịch ainovel-cli.exe "
+            "(github.com/kentjuno/ainovel-cli) rồi đặt CẠNH file chương trình hoặc trên PATH.")
+        return
+    out_dir = ""
+    try:
+        out_dir = ainovel_out_var.get().strip()
+    except Exception:
+        pass
+    if not out_dir:
+        out_dir = os.path.join(os.path.expanduser("~"), "Documents", "AI_Novels")
+        try:
+            ainovel_out_var.set(out_dir)
+        except Exception:
+            pass
+    cfg_dir = os.path.join(out_dir, ".ainovel_cfg")
+    ok, res = _ainovel_write_config(cfg_dir)
+    if not ok:
+        log(f"📖 [Viết truyện AI] ❌ {res}")
+        return
+    cfg_path = res
+    _AINOVEL_STOP[0] = False
+    _AINOVEL_PROC[0] = None
+    _AINOVEL_RUNNING[0] = True
+    _ainovel_set_running(True)
+    threading.Thread(target=_ainovel_worker,
+                     args=(list(cli), prompt, out_dir, cfg_path),
+                     daemon=True).start()
+
+
+def _ainovel_worker(cli, prompt, out_dir, cfg_path):
+    ok = False
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        cmd = list(cli) + ["--headless", "--config", cfg_path, "--prompt", prompt]
+        app.after(0, lambda: log(f"📖 [Viết truyện AI] Bắt đầu (provider {TRANSLATE_PROVIDER})… "
+                                 f"truyện dài có thể mất nhiều phút + tốn API."))
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=out_dir,
+                stdin=subprocess.DEVNULL,          # chạy không giám sát (không chờ nhập tay)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
+                creationflags=CREATE_NO_WINDOW)
+        except Exception as e:
+            app.after(0, lambda e=e: log(f"📖 [Viết truyện AI] ❌ Không chạy được ainovel-cli: {e}"))
+            return
+        _AINOVEL_PROC[0] = proc
+        # Chỉ log dòng mốc/sự kiện (không spam từng token stream ra stdout)
+        _mark = ("chương", "chapter", "headless", "outline", "arc", "act",
+                 "error", "lỗi", "hoàn thành", "done", "budget", "warn")
+        _n = 0
+        for line in proc.stdout:
+            if _AINOVEL_STOP[0]:
+                break
+            s = (line or "").strip()
+            if not s:
+                continue
+            _n += 1
+            low = s.lower()
+            if any(k in low for k in _mark) or _n % 40 == 0:
+                app.after(0, lambda s=s: log(f"   [ainovel] {s[:200]}"))
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        rc = proc.returncode
+        if _AINOVEL_STOP[0]:
+            app.after(0, lambda: log("📖 [Viết truyện AI] ⏹ Đã dừng."))
+            return
+        nd = _ainovel_novel_dir(out_dir)
+        chap_dir = os.path.join(nd, "chapters")
+        try:
+            n_ch = len([f for f in os.listdir(chap_dir) if f.lower().endswith(".md")])
+        except Exception:
+            n_ch = 0
+        if rc == 0 and n_ch > 0:
+            ok = True
+            app.after(0, lambda: log(f"📖 [Viết truyện AI] ✅ Xong — {n_ch} chương tại {chap_dir}"))
+            app.after(0, lambda: log("   → Bấm '🔊 Nạp truyện → Đọc (TTS)' để đọc thành audio."))
+        elif n_ch > 0:
+            app.after(0, lambda: log(f"📖 [Viết truyện AI] ⚠ Kết thúc (mã {rc}) nhưng có {n_ch} chương "
+                                     f"tại {chap_dir} — có thể nạp Đọc (TTS) phần đã sinh."))
+        else:
+            app.after(0, lambda: log(f"📖 [Viết truyện AI] ❌ Không sinh được chương nào (mã {rc}). "
+                                     f"Xem log ~/.ainovel/last-error.log; kiểm tra API key/model ở ⚙ Cài đặt."))
+    except Exception as e:
+        app.after(0, lambda e=e: log(f"📖 [Viết truyện AI] ❌ Lỗi: {e}"))
+    finally:
+        _AINOVEL_RUNNING[0] = False
+        _AINOVEL_PROC[0] = None
+        app.after(0, lambda: _ainovel_set_running(False))
+        if ok:
+            app.after(0, show_fireworks)
+
+
+def _ainovel_stop():
+    if not _AINOVEL_RUNNING[0]:
+        return
+    _AINOVEL_STOP[0] = True
+    log("⏹ Đang dừng viết truyện...")
+    p = _AINOVEL_PROC[0]
+    if p is not None:
+        try:
+            _proc_tree_action(p, "kill")
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+
+
+def _ainovel_open_out():
+    try:
+        out_dir = ainovel_out_var.get().strip()
+    except Exception:
+        out_dir = ""
+    nd = _ainovel_novel_dir(out_dir) if out_dir else ""
+    target = nd if (nd and os.path.isdir(nd)) else out_dir
+    if target and os.path.isdir(target):
+        try:
+            os.startfile(target)
+        except Exception as e:
+            log(f"📂 Không mở được thư mục: {e}")
+    else:
+        log("📂 Chưa có thư mục truyện — viết truyện trước đã.")
+
+
+def _ainovel_choose_out():
+    d = filedialog.askdirectory(title="Chọn thư mục lưu truyện")
+    if d:
+        ainovel_out_var.set(d)
+
+
+def _ainovel_md_strip(text):
+    """Bỏ nhẹ marker markdown để đọc TTS tự nhiên (giữ nguyên chữ)."""
+    out = []
+    for ln in (text or "").splitlines():
+        s = ln.rstrip()
+        s = re.sub(r"^\s{0,3}#{1,6}\s*", "", s)      # heading
+        s = re.sub(r"^\s{0,3}>\s?", "", s)           # blockquote
+        s = re.sub(r"[*_`]{1,3}", "", s)             # bold/italic/code
+        out.append(s)
+    return "\n".join(out)
+
+
+def _ainovel_to_tts():
+    """🔊 Nạp các chương .md ainovel-cli sinh ra vào pipeline Doc-TTS."""
+    global PDF_FILE, PDF_CHUNKS, current_index
+    out_dir = ""
+    try:
+        out_dir = ainovel_out_var.get().strip()
+    except Exception:
+        pass
+    chap_dir = os.path.join(_ainovel_novel_dir(out_dir), "chapters") if out_dir else ""
+    if not (chap_dir and os.path.isdir(chap_dir)):
+        d = filedialog.askdirectory(
+            title="Chọn thư mục truyện (chứa output\\novel\\chapters) hoặc thư mục chapters")
+        if not d:
+            return
+        cand = os.path.join(_ainovel_novel_dir(d), "chapters")
+        chap_dir = cand if os.path.isdir(cand) else d
+    try:
+        files = [f for f in os.listdir(chap_dir) if f.lower().endswith(".md")]
+    except Exception as e:
+        log(f"🔊 [Truyện AI→Audio] ❌ Không đọc được thư mục: {e}")
+        return
+    if not files:
+        log("🔊 [Truyện AI→Audio] ❌ Không thấy file chương (.md) nào.")
+        return
+
+    def _key(f):
+        nums = re.findall(r"\d+", f)
+        return ([int(n) for n in nums] or [10 ** 9], f)
+    files.sort(key=_key)
+    parts = []
+    for f in files:
+        try:
+            parts.append(_ainovel_md_strip(_read_text_smart(os.path.join(chap_dir, f))).strip())
+        except Exception as e:
+            log(f"   ⚠ Bỏ qua {f}: {e}")
+    text = "\n\n".join(p for p in parts if p)
+    chunks = _split_text_chunks(text)
+    if not chunks:
+        log("🔊 [Truyện AI→Audio] ❌ Truyện không có nội dung đọc được.")
+        return
+    PDF_FILE = chap_dir
+    PDF_CHUNKS = chunks
+    current_index = 0
+    subtitle_list.configure(state="normal")
+    subtitle_list.delete("1.0", "end")
+    for i, chunk in enumerate(chunks):
+        subtitle_list.insert("end", f"[{i}] {chunk}\n\n")
+    subtitle_list.configure(state="disabled")
+    log(f"🔊 [Truyện AI→Audio] {len(files)} chương → {len(chunks)} đoạn TTS.")
+    log("   → Chọn Output rồi bấm 'Đọc (TTS)' (trang Tài liệu → Audio); xong 'Merge Audio' để ghép.")
+    set_mode("pdf")
+    show_workspace("doc")
+
+
+_sec_ainovel = _make_section(
+    "📖 Viết truyện AI (ainovel-cli)",
+    "Nhập 1 câu ý tưởng → AI đa tác tử tự viết tiểu thuyết dài → nạp Đọc (TTS) thành truyện audio",
+    "#c2843a", ws="doc")
+ainovel_prompt_box = ctk.CTkTextbox(_sec_ainovel, height=110, font=("Arial", 13), wrap="word")
+ainovel_prompt_box.pack(fill="x", padx=8, pady=(4, 4))
+_attach_telex_input(ainovel_prompt_box, quick_tts_telex_var)
+
+ainovel_out_var   = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Documents", "AI_Novels"))
+ainovel_style_var = tk.StringVar(value="default")
+ainovel_model_var = tk.StringVar(value="")
+
+_an_r1 = _sec_row(_sec_ainovel)
+ctk.CTkLabel(_an_r1, text="Thư mục truyện:", font=("Arial", 12)).pack(side="left", padx=(2, 4))
+ctk.CTkEntry(_an_r1, textvariable=ainovel_out_var, font=("Arial", 12)).pack(
+    side="left", expand=True, fill="x", padx=(0, 4))
+ctk.CTkButton(_an_r1, text="📁", width=40, command=lambda: _ainovel_choose_out()).pack(side="left", padx=2)
+
+_an_r2 = _sec_row(_sec_ainovel)
+ctk.CTkLabel(_an_r2, text="Phong cách:", font=("Arial", 12)).pack(side="left", padx=(2, 4))
+ctk.CTkOptionMenu(_an_r2, variable=ainovel_style_var,
+                  values=["default", "suspense", "fantasy", "romance"],
+                  width=130, font=("Arial", 12)).pack(side="left", padx=(0, 12))
+ctk.CTkLabel(_an_r2, text="Model (tùy chọn):", font=("Arial", 12)).pack(side="left", padx=(0, 4))
+ctk.CTkEntry(_an_r2, textvariable=ainovel_model_var, font=("Arial", 12),
+             placeholder_text="rỗng = mặc định theo provider").pack(
+    side="left", expand=True, fill="x", padx=(0, 4))
+
+_an_r3 = _sec_row(_sec_ainovel)
+btn_ainovel_run = ctk.CTkButton(_an_r3, text="📖 Viết truyện", height=38,
+                                fg_color="#c2843a", hover_color="#d99a4a",
+                                font=("Arial", 13, "bold"),
+                                command=lambda: _ainovel_start())
+btn_ainovel_run.pack(side="left", expand=True, fill="x", padx=4, pady=6)
+btn_ainovel_stop = ctk.CTkButton(_an_r3, text="⏹ Dừng", height=38, width=90,
+                                 fg_color="#d9534f", hover_color="#e46763",
+                                 font=("Arial", 13, "bold"), state="disabled",
+                                 command=lambda: _ainovel_stop())
+btn_ainovel_stop.pack(side="left", padx=4, pady=6)
+btn_ainovel_tts = ctk.CTkButton(_an_r3, text="🔊 Nạp truyện → Đọc (TTS)", height=38, width=210,
+                                fg_color="#2fa572", hover_color="#37b87f",
+                                font=("Arial", 13, "bold"),
+                                command=lambda: _ainovel_to_tts())
+btn_ainovel_tts.pack(side="left", padx=4, pady=6)
+btn_ainovel_open = ctk.CTkButton(_an_r3, text="📂 Mở thư mục", height=38, width=120,
+                                 command=lambda: _ainovel_open_out())
+btn_ainovel_open.pack(side="left", padx=4, pady=6)
+ctk.CTkLabel(
+    _sec_ainovel,
+    text="ℹ Cần ainovel-cli.exe (github.com/kentjuno/ainovel-cli) đặt cạnh phần mềm + API key "
+         "(Claude/Gemini/OpenAI/DeepSeek/Groq — ⚙ Cài đặt; dùng chung với Provider dịch). "
+         "Truyện dài tốn nhiều token API — nên chọn model mạnh. Chương lưu ở <thư mục>\\output\\novel\\chapters.",
+    font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
+    wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
+
 # Mo workspace mac dinh khi khoi dong — Bảng điều khiển (trang tổng quan)
 show_workspace("dashboard")
 

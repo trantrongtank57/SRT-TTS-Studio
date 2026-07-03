@@ -217,6 +217,15 @@
 - [ ] File ngắn hơn 1 phần → log "không cần chia", không ra file; file sai đường dẫn → báo lỗi sớm
 - [ ] **🚀 Bắt đầu nhanh**: Dashboard → nút 🚀 → dialog 6 tình huống; bấm "Có file SRT" → nhảy trang TTS + logbox in 4 bước; bấm "Có video" → mở thẳng wizard lồng tiếng
 
+## W. Đợt 2026-07-03 (6): Viết truyện AI (ainovel-cli)
+- [ ] Trang **Tài liệu** hiện card "📖 Viết truyện AI (ainovel-cli)" với ô prompt, thư mục truyện, dropdown Phong cách, ô Model, 4 nút
+- [ ] **Chưa có ainovel-cli.exe**: nhập prompt → 📖 Viết truyện → log ❌ hướng dẫn tải/đặt exe cạnh app, KHÔNG treo, không ảnh hưởng nút khác
+- [ ] Provider dịch = **Offline** (⚙ Cài đặt) → 📖 Viết truyện → log ❌ nhắc đổi sang Claude/Gemini/OpenAI/DeepSeek/Groq
+- [ ] Provider cloud nhưng **API key rỗng** → log ❌ nhắc điền key ở ⚙ Cài đặt
+- [ ] (Có exe + key) prompt ngắn → chạy → xem `<thư mục>\.ainovel_cfg\config.json` đúng provider/model/api_key; chương `.md` sinh ở `<thư mục>\output\novel\chapters\`; **⏹ Dừng** kill được tiến trình
+- [ ] **🔊 Nạp truyện → Đọc (TTS)**: sau khi có chương → nạp → `subtitle_list` hiện các đoạn, sang trang Doc, "Đọc (TTS)" + "Merge Audio" chạy được
+- [ ] **📂 Mở thư mục** mở đúng `output\novel`; nút 📁 chọn thư mục hoạt động
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

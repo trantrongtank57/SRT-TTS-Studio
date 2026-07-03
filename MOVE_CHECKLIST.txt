@@ -126,6 +126,14 @@
                                             install -U yt-dlp
                                     Thiếu → chỉ tính năng YouTube báo lỗi rõ,
                                     phần còn lại vẫn chạy bình thường.
+ [ ] ainovel-cli          nhỏ       cần cho: 📖 Viết truyện AI (trang Tài liệu)
+                                    Tải/biên dịch ainovel-cli.exe
+                                    (github.com/kentjuno/ainovel-cli) đặt CẠNH .exe
+                                    hoặc trên PATH. Dùng API key sẵn có ở ⚙ Cài đặt
+                                    (Provider dịch: Claude/Gemini/OpenAI/DeepSeek/
+                                    Groq) — app tự sinh config.json. Thiếu → chỉ
+                                    tính năng Viết truyện AI báo lỗi rõ, phần còn
+                                    lại vẫn chạy bình thường.
  [ ] easyocr              model      cần cho: 📚 Tải truyện → Dịch truyện sang
                           ~100MB/    Tiếng Việt (OCR ảnh truyện)
                           ngôn ngữ   CÀI: voxcpm_env\Scripts\python.exe -m pip
