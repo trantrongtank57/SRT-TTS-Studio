@@ -1966,6 +1966,8 @@ def _browse_voxcpm_ref():
 ctk.CTkButton(voxcpm_row_settings, text="Browse", width=72, command=_browse_voxcpm_ref).pack(side="left")
 ctk.CTkButton(voxcpm_row_settings, text="🎙", width=34,
               command=lambda: open_record_dialog(voxcpm_ref_var)).pack(side="left", padx=(4, 0))
+ctk.CTkButton(voxcpm_row_settings, text="🎬", width=34,
+              command=lambda: open_ref_from_video_dialog(voxcpm_ref_var)).pack(side="left", padx=(4, 0))
 
 # Row audio proc: tách nhạc / giảm ồn / lọc giọng
 voxcpm_row_audio_proc = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -2182,6 +2184,8 @@ vieneu_ref_btn = ctk.CTkButton(vieneu_row_settings, text="Browse", width=72, com
 vieneu_ref_btn.pack(side="left")
 ctk.CTkButton(vieneu_row_settings, text="🎙", width=34,
               command=lambda: open_record_dialog(vieneu_ref_var)).pack(side="left", padx=(4, 0))
+ctk.CTkButton(vieneu_row_settings, text="🎬", width=34,
+              command=lambda: open_ref_from_video_dialog(vieneu_ref_var)).pack(side="left", padx=(4, 0))
 
 # Row audio proc: lọc audio mẫu (tách nhạc / giảm ồn / lọc giọng) — như VoxCPM
 vieneu_row_audio_proc = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -2405,6 +2409,8 @@ f5tts_ref_btn = ctk.CTkButton(f5tts_row_settings, text="Browse", width=72, comma
 f5tts_ref_btn.pack(side="left")
 ctk.CTkButton(f5tts_row_settings, text="🎙", width=34,
               command=lambda: open_record_dialog(f5tts_ref_var)).pack(side="left", padx=(4, 0))
+ctk.CTkButton(f5tts_row_settings, text="🎬", width=34,
+              command=lambda: open_ref_from_video_dialog(f5tts_ref_var)).pack(side="left", padx=(4, 0))
 
 # Row audio proc: lọc audio mẫu (tách nhạc / giảm ồn / lọc giọng) — như VieNeu
 f5tts_row_audio_proc = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -2612,6 +2618,8 @@ omnivoice_ref_btn = ctk.CTkButton(omnivoice_row_settings, text="Browse", width=7
 omnivoice_ref_btn.pack(side="left")
 ctk.CTkButton(omnivoice_row_settings, text="🎙", width=34,
               command=lambda: open_record_dialog(omnivoice_ref_var)).pack(side="left", padx=(4, 0))
+ctk.CTkButton(omnivoice_row_settings, text="🎬", width=34,
+              command=lambda: open_ref_from_video_dialog(omnivoice_ref_var)).pack(side="left", padx=(4, 0))
 
 # Row audio proc: lọc audio mẫu (tách nhạc / giảm ồn / lọc giọng) — như F5-TTS
 omnivoice_row_audio_proc = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -3867,6 +3875,277 @@ def open_record_dialog(target_var):
         _stop()
         win.destroy()
     win.protocol("WM_DELETE_WINDOW", _on_close)
+
+
+# ── 🎬 Lấy audio mẫu từ video / YouTube ──────────────────────────────────────
+# Ref audio clone thường phải cắt tay từ phim/clip bằng app ngoài → dialog này
+# làm 1 chạm: nguồn = link YouTube (yt-dlp --download-sections, chỉ tải ĐÚNG
+# đoạn cần, không tải cả video) hoặc file video/audio trên máy (ffmpeg -ss/-t)
+# → WAV mono 44.1kHz vào <_CONFIG_DIR>\recordings\ → tuỳ chọn tách giọng khỏi
+# nhạc nền (audio_enhancer --separate, demucs trong voxcpm_env; lỗi thì giữ
+# bản chưa tách, không chết) → tự điền vào ô Audio mẫu như 🎙.
+# Nút 🎬 cạnh 🎙 của cả 4 engine (lambda late-binding).
+
+def _parse_ts_to_sec(s):
+    """'90' / '1:30' / '0:01:30' → giây (float). Rỗng → 0. Lỗi → None."""
+    s = (s or "").strip()
+    if not s:
+        return 0.0
+    try:
+        parts = [float(p) for p in s.split(":")]
+    except Exception:
+        return None
+    if len(parts) > 3:
+        return None
+    sec = 0.0
+    for p in parts:
+        sec = sec * 60 + p
+    return sec
+
+
+def _find_audio_enhancer_script():
+    for _d in ([sys._MEIPASS] if hasattr(sys, "_MEIPASS") else []) + [
+            os.path.dirname(os.path.abspath(__file__)),
+            os.path.dirname(os.path.abspath(sys.argv[0])),
+            os.path.dirname(sys.executable)]:
+        _c = os.path.join(_d, "audio_enhancer.py")
+        if os.path.exists(_c):
+            return _c
+    return None
+
+
+def open_ref_from_video_dialog(target_var):
+    """🎬 Dialog cắt audio mẫu từ video/YouTube → điền vào ô Audio mẫu."""
+    ffmpeg_ok, ffmpeg_path, guide = _check_ffmpeg_exists()
+    if not ffmpeg_ok:
+        for line in guide.splitlines():
+            log(line)
+        return
+
+    win = ctk.CTkToplevel(app)
+    win.title("🎬 Lấy audio mẫu từ video / YouTube")
+    win.geometry("660x320")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    ctk.CTkLabel(win, text="Chọn đoạn 5–20 giây CHỈ CÓ 1 GIỌNG nói rõ, ít tạp âm.\n"
+                           "Link YouTube chỉ tải đúng đoạn cần (nhanh); video có nhạc nền thì tick tách nhạc.",
+                 font=("Arial", 12), justify="left").pack(pady=(12, 6))
+
+    row1 = ctk.CTkFrame(win, fg_color="transparent")
+    row1.pack(fill="x", padx=14, pady=4)
+    ctk.CTkLabel(row1, text="Nguồn:", font=("Arial", 12), width=80,
+                 anchor="w").pack(side="left")
+    v_src = ctk.StringVar()
+    ctk.CTkEntry(row1, textvariable=v_src,
+                 placeholder_text="Link YouTube hoặc file video/audio trên máy..."
+                 ).pack(side="left", expand=True, fill="x", padx=(0, 4))
+
+    def _browse_src():
+        p = filedialog.askopenfilename(
+            title="Chọn video/audio nguồn",
+            filetypes=[("Video/Audio", "*.mp4 *.mkv *.webm *.mov *.avi *.ts "
+                                       "*.mp3 *.wav *.m4a *.flac *.aac *.ogg"),
+                       ("All files", "*.*")])
+        if p:
+            v_src.set(p)
+    ctk.CTkButton(row1, text="Browse", width=76, command=_browse_src
+                  ).pack(side="left")
+
+    row2 = ctk.CTkFrame(win, fg_color="transparent")
+    row2.pack(fill="x", padx=14, pady=4)
+    ctk.CTkLabel(row2, text="Bắt đầu:", font=("Arial", 12), width=80,
+                 anchor="w").pack(side="left")
+    v_start = ctk.StringVar(value="0:00")
+    ctk.CTkEntry(row2, textvariable=v_start, width=80,
+                 justify="center").pack(side="left")
+    ctk.CTkLabel(row2, text="(giây hoặc phút:giây)   Lấy:", font=("Arial", 11),
+                 text_color="#888").pack(side="left", padx=(6, 4))
+    v_dur = ctk.StringVar(value="12")
+    ctk.CTkEntry(row2, textvariable=v_dur, width=54,
+                 justify="center").pack(side="left")
+    ctk.CTkLabel(row2, text="giây (3–60)", font=("Arial", 11),
+                 text_color="#888").pack(side="left", padx=(6, 10))
+    v_sep = ctk.BooleanVar(value=False)
+    ctk.CTkCheckBox(row2, variable=v_sep, text="🎼 Tách giọng khỏi nhạc (demucs)",
+                    font=("Arial", 12)).pack(side="left", padx=(8, 0))
+
+    status = ctk.CTkLabel(win, text="Sẵn sàng.", font=("Arial", 13, "bold"))
+    status.pack(pady=(8, 2))
+
+    state = {"busy": False, "wav": "", "procs": []}
+
+    row3 = ctk.CTkFrame(win, fg_color="transparent")
+    row3.pack(fill="x", padx=14, pady=(6, 10))
+    b_cut = ctk.CTkButton(row3, text="✂ Cắt lấy giọng", fg_color="#2e6f4e",
+                          hover_color="#398a61", height=36)
+    b_cut.pack(side="left", expand=True, fill="x", padx=4)
+    b_stop = ctk.CTkButton(row3, text="⏹ Dừng", state="disabled", height=36)
+    b_stop.pack(side="left", expand=True, fill="x", padx=4)
+    b_play = ctk.CTkButton(row3, text="▶ Nghe lại", state="disabled", height=36,
+                           command=lambda: state["wav"] and _play_audio_file(state["wav"]))
+    b_play.pack(side="left", expand=True, fill="x", padx=4)
+
+    def _set_status(t):
+        def _do():
+            if win.winfo_exists():
+                status.configure(text=t)
+        app.after(0, _do)
+
+    def _done(ok, wav=""):
+        def _do():
+            state["busy"] = False
+            if not win.winfo_exists():
+                return
+            b_cut.configure(state="normal")
+            b_stop.configure(state="disabled")
+            if ok:
+                state["wav"] = wav
+                target_var.set(wav)
+                b_play.configure(state="normal")
+                log(f"🎬 Đã cắt audio mẫu → {os.path.basename(wav)} "
+                    "(đã điền vào ô Audio mẫu)")
+        app.after(0, _do)
+
+    def _spawn(cmd):
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True,
+                             encoding="utf-8", errors="replace", bufsize=1,
+                             creationflags=CREATE_NO_WINDOW)
+        state["procs"].append(p)
+        return p
+
+    def _work(src, start, dur, sep):
+        wav = ""
+        tmp_dl = None
+        try:
+            rec_dir = os.path.join(_CONFIG_DIR, "recordings")
+            os.makedirs(rec_dir, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            wav = os.path.join(rec_dir, f"ref_vid_{stamp}.wav")
+            if re.match(r"https?://", src, flags=re.I):
+                cmd0 = _find_ytdlp()
+                if not cmd0:
+                    _set_status("❌ Chưa cài yt-dlp (pip install -U yt-dlp "
+                                "hoặc đặt yt-dlp.exe cạnh app).")
+                    _done(False); return
+                out_tmpl = os.path.join(rec_dir, f"ytref_{stamp}.%(ext)s")
+                cmd = list(cmd0) + [
+                    "--no-playlist", "-f", "bestaudio/b",
+                    "--download-sections", f"*{start:.1f}-{start + dur:.1f}",
+                    "--force-keyframes-at-cuts",
+                    "-o", out_tmpl, "--no-part", "--newline",
+                    "--ffmpeg-location", os.path.dirname(ffmpeg_path), src]
+                _set_status("⏬ Đang tải đoạn audio từ link...")
+                p = _spawn(cmd)
+                tail = []
+                for line in p.stdout:
+                    line = (line or "").strip()
+                    if line:
+                        tail.append(line)
+                        del tail[:-6]
+                p.wait()
+                cand = [os.path.join(rec_dir, f) for f in os.listdir(rec_dir)
+                        if f.startswith(f"ytref_{stamp}.")]
+                if p.returncode != 0 or not cand:
+                    _set_status("❌ Tải link thất bại: "
+                                + (tail[-1] if tail else "không rõ lỗi"))
+                    _done(False); return
+                tmp_dl = cand[0]
+                # Đoạn đã đúng vị trí — chỉ chuẩn hoá về WAV mono 44.1kHz
+                cut_cmd = [ffmpeg_path, "-y", "-v", "error", "-i", tmp_dl,
+                           "-t", str(dur), "-vn", "-ac", "1", "-ar", "44100", wav]
+            else:
+                if not os.path.isfile(src):
+                    _set_status("❌ File nguồn không tồn tại.")
+                    _done(False); return
+                cut_cmd = [ffmpeg_path, "-y", "-v", "error",
+                           "-ss", str(start), "-t", str(dur), "-i", src,
+                           "-vn", "-ac", "1", "-ar", "44100", wav]
+            _set_status("✂ Đang cắt & chuyển WAV...")
+            r = subprocess.run(cut_cmd, capture_output=True, timeout=300,
+                               creationflags=CREATE_NO_WINDOW)
+            if r.returncode != 0 or not os.path.isfile(wav) \
+                    or os.path.getsize(wav) < 44100:   # < ~0.5s
+                _set_status("❌ Cắt thất bại / đoạn quá ngắn "
+                            "(kiểm tra thời điểm bắt đầu so với độ dài nguồn).")
+                _done(False); return
+            if sep:
+                enh_py = _find_voxcpm_python(
+                    (voxcpm_ckpt_var.get() or "").strip() or os.getcwd())
+                enhancer = _find_audio_enhancer_script()
+                if not enh_py or not enhancer:
+                    log("🎬 ⚠ Không có voxcpm_env/audio_enhancer.py → bỏ qua "
+                        "tách nhạc, dùng bản chưa tách.")
+                else:
+                    _set_status("🎼 Đang tách giọng khỏi nhạc "
+                                "(demucs — lần đầu có thể lâu)...")
+                    out2 = wav[:-4] + "_voice.wav"
+                    p = _spawn([enh_py, enhancer, "--input", wav,
+                                "--output", out2, "--separate"])
+                    result = [None]
+                    for raw in p.stdout:
+                        line = (raw or "").strip()
+                        if line.startswith("DONE:"):
+                            result[0] = line[5:]
+                        elif line.startswith("ERROR:"):
+                            log(f"🎬 Tách nhạc lỗi: {line[6:]}")
+                    p.wait()
+                    if result[0] and os.path.isfile(result[0]):
+                        wav = result[0]
+                    else:
+                        log("🎬 ⚠ Tách nhạc thất bại → dùng bản chưa tách.")
+            _set_status(f"✅ Xong ({dur:.0f}s) — đã điền vào ô Audio mẫu. "
+                        "Bấm ▶ nghe kiểm tra.")
+            _done(True, wav)
+        except Exception as e:
+            _set_status(f"❌ Lỗi: {e}")
+            _done(False)
+        finally:
+            if tmp_dl:
+                try:
+                    os.remove(tmp_dl)
+                except Exception:
+                    pass
+            state["procs"].clear()
+
+    def _start():
+        if state["busy"]:
+            return
+        src = v_src.get().strip()
+        if not src:
+            status.configure(text="❌ Nhập link hoặc chọn file nguồn.")
+            return
+        start = _parse_ts_to_sec(v_start.get())
+        if start is None:
+            status.configure(text="❌ Thời điểm bắt đầu sai định dạng (vd 90 hoặc 1:30).")
+            return
+        try:
+            dur = max(3.0, min(float(v_dur.get().strip() or "12"), 60.0))
+        except Exception:
+            dur = 12.0
+        state["busy"] = True
+        b_cut.configure(state="disabled")
+        b_stop.configure(state="normal")
+        b_play.configure(state="disabled")
+        threading.Thread(target=_work, args=(src, start, dur, bool(v_sep.get())),
+                         daemon=True).start()
+
+    def _stop():
+        for p in list(state["procs"]):
+            try:
+                p.kill()
+            except Exception:
+                pass
+
+    b_cut.configure(command=_start)
+    b_stop.configure(command=_stop)
+
+    def _on_close():
+        _stop()
+        win.destroy()
+    win.protocol("WM_DELETE_WINDOW", _on_close)
+
 
 def _quick_tts_run(preview=False):
     """preview=True → sinh ra file tạm và phát ngay (Nghe thử), không hỏi nơi lưu."""
@@ -6712,7 +6991,8 @@ def _manga_convert_worker(path, out_fmt, out_dir):
 
 
 def _manga_convert_start():
-    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0] \
+            or _NOVEL_RUNNING[0]:
         log("⏳ Đang có tác vụ truyện chạy, vui lòng đợi/dừng trước.")
         return
     path = manga_conv_src_var.get().strip()
@@ -6760,7 +7040,8 @@ def _manga_set_running(on):
 
 
 def _manga_stop():
-    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0] \
+            or _NOVEL_RUNNING[0]:
         _MANGA_STOP[0] = True
         # Job dịch: dừng cả pha _translate_segments (online + offline) đang chạy
         if _MANGA_TR_RUNNING[0]:
@@ -6782,7 +7063,8 @@ def _manga_stop():
 
 
 def _manga_start():
-    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0] \
+            or _NOVEL_RUNNING[0]:
         log("⚠ Đang có tác vụ truyện chạy, đợi xong hoặc bấm Dừng.")
         return
     url = manga_url_var.get().strip()
@@ -7572,7 +7854,8 @@ def _manga_tr_set_running(on):
 
 
 def _manga_translate_start():
-    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0] \
+            or _NOVEL_RUNNING[0]:
         log("⚠ Đang có tác vụ truyện chạy, đợi xong đã.")
         return
     src = manga_tr_src_var.get().strip()
@@ -8022,6 +8305,714 @@ ctk.CTkLabel(
     font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
     wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
 
+# ════════════════════════════════════════════════════════════════════════════
+# 📖 TẢI TRUYỆN CHỮ (web novel) → TXT → Doc-TTS (truyện audio)
+# Tải TEXT từng chương từ trang truyện chữ: dò container nội dung phổ biến
+# (truyenfull id="chapter-c", Madara reading-content, entry-content...),
+# fallback "cụm dòng dài nhất" cho trang lạ. Lưu chuong_NNNNN.txt (+ gộp cả bộ),
+# nút 🔊 nạp thẳng vào pipeline Doc-TTS (PDF_CHUNKS) — header "Chương N" khớp
+# _DOC_CHAPTER_RE nên bật 'Xuất .m4b có chương' là ra audiobook có mục lục.
+# Tái dùng _manga_http/_manga_parse_range/_MANGA_STOP; cùng nhóm khoá với các
+# tác vụ truyện khác. Decoupled khỏi set_mode: tự khoá _NOVEL_RUNNING.
+# ════════════════════════════════════════════════════════════════════════════
+_NOVEL_RUNNING = [False]
+
+# Container nội dung chương thường gặp (thử theo thứ tự; khớp → lấy khối cân bằng)
+_NOVEL_CONTENT_PATS = [
+    r'<div[^>]+id=["\']chapter-c["\']',                     # truyenfull
+    r'<div[^>]+class=["\'][^"\']*\bchapter-c\b',
+    r'<div[^>]+id=["\']chapter-content["\']',
+    r'<div[^>]+class=["\'][^"\']*chapter-content',
+    r'<div[^>]+class=["\'][^"\']*reading-content',          # theme Madara (WP)
+    r'<div[^>]+class=["\'][^"\']*entry-content',
+    r'<div[^>]+itemprop=["\']articleBody',
+]
+
+
+def _novel_block_at(page, start):
+    """Nội dung từ thẻ mở tại `start` đến thẻ đóng CÂN BẰNG tương ứng (container
+    chương thường chứa div quảng cáo lồng bên trong nên phải đếm độ sâu)."""
+    m = re.match(r"<(\w+)", page[start:])
+    if not m:
+        return ""
+    tag = m.group(1)
+    depth = 0
+    for mt in re.finditer(r"<(/?)%s\b[^>]*>" % re.escape(tag),
+                          page[start:], flags=re.I):
+        if mt.group(1):
+            depth -= 1
+            if depth <= 0:
+                return page[start:start + mt.start()]
+        else:
+            depth += 1
+    return page[start:]   # không thấy thẻ đóng → lấy đến hết trang
+
+
+def _novel_html_to_text(frag):
+    """HTML → text sạch: bỏ script/style/comment, <br>/<p>/<div> → xuống dòng."""
+    import html as _html
+    frag = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", frag)
+    frag = re.sub(r"(?s)<!--.*?-->", " ", frag)
+    frag = re.sub(r"(?i)<br\s*/?>", "\n", frag)
+    frag = re.sub(r"(?i)</(p|div|h[1-6]|li|tr)>", "\n\n", frag)
+    frag = re.sub(r"<[^>]+>", " ", frag)
+    frag = _html.unescape(frag).replace("\xa0", " ")
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in frag.splitlines()]
+    out, blank = [], 0
+    for ln in lines:
+        if ln:
+            out.append(ln)
+            blank = 0
+        else:
+            blank += 1
+            if blank == 1 and out:
+                out.append("")
+    return "\n".join(out).strip()
+
+
+def _novel_extract_text(page):
+    """Text nội dung chương. Thử các container quen trước; trang lạ fallback =
+    cụm dòng dài liên tiếp lớn nhất (menu/nav toàn dòng ngắn, văn truyện dòng
+    dài; cho phép xen ≤3 dòng ngắn liên tiếp để không cắt lời thoại '- Ừ.')."""
+    for pat in _NOVEL_CONTENT_PATS:
+        m = re.search(pat, page, flags=re.I)
+        if m:
+            txt = _novel_html_to_text(_novel_block_at(page, m.start()))
+            if len(txt) >= 200:
+                return txt
+    txt = _novel_html_to_text(page)
+
+    def _tl(chunk):
+        return sum(len(x) for x in chunk)
+    best, cur, short = [], [], 0
+    for ln in txt.splitlines():
+        if not ln:
+            if cur:
+                cur.append(ln)
+            continue
+        short = short + 1 if len(ln) < 45 else 0
+        cur.append(ln)
+        if short >= 4:
+            if _tl(cur[:-4]) > _tl(best):
+                best = cur[:-4]
+            cur, short = [], 0
+    if _tl(cur) > _tl(best):
+        best = cur
+    # Gọt dòng ngắn/rỗng ở 2 mép cụm (menu/sidebar hay dính sát mép nội dung)
+    while best and (not best[0] or len(best[0]) < 45):
+        best.pop(0)
+    while best and (not best[-1] or len(best[-1]) < 45):
+        best.pop()
+    joined = "\n".join(best).strip()
+    return joined if len(joined) >= 300 else ""
+
+
+def _novel_chapter_title(page):
+    for pat in (r'<a[^>]+class=["\'][^"\']*chapter-title[^>]*>(.*?)</a>',
+                r"<h1[^>]*>(.*?)</h1>", r"<h2[^>]*>(.*?)</h2>",
+                r"<title>(.*?)</title>"):
+        m = re.search(pat, page, flags=re.S | re.I)
+        if m:
+            import html as _html
+            t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(1))).strip()
+            if t:
+                return _html.unescape(t)
+    return ""
+
+
+def _novel_list_chapters(series_url, log_cb):
+    """[(tên, url)] chương 1 → mới nhất. Quét MỌI link chuong-/chapter-N trên
+    trang truyện (kể cả box 'chương mới nhất' → biết số max); nếu URL chương
+    dạng đoán được (đuôi rỗng / '/' / '.html') thì nội suy đủ 1..max từ mẫu —
+    trang phân trang danh sách (truyenfull 50 chương/trang) vẫn lấy đủ bộ."""
+    base = _manga_base(series_url)
+    page = _manga_http(series_url, base)
+    chapters, tmpl = {}, None
+    for href in re.findall(
+            r'href=["\']([^"\']*(?:chuong|chapter)-\d[^"\']*)["\']', page,
+            flags=re.I):
+        u = urllib.parse.urljoin(base, href.strip())
+        num = _manga_extract_chap_num(u)
+        if not num or not num[0].isdigit():
+            continue
+        chapters[num] = (f"Chương {num}", u)
+        if tmpl is None:
+            m = re.search(r"(?:chuong|chapter)-(\d+)", u, flags=re.I)
+            if m and u[m.end(1):] in ("", "/", ".html"):
+                tmpl = (u[:m.start(1)], u[m.end(1):])
+    ints = [_manga_chap_key(n)[0] for n in chapters
+            if _manga_chap_key(n)[0] < 10 ** 9]
+    if tmpl and ints:
+        mx = max(ints)
+        added = 0
+        for i in range(1, mx + 1):
+            if str(i) not in chapters:
+                chapters[str(i)] = (f"Chương {i}", f"{tmpl[0]}{i}{tmpl[1]}")
+                added += 1
+        if added:
+            log_cb(f"   (Danh sách trên trang chỉ hiện 1 phần; đã nội suy thêm "
+                   f"{added} chương từ mẫu URL — chương không tồn tại sẽ báo lỗi & bỏ qua.)")
+    return [chapters[k] for k in sorted(chapters, key=_manga_chap_key)]
+
+
+def _novel_chap_fname(churl):
+    """Tên file chương zero-pad để sort tên file = đúng thứ tự chương."""
+    num = _manga_extract_chap_num(churl)
+    key = _manga_chap_key(num)
+    if key[0] >= 10 ** 9:
+        return "chuong_" + _manga_safe_name(churl.rstrip("/").split("/")[-1]) + ".txt"
+    name = f"chuong_{key[0]:05d}"
+    if len(key) > 1:
+        name += "_" + "_".join(str(x) for x in key[1:])
+    return name + ".txt"
+
+
+def _novel_download_sync(url, out_dir, merge, rng, delay=0.4):
+    """Tải truyện chữ, CHỜ tới khi xong — caller giữ cờ khóa + lo fireworks.
+    Trả về (root, full_path, done, total, fresh): done = số chương có trên đĩa
+    (kể cả có sẵn từ trước), fresh = số chương TẢI MỚI lần này; root rỗng =
+    lỗi sớm. Chương đã có KHÔNG log từng dòng (resume/watch chạy lại im lặng)."""
+    os.makedirs(out_dir, exist_ok=True)
+    base = _manga_base(url)
+    if re.search(r"/(?:chuong|chapter)-\d", url, flags=re.I):
+        parts = url.rstrip("/").split("/")
+        title = _manga_safe_name(parts[-2] if len(parts) >= 2 else "truyen")
+        chapters = [(f"Chương {_manga_extract_chap_num(url)}", url)]
+        log_color("📖 Tải 1 chương truyện chữ...", "#7cf")
+    else:
+        title = _manga_safe_name(url.rstrip("/").split("/")[-1])
+        log_color(f"📖 Lấy danh sách chương: {title}...", "#7cf")
+        chapters = _novel_list_chapters(url, log)
+        if not chapters:
+            log("❌ Không tìm thấy link chương nào trên trang "
+                "(trang cần JS/Cloudflare hoặc cấu trúc lạ).")
+            return ("", "", 0, 0, 0)
+        want = _manga_parse_range(rng)
+        if want:
+            sel = []
+            for nm, u in chapters:
+                num = _manga_extract_chap_num(u)
+                if num in want or num.split(".")[0].split("-")[0] in want:
+                    sel.append((nm, u))
+            chapters = sel
+            if not chapters:
+                log("❌ Không có chương nào khớp khoảng đã nhập.")
+                return ("", "", 0, 0, 0)
+    root = os.path.join(out_dir, title)
+    os.makedirs(root, exist_ok=True)
+
+    def _have(churl):
+        p = os.path.join(root, _novel_chap_fname(churl))
+        return os.path.isfile(p) and os.path.getsize(p) > 200
+
+    total = len(chapters)
+    todo = [(nm, cu) for nm, cu in chapters if not _have(cu)]
+    done = total - len(todo)
+    fresh = 0
+    if done:
+        log(f"   ♻ {done}/{total} chương đã có — chỉ tải {len(todo)} chương còn thiếu.")
+    else:
+        log(f"   Tổng {total} chương sẽ tải.")
+    update_progress(0, max(1, len(todo)))
+
+    def _grab(label, name, churl):
+        """Tải 1 chương → TXT. Đã có file (đủ lớn) thì bỏ qua im lặng = resume."""
+        dest = os.path.join(root, _novel_chap_fname(churl))
+        if os.path.isfile(dest) and os.path.getsize(dest) > 200:
+            return True
+        try:
+            page = _manga_http(churl, base)
+        except Exception as e:
+            log(f"{label} ❌ {name}: {e}")
+            return False
+        txt = _novel_extract_text(page)
+        if len(txt) < 200:
+            log(f"{label} ❌ {name}: không tách được nội dung "
+                "(chương không tồn tại / trang chặn bot?)")
+            return False
+        ct = _novel_chapter_title(page)
+        # Header khớp _DOC_CHAPTER_RE ("Chương N...") → .m4b có mục lục chương
+        head = ct if re.match(r"^\s*(chương|chapter|hồi|quyển|phần)\b", ct,
+                              flags=re.I) \
+            else (name + (f": {ct}" if ct else ""))
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(head.strip() + "\n\n" + txt + "\n")
+        log(f"{label} ✔ {name} ({len(txt):,} ký tự)")
+        return True
+
+    failed = []
+    for idx, (name, churl) in enumerate(todo, 1):
+        if _MANGA_STOP[0]:
+            log("⏹ Đã dừng theo yêu cầu.")
+            break
+        if _grab(f"[{idx}/{len(todo)}]", name, churl):
+            done += 1
+            fresh += 1
+        else:
+            failed.append((name, churl))
+        update_progress(idx, max(1, len(todo)))
+        time.sleep(delay)
+
+    # Tự thử lại chương lỗi (host hay đóng kết nối → thường qua ở lần 2)
+    for _pass in range(1, 3):
+        if not failed or _MANGA_STOP[0]:
+            break
+        retry, failed = failed, []
+        log_color(f"🔁 Thử lại {len(retry)} chương lỗi (lần {_pass})...", "#fc6")
+        time.sleep(3)
+        for j, (name, churl) in enumerate(retry, 1):
+            if _MANGA_STOP[0]:
+                failed.extend(retry[j - 1:])
+                break
+            if _grab(f"   🔁[{j}/{len(retry)}]", name, churl):
+                done += 1
+                fresh += 1
+            else:
+                failed.append((name, churl))
+
+    if failed and not _MANGA_STOP[0]:
+        log_color(f"⚠ Còn {len(failed)} chương lỗi (chạy lại sẽ tải tiếp phần thiếu):",
+                  "#f96")
+        for name, churl in failed:
+            log(f"     • {name}  →  {churl}")
+
+    # Gộp cả bộ thành 1 TXT (sort theo tên file zero-pad = đúng thứ tự chương)
+    full = ""
+    if merge and not _MANGA_STOP[0]:
+        files = sorted(f for f in os.listdir(root)
+                       if f.startswith("chuong_") and f.endswith(".txt"))
+        if files:
+            full = os.path.join(root, title + "_full.txt")
+            with open(full, "w", encoding="utf-8") as fout:
+                for i, fn in enumerate(files):
+                    if i:
+                        fout.write("\n\n")
+                    fout.write(_read_text_smart(
+                        os.path.join(root, fn)).strip())
+                    fout.write("\n")
+            log_color(f"🧩 Đã gộp {len(files)} chương → "
+                      f"{os.path.basename(full)}", "#7cf")
+    return (root, full, done, total, fresh)
+
+
+def _novel_worker(url, out_dir, merge, rng, delay):
+    """Wrapper nút ⬇ Tải truyện chữ (download-only)."""
+    try:
+        root, _full, done, total, _fresh = _novel_download_sync(
+            url, out_dir, merge, rng, delay)
+        if root and not _MANGA_STOP[0]:
+            log_color(f"✅ Hoàn tất! {done}/{total} chương. Lưu tại: {root}", "#6f6")
+            log("   → Bấm '🔊 Đọc TTS' để nạp vào Tài liệu → Audio, hoặc "
+                "'🚀 Tải → Đọc → Audiobook' để chạy cả chuỗi lần sau.")
+            try:
+                _reveal_output(root)
+            except Exception:
+                pass
+            app.after(0, show_fireworks)
+    except Exception as e:
+        log(f"❌ Lỗi tải truyện chữ: {e}")
+    finally:
+        _NOVEL_RUNNING[0] = False
+        app.after(0, lambda: _novel_set_running(False))
+        app.after(0, lambda: update_progress(0, 1))
+
+
+def _novel_set_running(on):
+    try:
+        btn_novel_run.configure(state="disabled" if on else "normal")
+        btn_novel_stop.configure(state="normal" if on else "disabled")
+    except Exception:
+        pass
+    try:
+        btn_novel_chain.configure(state="disabled" if on else "normal")
+    except Exception:
+        pass
+
+
+def _novel_stop():
+    if _NOVEL_RUNNING[0]:
+        global stop_requested
+        _MANGA_STOP[0] = True
+        stop_requested = True   # pha TTS của chuỗi 🚀 nghe cờ này
+        log("⏹ Đang dừng tải truyện chữ...")
+
+
+def _novel_start():
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0] \
+            or _NOVEL_RUNNING[0]:
+        log("⚠ Đang có tác vụ truyện chạy, đợi xong hoặc bấm Dừng.")
+        return
+    url = novel_url_var.get().strip()
+    if not url or "http" not in url:
+        log("❌ Nhập URL bộ truyện chữ (hoặc URL 1 chương).")
+        return
+    out_dir = novel_out_var.get().strip()
+    if not out_dir:
+        out_dir = os.path.join(os.path.expanduser("~"), "Downloads", "TruyenChu")
+        novel_out_var.set(out_dir)
+    rng = novel_chap_var.get().strip()
+    merge = bool(novel_merge_var.get())
+    _MANGA_STOP[0] = False
+    _NOVEL_RUNNING[0] = True
+    _novel_set_running(True)
+    threading.Thread(target=_novel_worker, args=(url, out_dir, merge, rng, 0.4),
+                     daemon=True).start()
+
+
+def _novel_to_tts():
+    """Nạp TXT truyện (file gộp _full.txt hoặc chọn nhiều file chương) vào
+    pipeline Doc-TTS (PDF_CHUNKS) — như _manga_script_to_tts. Header 'Chương N'
+    trong file khớp _DOC_CHAPTER_RE nên .m4b sẽ có mục lục chương."""
+    global PDF_FILE, PDF_CHUNKS, current_index
+    paths = filedialog.askopenfilenames(
+        title="Chọn file truyện .txt (file _full.txt hoặc nhiều file chương)",
+        initialdir=novel_out_var.get().strip() or None,
+        filetypes=[("Truyện TXT", "*.txt"), ("All files", "*.*")])
+    if not paths:
+        return
+
+    def _key(p):
+        nums = re.findall(r"\d+", os.path.basename(p))
+        return ([int(n) for n in nums] or [10 ** 9], os.path.basename(p))
+    parts = []
+    try:
+        for p in sorted(paths, key=_key):
+            t = _read_text_smart(p).strip()
+            if t:
+                parts.append(t)
+    except Exception as e:
+        log(f"🔊 [Truyện chữ→Audio] ❌ Không đọc được file: {e}")
+        return
+    chunks = _split_text_chunks("\n\n".join(parts))
+    if not chunks:
+        log("🔊 [Truyện chữ→Audio] ❌ File không có nội dung đọc được.")
+        return
+    PDF_FILE = paths[0]
+    PDF_CHUNKS = chunks
+    current_index = 0
+    subtitle_list.configure(state="normal")
+    subtitle_list.delete("1.0", "end")
+    for i, chunk in enumerate(chunks):
+        subtitle_list.insert("end", f"[{i}] {chunk}\n\n")
+    subtitle_list.configure(state="disabled")
+    log(f"🔊 [Truyện chữ→Audio] {len(paths)} file → {len(chunks)} đoạn TTS.")
+    log("   → Chọn Output rồi bấm 'Đọc (TTS)'; xong 'Merge Audio' "
+        "(bật 'Xuất .m4b có chương' để ra audiobook có mục lục).")
+    set_mode("pdf")
+    show_workspace("doc")
+
+
+# --- UI card: Tải truyện chữ ---
+novel_url_var = ctk.StringVar()
+novel_chap_var = ctk.StringVar()
+novel_out_var = ctk.StringVar(
+    value=os.path.join(os.path.expanduser("~"), "Downloads", "TruyenChu"))
+novel_merge_var = ctk.BooleanVar(value=True)
+
+_sec_novel = _make_section(
+    "📖 Tải truyện chữ (web novel) → Audio",
+    "Tải text từng chương (truyenfull + tự nhận diện trang khác) → TXT → đọc TTS thành truyện audio",
+    "#4aa3df", ws="manga")
+
+_nv_r1 = _sec_row(_sec_novel)
+ctk.CTkLabel(_nv_r1, text="URL truyện:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_nv_r1, textvariable=novel_url_var,
+             placeholder_text="https://truyenfull.vision/ten-truyen  (hoặc URL 1 chương)"
+             ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+_nv_r2 = _sec_row(_sec_novel)
+ctk.CTkLabel(_nv_r2, text="Chương:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_nv_r2, textvariable=novel_chap_var, width=200,
+             placeholder_text="vd: 1-50 hoặc 1,2,5  (rỗng = cả bộ)"
+             ).pack(side="left", padx=4, pady=4)
+ctk.CTkCheckBox(_nv_r2, variable=novel_merge_var,
+                text="Gộp 1 file TXT cả bộ", font=("Arial", 12)
+                ).pack(side="left", padx=(14, 4))
+
+_nv_r3 = _sec_row(_sec_novel)
+ctk.CTkLabel(_nv_r3, text="Lưu vào:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+ctk.CTkEntry(_nv_r3, textvariable=novel_out_var,
+             placeholder_text="Thư mục lưu...").pack(side="left", expand=True,
+                                                     fill="x", padx=4, pady=4)
+ctk.CTkButton(_nv_r3, text="Browse", width=80,
+              command=lambda: (lambda d: novel_out_var.set(d) if d else None)(
+                  filedialog.askdirectory(title="Chọn thư mục lưu truyện chữ"))
+              ).pack(side="left", padx=4)
+
+_nv_r4 = _sec_row(_sec_novel)
+btn_novel_run = ctk.CTkButton(_nv_r4, text="⬇ Tải truyện chữ", height=38,
+                              fg_color="#2f7bb5", hover_color="#3c93d4",
+                              font=("Arial", 14, "bold"),
+                              command=lambda: _novel_start())
+btn_novel_run.pack(side="left", expand=True, fill="x", padx=4, pady=6)
+btn_novel_stop = ctk.CTkButton(_nv_r4, text="⏹ Dừng", height=38, width=110,
+                               fg_color="#7a3b3b", hover_color="#9a4b4b",
+                               state="disabled", command=lambda: _novel_stop())
+btn_novel_stop.pack(side="left", padx=4, pady=6)
+ctk.CTkButton(_nv_r4, text="🔊 Đọc TTS", height=38, width=130,
+              fg_color="#2e8b57", hover_color="#3aa76a",
+              command=lambda: _novel_to_tts()).pack(side="left", padx=4, pady=6)
+ctk.CTkButton(_nv_r4, text="📂 Mở thư mục", height=38, width=130,
+              command=lambda: (os.makedirs(novel_out_var.get(), exist_ok=True),
+                               os.startfile(novel_out_var.get()))
+              if novel_out_var.get() else None).pack(side="left", padx=4, pady=6)
+
+ctk.CTkLabel(
+    _sec_novel,
+    text="ℹ Chỉ tải để nghe cá nhân. Hỗ trợ tốt truyenfull + các trang có URL chương "
+         "dạng chuong-N/chapter-N; trang lạ dò nội dung best-effort (trang cần "
+         "JS/Cloudflare sẽ không tải được). Đã tải rồi chạy lại chỉ tải phần thiếu. "
+         "🔊 Đọc TTS nạp TXT vào trang Tài liệu → Audio; header 'Chương N' giúp file "
+         ".m4b có mục lục chương.",
+    font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
+    wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
+
+
+# ── 🚀 Chuỗi 1 nút: Tải → Đọc TTS → Merge audiobook ─────────────────────────
+# Pattern autodub-chain: 1 worker thread chạy tuần tự ① _novel_download_sync
+# ② nạp chunks (main thread + Event, như hàng đợi) ③ _dispatch_pdf_tts_blocking
+# (đúng engine đang chọn, resume skip-existing) ④ merge_pdf_audio (async, tự có
+# fireworks/mở thư mục — là bước cuối nên không cần chờ). Output audio ở
+# <root>\audio\. Chạy lại = resume cả 2 pha (chương .txt + pdf_line đã có đều
+# được skip). Khóa chung _NOVEL_RUNNING; ⏹ set cả _MANGA_STOP + stop_requested.
+
+def _novel_chain_worker(url, out_dir, rng, make_m4b):
+    global PDF_FILE, PDF_CHUNKS, current_index, OUTPUT_DIR
+    try:
+        log_color("━━━ 🚀 TRUYỆN CHỮ → AUDIOBOOK: Tải → Đọc → Merge ━━━", "#36c5ff")
+        root, full, done, total, _fresh = _novel_download_sync(
+            url, out_dir, True, rng, 0.4)
+        if not root or _MANGA_STOP[0]:
+            return
+        if not full or not os.path.isfile(full):
+            log("🚀 ❌ Không có file gộp để đọc — dừng chuỗi.")
+            return
+        if done < total:
+            log(f"🚀 ⚠ {total - done} chương lỗi — audiobook sẽ THIẾU các chương "
+                "đó (chạy lại chuỗi sau để tải bù + đọc bổ sung).")
+        text = _read_text_smart(full).strip()
+        chunks = _split_text_chunks(text)
+        if not chunks:
+            log("🚀 ❌ Truyện không có nội dung đọc được.")
+            return
+        aud_dir = os.path.join(root, "audio")
+        os.makedirs(aud_dir, exist_ok=True)
+        # ② nạp vào pipeline Doc-TTS trên MAIN thread (đụng subtitle_list/set_mode)
+        _ev = threading.Event()
+
+        def _load():
+            global PDF_FILE, PDF_CHUNKS, current_index, OUTPUT_DIR
+            try:
+                PDF_FILE = full
+                PDF_CHUNKS = chunks
+                OUTPUT_DIR = aud_dir
+                current_index = 0
+                subtitle_list.configure(state="normal")
+                subtitle_list.delete("1.0", "end")
+                for i, c in enumerate(chunks):
+                    subtitle_list.insert("end", f"[{i}] {c}\n\n")
+                subtitle_list.configure(state="disabled")
+                set_mode("pdf")
+            finally:
+                _ev.set()
+        app.after(0, _load)
+        _ev.wait(timeout=60)
+        log(f"🚀 ② Đọc TTS: {len(chunks)} đoạn → {aud_dir}")
+        _dispatch_pdf_tts_blocking()
+        if stop_requested or _MANGA_STOP[0]:
+            log("🚀 ⏹ Đã dừng — chạy lại chuỗi sẽ tiếp tục phần thiếu (resume).")
+            return
+        have = sum(1 for i in range(len(chunks))
+                   if os.path.isfile(os.path.join(aud_dir, f"pdf_line_{i:04d}.mp3")))
+        if have == 0:
+            log("🚀 ❌ Không tạo được audio nào (xem lỗi phía trên) — dừng chuỗi.")
+            return
+        log(f"🚀 ③ Merge {have}/{len(chunks)} đoạn thành audiobook"
+            + (" (+ .m4b có chương)" if make_m4b else "") + "...")
+
+        def _merge():
+            try:
+                pdf_m4b_var.set(bool(make_m4b))
+            except Exception:
+                pass
+            merge_pdf_audio()   # tự chạy thread riêng + fireworks + mở thư mục
+        app.after(0, _merge)
+    except Exception as e:
+        log(f"🚀 ❌ Lỗi chuỗi truyện chữ → audiobook: {e}")
+    finally:
+        _NOVEL_RUNNING[0] = False
+        app.after(0, lambda: _novel_set_running(False))
+
+
+def _novel_chain_start():
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0] \
+            or _NOVEL_RUNNING[0]:
+        log("⚠ Đang có tác vụ truyện chạy, đợi xong hoặc bấm Dừng.")
+        return
+    if _autodub_busy():
+        log("⚠ Đang có job TTS/lồng tiếng khác chạy — đợi xong đã.")
+        return
+    url = novel_url_var.get().strip()
+    if not url or "http" not in url:
+        log("❌ Nhập URL bộ truyện chữ (hoặc URL 1 chương).")
+        return
+    out_dir = novel_out_var.get().strip()
+    if not out_dir:
+        out_dir = os.path.join(os.path.expanduser("~"), "Downloads", "TruyenChu")
+        novel_out_var.set(out_dir)
+    if not (VOXCPM_ENABLED or VIENEU_ENABLED or F5TTS_ENABLED
+            or OMNIVOICE_ENABLED) and not check_internet():
+        log("❌ Mất mạng — provider online cần internet để đọc TTS.")
+        return
+    rng = novel_chap_var.get().strip()
+    make_m4b = bool(novel_m4b_var.get())
+    _MANGA_STOP[0] = False
+    _NOVEL_RUNNING[0] = True
+    _novel_set_running(True)
+    threading.Thread(target=_novel_chain_worker,
+                     args=(url, out_dir, rng, make_m4b), daemon=True).start()
+
+
+# ── 📡 Theo dõi bộ truyện chữ — kiểm tra & tải chương mới ────────────────────
+# Pattern yt-watch: URL các bộ đang ra lưu novel_watch.json (cạnh settings.json);
+# nút 🔍 chạy _novel_download_sync từng bộ (resume = chỉ tải chương THIẾU, đã có
+# thì im lặng) + cập nhật file gộp. Marker = chuong_*.txt tồn tại (triết lý
+# watch-folder: không file trạng thái, sống sót restart). Kiểm tra THỦ CÔNG —
+# không tự chạy khi mở app (tránh batch bất ngờ).
+_NOVEL_WATCH_FILE = os.path.join(
+    os.path.dirname(_SETTINGS_FILE) or ".", "novel_watch.json")
+_NOVEL_WATCH_RUNNING = [False]
+
+
+def open_novel_watch_dialog():
+    """📡 Danh sách bộ truyện chữ theo dõi + nút kiểm tra & tải chương mới."""
+    try:
+        data = {}
+        if os.path.isfile(_NOVEL_WATCH_FILE):
+            with open(_NOVEL_WATCH_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+    except Exception:
+        data = {}
+    win = ctk.CTkToplevel(app)
+    win.title("📡 Theo dõi bộ truyện chữ")
+    win.geometry("620x400")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    ctk.CTkLabel(win, text="Bộ truyện đang ra theo dõi (mỗi URL 1 dòng)",
+                 font=("Arial", 13, "bold")).pack(pady=(10, 2))
+    ctk.CTkLabel(win, text="🔍 so danh sách chương trên trang với chuong_*.txt đã tải trong\n"
+                           "'Lưu vào'\\<tên truyện>\\ → chỉ tải chương MỚI + cập nhật file gộp.\n"
+                           "Kiểm tra thủ công bằng nút — không tự chạy khi mở app.",
+                 font=("Arial", 11), justify="left").pack(pady=(0, 6))
+
+    box = ctk.CTkTextbox(win, height=170, wrap="none")
+    box.pack(fill="both", expand=True, padx=12, pady=4)
+    box.insert("1.0", "\n".join(data.get("urls", [])))
+
+    row = ctk.CTkFrame(win, fg_color="transparent")
+    row.pack(fill="x", padx=12, pady=(4, 10))
+
+    def _save(quiet=False):
+        urls = [l.strip() for l in box.get("1.0", "end").splitlines() if l.strip()]
+        try:
+            with open(_NOVEL_WATCH_FILE, "w", encoding="utf-8") as f:
+                json.dump({"urls": urls}, f, ensure_ascii=False, indent=1)
+        except Exception as e:
+            log(f"[Truyện chữ] ⚠ Không lưu được novel_watch.json: {e}")
+        if not quiet:
+            log(f"[Truyện chữ] 💾 Đã lưu {len(urls)} bộ theo dõi.")
+        return urls
+
+    def _check():
+        urls = _save(quiet=True)
+        if not urls:
+            msg.showinfo("Theo dõi truyện", "Chưa có URL bộ truyện nào.")
+            return
+        if _NOVEL_WATCH_RUNNING[0] or _NOVEL_RUNNING[0] or _MANGA_RUNNING[0] \
+                or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0]:
+            log("[Truyện chữ] Đang có tác vụ truyện chạy — đợi xong.")
+            return
+        out_dir = novel_out_var.get().strip() or os.path.join(
+            os.path.expanduser("~"), "Downloads", "TruyenChu")
+        win.destroy()
+        _MANGA_STOP[0] = False
+        _NOVEL_WATCH_RUNNING[0] = True
+        _NOVEL_RUNNING[0] = True
+        _novel_set_running(True)
+
+        def _worker():
+            try:
+                results = []
+                for u in urls:
+                    if _MANGA_STOP[0]:
+                        break
+                    log(f"[Truyện chữ] 📡 Kiểm tra: {u}")
+                    try:
+                        root, _full, done, total, fresh = _novel_download_sync(
+                            u, out_dir, True, "", 0.4)
+                    except Exception as e:
+                        log(f"[Truyện chữ] ⚠ Lỗi bộ này: {e}")
+                        continue
+                    if root:
+                        results.append((os.path.basename(root), done, total, fresh))
+                if _MANGA_STOP[0]:
+                    log("[Truyện chữ] ⏹ Đã dừng kiểm tra.")
+                    return
+                fresh_total = 0
+                for name, done, total, fresh in results:
+                    if fresh:
+                        log_color(f"[Truyện chữ]   {name}: +{fresh} chương mới "
+                                  f"({done}/{total}).", "#6f6")
+                    else:
+                        log(f"[Truyện chữ]   {name}: không có chương mới "
+                            f"({done}/{total}).")
+                    fresh_total += fresh
+                if fresh_total:
+                    log_color(f"[Truyện chữ] ✅ Tổng {fresh_total} chương mới đã tải. "
+                              "Dùng 🚀 Tải → Đọc → Audiobook để đọc bản cập nhật.",
+                              "#6f6")
+                    app.after(0, show_fireworks)
+                else:
+                    log("[Truyện chữ] ✅ Không có chương mới.")
+            finally:
+                _NOVEL_WATCH_RUNNING[0] = False
+                _NOVEL_RUNNING[0] = False
+                app.after(0, lambda: _novel_set_running(False))
+                app.after(0, lambda: update_progress(0, 1))
+        threading.Thread(target=_worker, daemon=True).start()
+
+    ctk.CTkButton(row, text="💾 Lưu", width=90, command=_save).pack(side="left", padx=4)
+    ctk.CTkButton(row, text="🔍 Kiểm tra & tải chương mới", command=_check,
+                  fg_color="#2fa572", hover_color="#37b87f").pack(
+        side="left", expand=True, fill="x", padx=4)
+
+
+# --- UI hàng 🚀 chuỗi + theo dõi ---
+_nv_r5 = _sec_row(_sec_novel)
+novel_m4b_var = ctk.BooleanVar(value=True)
+btn_novel_chain = ctk.CTkButton(
+    _nv_r5, text="🚀 Tải → Đọc → Audiobook (1 nút)", height=38,
+    fg_color="#7c5cff", hover_color="#8f72ff", font=("Arial", 13, "bold"),
+    command=lambda: _novel_chain_start())
+btn_novel_chain.pack(side="left", expand=True, fill="x", padx=4, pady=6)
+ctk.CTkCheckBox(_nv_r5, variable=novel_m4b_var, text=".m4b có chương",
+                font=("Arial", 12), width=130).pack(side="left", padx=(8, 4))
+ctk.CTkButton(_nv_r5, text="📡 Theo dõi bộ truyện", height=38, width=170,
+              command=lambda: open_novel_watch_dialog()).pack(side="left",
+                                                              padx=4, pady=6)
+
+ctk.CTkLabel(
+    _sec_novel,
+    text="🚀 chạy cả chuỗi bằng giọng/engine đang cấu hình ở tab Giọng nói: tải chương "
+         "→ đọc TTS (audio ở <truyện>\\audio\\) → merge (+ .m4b có mục lục). Chạy lại = "
+         "tiếp tục phần thiếu. 📡 lưu các bộ đang ra, mỗi lần bấm Kiểm tra chỉ tải chương mới.",
+    font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
+    wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
+
 # ── 🎙 Podcast 2 giọng từ tài liệu (card trên trang Tài liệu → Audio) ────────
 _sec_podcast = _make_section(
     "🎙 Podcast 2 giọng (AI)",
@@ -8201,6 +9192,9 @@ def _ainovel_worker(cli, prompt, out_dir, cfg_path):
         # Chỉ log dòng mốc/sự kiện (không spam từng token stream ra stdout)
         _mark = ("chương", "chapter", "headless", "outline", "arc", "act",
                  "error", "lỗi", "hoàn thành", "done", "budget", "warn")
+        _err_kw = ("error", "lỗi", "fail", "400", "401", "403", "429",
+                   "bad request", "invalid", "exception", "panic")
+        _tail = []          # giữ toàn bộ output gần nhất (đầy đủ, không cắt) để dump khi lỗi
         _n = 0
         for line in proc.stdout:
             if _AINOVEL_STOP[0]:
@@ -8208,10 +9202,16 @@ def _ainovel_worker(cli, prompt, out_dir, cfg_path):
             s = (line or "").strip()
             if not s:
                 continue
+            _tail.append(s)
+            if len(_tail) > 80:
+                del _tail[0]
             _n += 1
             low = s.lower()
+            _is_err = any(k in low for k in _err_kw)
             if any(k in low for k in _mark) or _n % 40 == 0:
-                app.after(0, lambda s=s: log(f"   [ainovel] {s[:200]}"))
+                # dòng lỗi log ĐẦY ĐỦ (không cắt) để thấy rõ nguyên nhân; dòng thường vẫn cắt 200
+                _msg = s if _is_err else s[:200]
+                app.after(0, lambda m=_msg: log(f"   [ainovel] {m}"))
         try:
             proc.wait(timeout=5)
         except Exception:
@@ -8236,6 +9236,11 @@ def _ainovel_worker(cli, prompt, out_dir, cfg_path):
         else:
             app.after(0, lambda: log(f"📖 [Viết truyện AI] ❌ Không sinh được chương nào (mã {rc}). "
                                      f"Xem log ~/.ainovel/last-error.log; kiểm tra API key/model ở ⚙ Cài đặt."))
+            # Dump toàn bộ output gần nhất (đầy đủ) để thấy rõ 400 do tham số nào
+            if _tail:
+                app.after(0, lambda: log("   [ainovel] ── chi tiết lỗi (output đầy đủ) ──"))
+                for _t in _tail[-30:]:
+                    app.after(0, lambda t=_t: log(f"   [ainovel] {t}"))
     except Exception as e:
         app.after(0, lambda e=e: log(f"📖 [Viết truyện AI] ❌ Lỗi: {e}"))
     finally:
@@ -9236,9 +10241,69 @@ def open_voice_search_dialog():
         set_voice(v)
         win.destroy()
     lb.bind("<Double-Button-1>", _choose)
-    ctk.CTkButton(win, text="✔ Chọn giọng này", command=_choose, height=38,
+
+    # ▶ Nghe thử giọng đang chọn trong list — gen 1 câu mẫu qua save_tts với
+    # VOICE tạm thời (khôi phục trong finally, như A/B audition); từ chối khi
+    # có job TTS chạy vì VOICE là global dùng chung. Câu mẫu theo locale để
+    # giọng nước ngoài không đọc tiếng Việt ngọng.
+    _pv = {"busy": False, "seq": 0}
+    _PV_SAMPLES = {
+        "vi": "Xin chào, đây là bản nghe thử giọng đọc.",
+        "en": "Hello, this is a quick voice preview.",
+        "ja": "こんにちは、これは音声プレビューです。",
+        "zh": "你好，这是语音试听。",
+        "ko": "안녕하세요, 음성 미리듣기입니다.",
+        "fr": "Bonjour, ceci est un aperçu de la voix.",
+        "es": "Hola, esta es una vista previa de la voz.",
+        "de": "Hallo, dies ist eine kurze Stimmprobe.",
+        "ru": "Привет, это предварительное прослушивание голоса.",
+        "th": "สวัสดี นี่คือตัวอย่างเสียงอ่าน",
+    }
+
+    def _preview():
+        sel = lb.curselection()
+        if not sel:
+            return
+        v = lb.get(sel[0])
+        if _pv["busy"]:
+            log("🔎 Đang tạo mẫu — đợi chút.")
+            return
+        if _autodub_busy():
+            log("🔎 ⚠ Đang có job TTS chạy — không nghe thử được (giọng dùng chung).")
+            return
+        loc = v.split("-")[0].lower() if TTS_PROVIDER == "Edge TTS" else "vi"
+        text = _PV_SAMPLES.get(loc, _PV_SAMPLES["en"])
+        _pv["busy"] = True
+        _pv["seq"] += 1
+        seq = _pv["seq"]
+
+        def _run():
+            global VOICE
+            import tempfile as _tf
+            old = VOICE
+            tmp = os.path.join(_tf.gettempdir(), f"srt_tts_preview_vs{seq}.mp3")
+            try:
+                VOICE = v
+                ok = asyncio.run(save_tts(text, tmp))
+                if ok and _pv["seq"] == seq and os.path.isfile(tmp):
+                    _play_audio_file(tmp)
+                elif not ok:
+                    log(f"🔎 ⚠ Không tạo được mẫu cho {v}")
+            except Exception as e:
+                log(f"🔎 ⚠ Lỗi nghe thử: {e}")
+            finally:
+                VOICE = old
+                _pv["busy"] = False
+        threading.Thread(target=_run, daemon=True).start()
+
+    _btn_row = ctk.CTkFrame(win, fg_color="transparent")
+    _btn_row.pack(fill="x", padx=12, pady=(4, 12))
+    ctk.CTkButton(_btn_row, text="▶ Nghe thử", command=_preview, height=38,
+                  width=130, font=("Arial", 13)).pack(side="left", padx=(0, 6))
+    ctk.CTkButton(_btn_row, text="✔ Chọn giọng này", command=_choose, height=38,
                   fg_color="#2fa572", hover_color="#37b87f",
-                  font=("Arial", 13, "bold")).pack(fill="x", padx=12, pady=(4, 12))
+                  font=("Arial", 13, "bold")).pack(side="left", expand=True,
+                                                   fill="x")
     ent.focus_set()
 
 
@@ -18504,6 +19569,22 @@ def _dispatch_tts_blocking():
     elif F5TTS_ENABLED:   _run_f5tts_batch()
     elif OMNIVOICE_ENABLED: _run_omnivoice_batch()
     else:                 asyncio.run(generate_tts())
+
+
+def _dispatch_pdf_tts_blocking():
+    """Bản PDF_CHUNKS của _dispatch_tts_blocking: chạy đúng engine đang chọn
+    cho pipeline Doc-TTS, CHỜ tới khi xong (gọi từ worker thread — chuỗi 🚀
+    truyện chữ → audiobook dùng)."""
+    global paused, stop_requested, current_index
+    paused = False
+    stop_requested = False
+    current_index = 0
+    if VOXCPM_ENABLED:      _run_voxcpm_batch_pdf()
+    elif VIENEU_ENABLED:    _run_vieneu_batch_pdf()
+    elif F5TTS_ENABLED:     _run_f5tts_batch_pdf()
+    elif OMNIVOICE_ENABLED: _run_omnivoice_batch_pdf()
+    else:                   asyncio.run(_generate_pdf_tts())
+
 
 def run_queue_batch(do_merge=True, files=None):
     """Xử lý tuần tự từng file SRT; mỗi file ghi vào thư mục con <tên>_tts

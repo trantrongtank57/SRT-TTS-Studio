@@ -226,6 +226,38 @@
 - [ ] **🔊 Nạp truyện → Đọc (TTS)**: sau khi có chương → nạp → `subtitle_list` hiện các đoạn, sang trang Doc, "Đọc (TTS)" + "Merge Audio" chạy được
 - [ ] **📂 Mở thư mục** mở đúng `output\novel`; nút 📁 chọn thư mục hoạt động
 
+## X. Đợt 2026-07-03 (7): Tải truyện chữ (web novel) → Audio
+- [ ] Trang **📚 Tải truyện** hiện card "📖 Tải truyện chữ (web novel) → Audio" (URL / Chương / checkbox Gộp / Lưu vào / 4 nút)
+- [ ] Dán URL bộ truyện truyenfull (domain còn sống, vd `https://truyenfull.io/<slug>/`) + Chương `1-3` → ⬇ Tải truyện chữ → ra `chuong_00001.txt`..`chuong_00003.txt` trong `Lưu vào\<slug>\`, log `✔ Chương N (X ký tự)`, mỗi file mở ra có header "Chương N: ..." + nội dung sạch (không dính menu/quảng cáo script) — **lưu ý: AV trên máy build chặn nhóm site truyện (lỗi 499) → test trên máy/mạng không chặn**
+- [ ] Checkbox **Gộp 1 file TXT cả bộ** bật → có thêm `<slug>_full.txt` ghép đúng thứ tự chương
+- [ ] Chạy lại cùng URL/khoảng → log `— đã có, bỏ qua` (resume), không tải lại
+- [ ] Dán URL **1 chương** (`.../chuong-5/`) → chỉ tải 1 chương đó
+- [ ] Đang tải bấm **⏹ Dừng** → dừng trong vài giây, nút Tải bật lại
+- [ ] URL trống/sai → log ❌ hướng dẫn; trang cần JS/Cloudflare → log ❌ "không tách được nội dung"/"không tìm thấy link chương", không treo
+- [ ] Đang tải truyện chữ thì bấm ⬇ ở card Webtoon (và ngược lại) → log ⚠ "Đang có tác vụ truyện chạy"
+- [ ] **🔊 Đọc TTS**: chọn file `_full.txt` (hoặc nhiều file chương) → `subtitle_list` hiện các đoạn `[i]`, tự sang trang Tài liệu, "Đọc (TTS)" + "Merge Audio" chạy được; bật **Xuất .m4b có chương** → file m4b có mục lục đúng tên "Chương N" (ffprobe show_chapters)
+- [ ] **🚀 Tải → Đọc → Audiobook (1 nút)**: URL bộ truyện + Chương `1-3` + tick `.m4b có chương` → 🚀 → log 3 pha (tải → `🚀 ② Đọc TTS` → `🚀 ③ Merge`) chạy liền mạch bằng giọng đang cấu hình → ra `pdf_output_*.mp3` + `.m4b` trong `<truyện>\audio\` + pháo hoa + mở thư mục
+- [ ] Chạy lại 🚀 cùng URL/khoảng → pha tải log `♻ N/M chương đã có` (KHÔNG log từng chương), pha TTS `SKIP` các đoạn đã có → chỉ merge lại
+- [ ] Đang chạy 🚀 bấm **⏹ Dừng** ở pha TTS → dừng được; chạy lại → resume
+- [ ] **📡 Theo dõi bộ truyện**: thêm 1-2 URL bộ đang ra → 💾 Lưu (ra `novel_watch.json` cạnh settings.json) → 🔍 Kiểm tra: bộ đã tải đủ log "không có chương mới"; bộ có chương mới log `+N chương mới` + cập nhật `_full.txt` + pháo hoa; đóng mở app danh sách còn nguyên
+- [ ] Đang có tác vụ truyện khác chạy → 🚀/🔍 từ chối với log ⚠, không chen ngang
+
+## Y. Đợt 2026-07-03 (8): 🎬 Lấy audio mẫu từ video / YouTube
+- [ ] Cả 4 panel clone (VoxCPM/VieNeu/F5-TTS/OmniVoice) đều có nút **🎬** cạnh nút 🎙 ở hàng Audio mẫu
+- [ ] Bấm 🎬 → dialog "Lấy audio mẫu từ video / YouTube" (Nguồn / Bắt đầu / Lấy N giây / checkbox 🎼 / 3 nút)
+- [ ] **File local**: Browse chọn 1 video/mp3 trên máy + Bắt đầu `1:30` + Lấy `12` → ✂ Cắt → status ✅, ô Audio mẫu của ĐÚNG engine được điền `ref_vid_*.wav` (trong `recordings\` cạnh settings.json), ▶ Nghe lại đúng đoạn
+- [ ] **Link YouTube**: dán link + Bắt đầu `0:05` → ✂ Cắt → chỉ tải đúng đoạn (nhanh, vài trăm KB), ra WAV đúng thời lượng — đã verify lệnh 2026-07-03 với yt-dlp 2026.06.09
+- [ ] Tick **🎼 Tách giọng khỏi nhạc** với đoạn có nhạc nền → chạy demucs (lần đầu lâu) → WAV ra `_voice.wav` chỉ còn giọng; máy không có voxcpm_env → log ⚠ bỏ qua tách, vẫn ra bản chưa tách
+- [ ] Thời điểm bắt đầu vượt quá độ dài nguồn → status ❌ "Cắt thất bại / đoạn quá ngắn", không điền ô
+- [ ] Chưa cài yt-dlp (tạm đổi tên exe/env) + dán link → status ❌ hướng dẫn cài, không treo
+- [ ] Đang tải/cắt bấm **⏹ Dừng** hoặc đóng dialog → tiến trình bị kill, không treo app
+
+## Z. Đợt 2026-07-03 (9): ▶ Nghe thử trong Tìm giọng 🔎
+- [ ] Tab Giọng nói → 🔎 → chọn 1 giọng `vi-*` trong list → **▶ Nghe thử** → nghe câu mẫu tiếng Việt bằng đúng giọng đó; giọng UI hiện tại KHÔNG bị đổi (dropdown giữ nguyên)
+- [ ] Chọn giọng `ja-JP`/`en-US` → ▶ → câu mẫu đúng ngôn ngữ đó (không đọc tiếng Việt ngọng)
+- [ ] Bấm ▶ liên tiếp 2 giọng → chỉ bản sau phát (không chồng tiếng)
+- [ ] Đang chạy batch TTS → ▶ → log ⚠ từ chối (giọng dùng chung), không phá batch
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)
