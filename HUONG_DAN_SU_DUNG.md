@@ -179,6 +179,11 @@ chừng rồi chạy lại, phần mềm **tự bỏ qua các dòng đã làm xo
 giới hạn upload) bằng stream-copy (không re-encode, gần như tức thì); nếu có `final_synced.srt`
 cạnh audio thì chia kèm SRT từng phần (timestamp tự dời về 0).
 
+**🎭 Tag cảm xúc theo dòng** *(mới)* — thêm tag vào **đầu** một dòng SRT (hoặc đoạn text):
+`[vui]` `[buồn]` `[giận]` `[sợ]` `[nhanh]` `[chậm]` `[thì thầm]` `[hét]` (hỗ trợ cả không dấu
+`[buon]`/`[gian]`…). Với **Edge TTS**, giọng tự đổi tốc độ/cao độ theo cảm xúc; **tag không bị
+đọc thành tiếng**. Ví dụ: `[giận] Sao cậu dám!`. Giọng nhân bản local chỉ bỏ tag (không đổi giọng).
+
 ---
 
 ## 6. Đọc PDF / Word / TXT
@@ -391,6 +396,11 @@ Card **📖 Tải truyện chữ** (trang Tải truyện) tải chữ từ các 
   (`chuong_NNNNN_vi.txt`) bằng engine dịch đang chọn (Claude/Gemini/OpenAI/Groq/DeepSeek hoặc
   **Offline NLLB** miễn phí) rồi mới đọc → ra **bộ audio `_vi` riêng**. Resume theo chương: dừng
   giữa chừng chạy lại không tốn lại API. *(Nhớ chọn giọng tiếng Việt trước khi chạy.)*
+  Với bộ ≥5 chương, phần mềm **dịch thử 1 chương** và hiện 400 ký tự đầu để bạn duyệt trước
+  khi dịch cả bộ — sai engine thì Từ chối, đổi engine rồi chạy lại (không tốn dịch nhầm cả bộ).
+- **🖼 Ảnh bìa** *(mới)* — chọn 1 ảnh bìa: audiobook được **nhúng ID3** (tên truyện, ảnh bìa) +
+  tạo sẵn `thumbnail.png` 1280×720 (có tên truyện) trong thư mục truyện — cùng file mô tả chương,
+  là bộ file sẵn sàng upload. Để trống = thumbnail nền tối.
 - **🌙 Tắt máy khi xong** *(mới)* — tự tắt máy sau 60 giây khi chạy xong (chỉ khi không bấm dừng),
   tiện chạy bộ dài qua đêm. Hủy bằng lệnh `shutdown /a`.
 - **📡 Theo dõi bộ truyện** — lưu danh sách bộ đang ra; bấm kiểm tra là chỉ tải chương **mới** +

@@ -3198,7 +3198,10 @@ def _apply_glossary(text):
     bẩn OCR → từ điển phát âm → (teencode_var) từ viết tắt chat → (vi_num_var)
     đọc số tiền/ngày/giờ kiểu Việt. KHÔNG ảnh hưởng file SRT, bản dịch hay text
     hiển thị. Từ điển phát âm chạy TRƯỚC teencode để định nghĩa của người dùng
-    luôn thắng bảng mặc định."""
+    luôn thắng bảng mặc định. Tag cảm xúc [vui]/[giận]/… bị BỎ ở đây cho mọi
+    engine local (save_tts của provider đã tự parse trước đó — gọi lại vô hại
+    vì tag không còn)."""
+    _, text = _emo_parse(text)
     text = _clean_ocr_text(text)
     rx = _GLOSSARY_RX[0]
     if rx is not None and text:
@@ -8927,7 +8930,8 @@ def _novel_build_m4b(chap_mp3s, titles, mp3_path, gap_s=0.3, intro_shift=0.0):
 
 
 def _novel_tts_chapters_sync(root, make_m4b, gap_ms=300, bgm="", bgm_vol=0.12,
-                             intro="", outro="", loudnorm=False, vi=False):
+                             intro="", outro="", loudnorm=False, vi=False,
+                             cover=""):
     """Đọc TTS theo TỪNG CHƯƠNG rồi nối audiobook. CHỜ tới khi xong (worker
     thread gọi; caller giữ khóa + capture gap_ms/m4b trên main thread).
     vi=True → đọc bản DỊCH chuong_*_vi.txt (mp3 = chuong_NNNNN_vi.mp3 — tách
@@ -9044,6 +9048,12 @@ def _novel_tts_chapters_sync(root, make_m4b, gap_ms=300, bgm="", bgm_vol=0.12,
             for p in chap_mp3s]
         _novel_build_m4b(chap_mp3s, titles, out_mp3, gap_s=gap_ms / 1000.0,
                          intro_shift=_intro_shift)
+    # 🏷/🖼 Gói xuất bản: tag ID3 (+bìa nhúng) cho mp3 + thumbnail.png
+    _tag_audiobook(out_mp3, album=title,
+                   title=os.path.splitext(os.path.basename(out_mp3))[0],
+                   cover=cover)
+    _make_thumbnail(cover, title.replace("-", " ").replace("_", " ").title(),
+                    os.path.join(root, "thumbnail.png"))
     log_color(f"🚀 ✅ Audiobook: {out_mp3}", "#6f6")
     try:
         _reveal_output(out_mp3)
@@ -9053,7 +9063,7 @@ def _novel_tts_chapters_sync(root, make_m4b, gap_ms=300, bgm="", bgm_vol=0.12,
     return (new_done, n_have, total)
 
 
-def _novel_translate_chapters_sync(root):
+def _novel_translate_chapters_sync(root, limit=0):
     """🌐 Dịch từng chương sang tiếng Việt: chuong_NNNNN.txt →
     chuong_NNNNN_vi.txt, RESUME THEO CHƯƠNG (đã có bản dịch = skip — dừng giữa
     chừng chạy lại không tốn lại API). Engine = dropdown trang Dịch
@@ -9083,6 +9093,8 @@ def _novel_translate_chapters_sync(root):
         log(f"🌐 ♻ {have}/{total} chương đã dịch — còn {len(todo)} chương.")
     if not todo:
         return (0, total, total)
+    if limit:
+        todo = todo[:limit]
     TRANSLATE_STOP = False
     TRANSLATE_PAUSED = False
     cb = _make_translate_progress_cb()
@@ -9174,7 +9186,7 @@ def _confirm_on_main(title, text, timeout=600):
 
 def _novel_chain_worker(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
                         intro, outro, loudnorm, shutdown_when_done,
-                        do_translate=False):
+                        do_translate=False, cover=""):
     try:
         log_color("━━━ 🚀 TRUYỆN CHỮ → AUDIOBOOK (theo chương) ━━━", "#36c5ff")
         root, _full, done, total, _fresh = _novel_download_sync(
@@ -9218,15 +9230,52 @@ def _novel_chain_worker(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
                 log("🚀 Đã hủy — chỉnh giọng ở tab Giọng nói rồi chạy lại "
                     "(phần đã tải vẫn còn, không phải tải lại).")
                 return
-        # ①b 🌐 Dịch theo chương (resume) — pha TTS sẽ đọc bản _vi
+        # ①b 🌐 Dịch theo chương (resume) — pha TTS sẽ đọc bản _vi.
+        # ≥5 chương chưa dịch → DỊCH THỬ 1 CHƯƠNG rồi cho xem chất lượng
+        # trước khi đốt API/thời gian cho cả bộ (NLLB vs LLM lệch nhau xa).
         if do_translate:
             log_color("🚀 ①b Dịch sang tiếng Việt (theo chương)...", "#36c5ff")
+            _n_missing = sum(
+                1 for f in os.listdir(root)
+                if f.startswith("chuong_") and f.endswith(".txt")
+                and not f.endswith("_vi.txt")
+                and not (os.path.isfile(os.path.join(root, f[:-4] + "_vi.txt"))
+                         and os.path.getsize(
+                             os.path.join(root, f[:-4] + "_vi.txt")) > 50))
+            if _n_missing >= 5:
+                _novel_translate_chapters_sync(root, limit=1)
+                if _MANGA_STOP[0] or TRANSLATE_STOP:
+                    return
+                _first_vi = next(
+                    (os.path.join(root, f) for f in sorted(os.listdir(root))
+                     if f.startswith("chuong_") and f.endswith("_vi.txt")), "")
+                _sample = ""
+                try:
+                    _sample = _read_text_smart(_first_vi)[:400].strip()
+                except Exception:
+                    pass
+                if _sample and not _confirm_on_main(
+                        "🌐 Dịch thử 1 chương",
+                        f"Bản dịch chương đầu (bằng {TRANSLATE_PROVIDER}):\n"
+                        f"────────────────────\n{_sample}…\n"
+                        f"────────────────────\n\n"
+                        f"Ổn thì dịch tiếp {_n_missing - 1} chương còn lại?\n"
+                        "(Không ổn → đổi engine/model ở trang Dịch rồi chạy "
+                        "lại — bản thử sẽ được dịch lại bằng engine mới.)"):
+                    try:
+                        os.remove(_first_vi)   # để lần sau dịch lại chương thử
+                    except Exception:
+                        pass
+                    log("🚀 Đã hủy sau bản dịch thử — đổi engine/model ở trang "
+                        "Dịch rồi chạy lại.")
+                    return
             _novel_translate_chapters_sync(root)
             if _MANGA_STOP[0] or TRANSLATE_STOP:
                 return
         app.after(0, lambda: set_mode("pdf"))
         _novel_tts_chapters_sync(root, make_m4b, gap_ms, bgm, bgm_vol,
-                                 intro, outro, loudnorm, vi=do_translate)
+                                 intro, outro, loudnorm, vi=do_translate,
+                                 cover=cover)
         # 🌙 chỉ tắt máy khi chuỗi chạy hết mà KHÔNG bị người dùng dừng
         if shutdown_when_done and not (_MANGA_STOP[0] or stop_requested):
             _shutdown_pc()
@@ -9282,13 +9331,14 @@ def _novel_chain_start():
     do_translate = bool(novel_translate_var.get())
     if do_translate and not _novel_translate_preflight():
         return
+    cover = novel_cover_var.get().strip()
     _MANGA_STOP[0] = False
     _NOVEL_RUNNING[0] = True
     _novel_set_running(True)
     threading.Thread(target=_novel_chain_worker,
                      args=(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
                            intro, outro, loudnorm, shutdown_when_done,
-                           do_translate),
+                           do_translate, cover),
                      daemon=True).start()
 
 
@@ -9419,6 +9469,10 @@ def open_novel_watch_dialog():
             do_shutdown = bool(novel_shutdown_var.get())
         except Exception:
             loudnorm = do_shutdown = False
+        try:
+            cover = novel_cover_var.get().strip()
+        except Exception:
+            cover = ""
         # snapshot giọng hiện tại (main thread) — khôi phục sau khi áp
         # giọng riêng từng bộ
         snap = None
@@ -9505,7 +9559,7 @@ def open_novel_watch_dialog():
                               "#7cf")
                     _novel_tts_chapters_sync(root, make_m4b, gap_ms, bgm,
                                              bgm_vol, jin, jout, loudnorm,
-                                             vi=do_tr)
+                                             vi=do_tr, cover=cover)
                 if applied_prof and snap:
                     _ev2 = threading.Event()
 
@@ -9551,6 +9605,23 @@ ctk.CTkCheckBox(_nv_r5, variable=novel_shutdown_var, text="🌙 Tắt máy khi x
 ctk.CTkButton(_nv_r5, text="📡 Theo dõi bộ truyện", height=38, width=170,
               command=lambda: open_novel_watch_dialog()).pack(side="left",
                                                               padx=4, pady=6)
+
+# 🖼 Ảnh bìa (tùy chọn): nhúng ID3 vào audiobook + tạo thumbnail.png sẵn upload
+_nv_r6 = _sec_row(_sec_novel)
+ctk.CTkLabel(_nv_r6, text="🖼 Ảnh bìa:", font=("Arial", 12), width=90,
+             anchor="w").pack(side="left", padx=(4, 4))
+novel_cover_var = ctk.StringVar(value="")
+ctk.CTkEntry(_nv_r6, textvariable=novel_cover_var,
+             placeholder_text="(tùy chọn — nhúng vào audiobook + tạo thumbnail.png; "
+                              "rỗng = thumbnail nền tối)"
+             ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
+ctk.CTkButton(_nv_r6, text="📁", width=40,
+              command=lambda: (lambda p: novel_cover_var.set(p) if p else None)(
+                  filedialog.askopenfilename(
+                      title="Chọn ảnh bìa",
+                      filetypes=[("Ảnh", "*.jpg *.jpeg *.png"),
+                                 ("All files", "*.*")]))
+              ).pack(side="left", padx=4)
 
 ctk.CTkLabel(
     _sec_novel,
@@ -16262,6 +16333,85 @@ def _mix_bgm_into(audio_path, bgm_path, vol=0.12, log_prefix="🎵"):
     return False
 
 
+def _make_thumbnail(bg_path, title, out_png, size=(1280, 720)):
+    """🖼 Thumbnail sẵn upload: ảnh bìa cover-fit (rỗng = nền tối) + dải mờ
+    dưới + tên truyện font Unicode, tự co chữ cho vừa 92% bề ngang."""
+    try:
+        from PIL import Image as _Im, ImageDraw as _Dr, ImageFont as _Ft
+        W, H = size
+        if bg_path and os.path.isfile(bg_path):
+            im = _Im.open(bg_path).convert("RGB")
+            r = max(W / im.width, H / im.height)
+            im = im.resize((max(W, int(im.width * r)),
+                            max(H, int(im.height * r))))
+            x = (im.width - W) // 2
+            y = (im.height - H) // 2
+            im = im.crop((x, y, x + W, y + H))
+        else:
+            im = _Im.new("RGB", (W, H), (20, 26, 38))
+        band_h = H // 4
+        im = im.convert("RGBA")
+        im.alpha_composite(_Im.new("RGBA", (W, band_h), (0, 0, 0, 150)),
+                           (0, H - band_h))
+        dr = _Dr.Draw(im)
+        fpath = _find_unicode_font()
+        fs = max(28, W // 14)
+        font = None
+        while fs >= 20:
+            font = (_Ft.truetype(fpath, fs) if fpath
+                    else _Ft.load_default())
+            bb = dr.textbbox((0, 0), title, font=font)
+            if bb[2] - bb[0] <= W * 0.92 or not fpath:
+                break
+            fs -= 4
+        bb = dr.textbbox((0, 0), title, font=font)
+        tw, th = bb[2] - bb[0], bb[3] - bb[1]
+        dr.text(((W - tw) // 2, H - band_h + (band_h - th) // 2 - bb[1]),
+                title, font=font, fill=(255, 255, 255))
+        im.convert("RGB").save(out_png, "PNG")
+        log(f"🖼 Thumbnail → {os.path.basename(out_png)}")
+        return True
+    except Exception as e:
+        log(f"🖼 ⚠ Không tạo được thumbnail: {e}")
+        return False
+
+
+def _tag_audiobook(mp3_path, album="", title="", cover=""):
+    """🏷 Gắn ID3 (album/title/artist) + ảnh bìa nhúng vào mp3 — remux
+    -c copy (nhanh, không re-encode). Thay tại chỗ; lỗi → giữ nguyên."""
+    tmp = mp3_path + ".tag.mp3"
+    try:
+        cmd = [FFMPEG, "-y", "-v", "error", "-i", mp3_path]
+        if cover and os.path.isfile(cover):
+            cmd += ["-i", cover, "-map", "0:a", "-map", "1:v", "-c", "copy",
+                    "-id3v2_version", "3",
+                    "-metadata:s:v", "title=Album cover",
+                    "-metadata:s:v", "comment=Cover (front)"]
+        else:
+            cmd += ["-map", "0:a", "-c", "copy", "-id3v2_version", "3"]
+        if album:
+            cmd += ["-metadata", f"album={album}"]
+        if title:
+            cmd += ["-metadata", f"title={title}"]
+        cmd += ["-metadata", "artist=SRT TTS Studio", tmp]
+        r = subprocess.run(cmd, capture_output=True, timeout=1800,
+                           creationflags=CREATE_NO_WINDOW)
+        if r.returncode == 0 and os.path.isfile(tmp) \
+                and os.path.getsize(tmp) > 1000:
+            os.replace(tmp, mp3_path)
+            log(f"🏷 Đã gắn tag ID3{' + ảnh bìa' if cover else ''} vào "
+                f"{os.path.basename(mp3_path)}")
+            return True
+    except Exception:
+        pass
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
+    log("🏷 ⚠ Gắn tag lỗi — file giữ nguyên.")
+    return False
+
+
 def _loudnorm_into(audio_path, log_prefix="🔊"):
     """Chuẩn hoá loudness -16 LUFS (chuẩn YouTube) — re-encode TẠI CHỖ, giữ
     nguyên sample-rate gốc (loudnorm nội bộ upsample 192k → phải ép -ar lại,
@@ -17087,6 +17237,50 @@ def _save_tts_minimax_sync(text, filename, voice, api_key):
 
 
 
+# ── 🎭 Tag cảm xúc theo dòng: "[vui] Câu thoại..." ──────────────────────────
+# WHITELIST cứng — chỉ các tag dưới đây được nhận (dòng "[nhạc]"/"[...]" là nội
+# dung thật, giữ nguyên). Edge TTS: cộng delta vào rate/pitch của user; mọi
+# engine/provider khác: chỉ BỎ tag khỏi text (không bị đọc thành tiếng — strip
+# nằm trong _apply_glossary nên phủ cả 4 engine local + regen/quick/casting).
+_EMO_PRESETS = {          # tag → (Δrate %, Δpitch Hz)
+    "vui":     (8, 3),    "buồn":    (-10, -3),
+    "giận":    (14, 2),   "sợ":      (10, 4),
+    "nhanh":   (18, 0),   "chậm":    (-15, 0),
+    "thìthầm": (-12, -4), "hét":     (16, 5),
+}
+_EMO_ALIAS = {"buon": "buồn", "gian": "giận", "so": "sợ", "cham": "chậm",
+              "thì thầm": "thìthầm", "thi tham": "thìthầm",
+              "thitham": "thìthầm", "het": "hét"}
+_EMO_RX = re.compile(r"^\s*\[([^\[\]]{1,12})\]\s*")
+
+
+def _emo_parse(text):
+    """(tag|None, text đã bỏ tag). Chỉ nhận tag trong _EMO_PRESETS."""
+    m = _EMO_RX.match(text or "")
+    if not m:
+        return None, text
+    key = m.group(1).strip().lower()
+    key = _EMO_ALIAS.get(key, _EMO_ALIAS.get(key.replace(" ", ""),
+                                             key.replace(" ", "")))
+    if key in _EMO_PRESETS:
+        return key, text[m.end():]
+    return None, text
+
+
+def _edge_rate_emo(emo):
+    """rate Edge = rate user ± delta cảm xúc, kẹp [-90, 200]%."""
+    base = int(_edge_rate()[:-1])
+    v = max(-90, min(200, base + (_EMO_PRESETS[emo][0] if emo else 0)))
+    return f"{'+' if v >= 0 else ''}{v}%"
+
+
+def _edge_pitch_emo(emo):
+    """pitch Edge = pitch user ± delta cảm xúc, kẹp [-90, 90]Hz."""
+    base = int(_edge_pitch()[:-2])
+    v = max(-90, min(90, base + (_EMO_PRESETS[emo][1] if emo else 0)))
+    return f"{'+' if v >= 0 else ''}{v}Hz"
+
+
 def _edge_rate():
     """Tốc độ Edge TTS từ edge_rate_var, chuẩn hóa '+N%' — sai format → +10%."""
     v = edge_rate_var.get().strip().replace(" ", "")
@@ -17141,6 +17335,7 @@ def _trim_edge_silence(filepath):
 
 
 async def save_tts(text, filename):
+    _emo, text = _emo_parse(text)   # 🎭 tag cảm xúc — bắt TRƯỚC glossary strip
     text = _apply_glossary(text)  # tiền xử lý TTS: từ điển phát âm + đọc số kiểu Việt
     for attempt in range(3):
         try:
@@ -17148,8 +17343,8 @@ async def save_tts(text, filename):
                 communicate = edge_tts.Communicate(
                     text=text,
                     voice=VOICE,
-                    rate=_edge_rate(),
-                    pitch=_edge_pitch()
+                    rate=_edge_rate_emo(_emo),
+                    pitch=_edge_pitch_emo(_emo)
                 )
                 await communicate.save(filename)
             else:
@@ -26797,6 +26992,201 @@ btn_qc_listen = ctk.CTkButton(_g1_io, text="🎧 Nghe dòng lỗi", command=open
                               height=36, font=("Arial", 13))
 btn_qc_listen.pack(side="top", fill="x", padx=4, pady=4)
 
+
+# ── 🌊 Soát sóng âm + phụ đề (soát MẮT thay vì nghe mò) ─────────────────────
+# Vẽ dải sóng của final audio (ffmpeg decode s16le mono 4kHz → max-abs mỗi cột
+# pixel, stream từng chunk nên file 10 tiếng không ăn RAM) + vạch xanh tại mốc
+# BẮT ĐẦU từng dòng của SRT đang nạp → nhìn thấy ngay đoạn lặng bất thường
+# (dòng FAIL), khối tiếng dính nhau (chồng giọng), tiếng lệch vạch (drift).
+# Click lên sóng → hiện mm:ss + dòng phụ đề gần nhất; ▶ cắt 10s tại đó ra temp
+# và phát (tái dùng _play_audio_file — không cần seek MCI). Dialog ĐỘC LẬP với
+# Edit Studio (phần UI dễ vỡ nhất app) — muốn nhúng sau thì tái dùng hàm này.
+_WAVE_RUNNING = [False]
+
+
+def _wave_buckets(ffmpeg_path, audio_path, n_cols, sr=4000):
+    """[max-abs 0..1] × n_cols — decode stream, không load cả file vào RAM."""
+    import array
+    dur = _probe_duration_sec(audio_path) or 0.0
+    if dur <= 0 or n_cols <= 0:
+        return []
+    total = int(dur * sr)
+    step = max(1, total // n_cols)
+    buckets = [0] * n_cols
+    proc = subprocess.Popen(
+        [ffmpeg_path, "-v", "quiet", "-i", audio_path, "-f", "s16le",
+         "-ac", "1", "-ar", str(sr), "-"],
+        stdout=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
+    idx = 0
+    try:
+        while True:
+            chunk = proc.stdout.read(step * 2 * 8)   # ~8 cột mỗi lượt
+            if not chunk:
+                break
+            a = array.array("h", chunk[:len(chunk) // 2 * 2])
+            for off in range(0, len(a), step):
+                col = idx // step
+                if col >= n_cols:
+                    break
+                seg = a[off:off + step]
+                if seg:
+                    m = max(abs(x) for x in seg)
+                    if m > buckets[col]:
+                        buckets[col] = m
+                idx += len(seg)
+    finally:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    peak = max(buckets) or 1   # normalize theo đỉnh — audio nhỏ tiếng vẫn rõ sóng
+    return [b / peak for b in buckets]
+
+
+def open_waveform_dialog():
+    """🌊 Dialog sóng âm + vạch phụ đề."""
+    if _WAVE_RUNNING[0]:
+        log("🌊 Đang dựng sóng — đợi xong.")
+        return
+    ff_ok, ff_path, guide = _check_ffmpeg_exists()
+    if not ff_ok:
+        for _l in guide.splitlines():
+            log(_l)
+        return
+    _default = ""
+    try:
+        _fmt_name, _ = _MERGE_FORMATS.get(merge_format_var.get(),
+                                          _MERGE_FORMATS["mp3"])
+        _c = os.path.join(OUTPUT_DIR or "", _fmt_name)
+        if OUTPUT_DIR and os.path.isfile(_c):
+            _default = _c
+    except Exception:
+        pass
+    aud = filedialog.askopenfilename(
+        title="Chọn audio cần soát (final.mp3...)",
+        initialfile=_default or None,
+        initialdir=OUTPUT_DIR if os.path.isdir(OUTPUT_DIR or "") else None,
+        filetypes=[("Audio", "*.mp3 *.wav *.m4a *.opus *.m4b"),
+                   ("All files", "*.*")])
+    if not aud:
+        return
+    try:   # subtitles_cache = list srt.Subtitle (start = timedelta)
+        subs = [(s.start.total_seconds(), clean_text(s.content))
+                for s in (subtitles_cache or [])]
+    except Exception:
+        subs = []
+    dur = _probe_duration_sec(aud) or 0.0
+    if dur <= 0:
+        log("🌊 ❌ Không đọc được thời lượng audio.")
+        return
+    pps = 6 if dur * 6 <= 30000 else max(1, int(30000 / dur))  # px/giây, trần canvas
+    n_cols = int(dur * pps)
+    W, H = n_cols, 150
+
+    win = ctk.CTkToplevel(app)
+    win.title(f"🌊 Soát sóng + phụ đề — {os.path.basename(aud)} "
+              f"({_fmt_dur(dur)}, {pps}px/s)")
+    win.geometry("1200x330")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+    frame = ctk.CTkFrame(win, fg_color="transparent")
+    frame.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+    cv = tk.Canvas(frame, height=H + 30, bg="#101420", highlightthickness=0,
+                   scrollregion=(0, 0, W, H + 30))
+    hbar = tk.Scrollbar(frame, orient="horizontal", command=cv.xview)
+    cv.configure(xscrollcommand=hbar.set)
+    cv.pack(fill="both", expand=True)
+    hbar.pack(fill="x")
+
+    status = ctk.CTkLabel(win, text="⏳ Đang decode + dựng sóng "
+                                    "(file dài hơi lâu)...",
+                          font=("Arial", 12), anchor="w")
+    status.pack(fill="x", padx=12)
+    row = ctk.CTkFrame(win, fg_color="transparent")
+    row.pack(fill="x", padx=10, pady=(2, 10))
+    state = {"t": 0.0}
+
+    def _listen10():
+        t0 = max(0.0, state["t"] - 1.0)
+        import tempfile as _tf
+        tmp = os.path.join(_tf.gettempdir(),
+                           f"srt_tts_preview_wv{int(t0 * 10)}.mp3")
+
+        def _cut():
+            r = subprocess.run([ff_path, "-y", "-v", "quiet",
+                                "-ss", f"{t0:.2f}", "-t", "10", "-i", aud,
+                                "-c:a", "libmp3lame", tmp],
+                               capture_output=True, timeout=120,
+                               creationflags=CREATE_NO_WINDOW)
+            if r.returncode == 0 and os.path.isfile(tmp):
+                _play_audio_file(tmp)
+        threading.Thread(target=_cut, daemon=True).start()
+    ctk.CTkButton(row, text="▶ Nghe 10s tại điểm click", width=190,
+                  command=_listen10).pack(side="left", padx=4)
+    ctk.CTkButton(row, text="⏹", width=50,
+                  command=lambda: _qt_preview_close()).pack(side="left", padx=4)
+    ctk.CTkLabel(row, text="Vạch xanh = mốc bắt đầu dòng SRT đang nạp. "
+                           "Chỗ sóng phẳng dài = dòng thiếu/lặng.",
+                 font=("Arial", 11), text_color="#8a93ad").pack(side="left",
+                                                                padx=10)
+
+    def _click(ev):
+        x = cv.canvasx(ev.x)
+        state["t"] = t = max(0.0, min(dur, x / pps))
+        near = ""
+        if subs:
+            best = min(subs, key=lambda s: abs(s[0] - t))
+            near = f"  |  dòng gần nhất [{subs.index(best) + 1}] " \
+                   f"({_fmt_dur(best[0])}): {best[1][:80]}"
+        status.configure(text=f"📍 {_fmt_dur(t)}{near}")
+        cv.delete("cursor")
+        cv.create_line(x, 0, x, H, fill="#ff5555", tags="cursor")
+    cv.bind("<Button-1>", _click)
+
+    def _worker():
+        _WAVE_RUNNING[0] = True
+        try:
+            buckets = _wave_buckets(ff_path, aud, n_cols)
+            if not buckets or not win.winfo_exists():
+                return
+
+            def _draw():
+                if not win.winfo_exists():
+                    return
+                mid = H // 2
+                for i, v in enumerate(buckets):
+                    h = max(1, int(v * (H // 2 - 4)))
+                    cv.create_line(i, mid - h, i, mid + h, fill="#4aa3df")
+                for st, _tx in subs:
+                    x = st * pps
+                    if x <= W:
+                        cv.create_line(x, 0, x, H, fill="#3fe07f", width=1)
+                # mốc phút
+                m = 60
+                while m < dur:
+                    x = m * pps
+                    cv.create_line(x, H, x, H + 8, fill="#8a93ad")
+                    cv.create_text(x, H + 18, text=_fmt_dur(m),
+                                   fill="#8a93ad", font=("Consolas", 9))
+                    m += 60
+                status.configure(
+                    text=f"✅ Sóng {_fmt_dur(dur)} · {len(subs)} vạch phụ đề. "
+                         "Click lên sóng rồi ▶ nghe thử tại chỗ.")
+            app.after(0, _draw)
+        except Exception as e:
+            log(f"🌊 ❌ Lỗi dựng sóng: {e}")
+        finally:
+            _WAVE_RUNNING[0] = False
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+btn_waveform = ctk.CTkButton(_g1_io, text="🌊 Soát sóng + phụ đề",
+                             command=open_waveform_dialog,
+                             height=36, font=("Arial", 13),
+                             fg_color="#2b6a8a", hover_color="#357fa5")
+btn_waveform.pack(side="top", fill="x", padx=4, pady=4)
+
 # 🎙🔍 Soát đọc sai bằng STT: luôn bật (tự khóa khi chạy) — pattern nút Dịch
 btn_stt_verify = ctk.CTkButton(_g1_io, text="🎙🔍 Soát đọc sai (STT)", command=stt_verify_report,
                                height=36, font=("Arial", 13),
@@ -26868,6 +27258,59 @@ btn_cfg_folder = ctk.CTkButton(_g6b, text="📂 Mở thư mục cấu hình",
                                command=lambda: open_config_folder(),
                                height=36, font=("Arial", 13))
 btn_cfg_folder.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+
+def export_support_bundle():
+    """🐞 Gói hỗ trợ 1 click: zip 2 file log mới nhất + ui_prefs + sysinfo
+    ra Desktop — user gửi 1 file thay vì chat qua lại. CỐ Ý KHÔNG kèm
+    settings.json (chứa API key) và auth.dat."""
+    import zipfile
+    import platform
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    out = os.path.join(os.path.expanduser("~"), "Desktop",
+                       f"srt_tts_support_{ts}.zip")
+    try:
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+            logs_dir = os.path.join(_CONFIG_DIR, "logs")
+            if os.path.isdir(logs_dir):
+                for fn in sorted(os.listdir(logs_dir))[-2:]:
+                    try:
+                        z.write(os.path.join(logs_dir, fn), "logs/" + fn)
+                    except Exception:
+                        pass
+            for name in ("ui_prefs.json", "tts_prices.json"):
+                p = os.path.join(_CONFIG_DIR, name)
+                if os.path.isfile(p):
+                    z.write(p, name)
+            lines = [
+                f"time: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"frozen: {bool(getattr(sys, 'frozen', False))}",
+                f"exe: {sys.executable}",
+                f"os: {platform.platform()}",
+                f"python: {platform.python_version()}",
+                f"config_dir: {_CONFIG_DIR}",
+                f"gpu: {globals().get('DETECTED_GPU', '')}",
+                f"provider: {globals().get('TTS_PROVIDER', '')} | "
+                f"voice: {globals().get('VOICE', '')}",
+                f"translate_provider: {globals().get('TRANSLATE_PROVIDER', '')}",
+                f"ffmpeg: {get_ffmpeg()}",
+            ]
+            z.writestr("sysinfo.txt", "\n".join(lines) + "\n")
+        log(f"🐞 Đã tạo gói hỗ trợ → {out}")
+        log("   (Gồm log + ui_prefs + sysinfo; KHÔNG chứa API key/mật khẩu.)")
+        try:
+            _reveal_output(out)
+        except Exception:
+            pass
+    except Exception as e:
+        log(f"🐞 ❌ Không tạo được gói hỗ trợ: {e}")
+
+
+btn_support = ctk.CTkButton(_g6b, text="🐞 Gói hỗ trợ",
+                            command=export_support_bundle,
+                            height=36, width=130, font=("Arial", 13),
+                            fg_color="#8a5a2b", hover_color="#a56f3a")
+btn_support.pack(side="left", padx=4, pady=4)
 
 btn_media_edit = ctk.CTkButton(_g5_studio, text="🎬 Edit Studio", command=open_edit_studio, height=36, font=("Arial", 13))
 btn_media_edit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -27337,6 +27780,143 @@ btn_translate_pdf.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_translate_doc = ctk.CTkButton(_g4_run, text="Dịch Word/TXT", command=translate_doc, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
 btn_translate_doc.pack(side="top", fill="x", padx=4, pady=4)
+
+
+# ── 🔍 Back-translation QC: soát bản dịch bằng DỊCH NGƯỢC ────────────────────
+# Dịch bản Việt NGƯỢC về ngôn ngữ gốc rồi so từng dòng với câu gốc
+# (SequenceMatcher) — dòng lệch nghĩa/sót ý sẽ tụt độ khớp → flag. Là công cụ
+# GỢI Ý chỗ đáng ngờ (bước dịch ngược cũng có thể sai → false positive), không
+# phải trọng tài. Tốn thêm 1 lượt API cho phần được soát → có ô giới hạn dòng.
+# Pattern nút Dịch: tự khóa _BACKQC_RUNNING, không nằm trong set_mode.
+_BACKQC_RUNNING = [False]
+_BACKQC_MIN_RATIO = 0.45
+_BACKQC_LANG_MAP = {"vi": "Tiếng Việt", "zh": "中文", "ja": "日本語",
+                    "ko": "한국어", "th": "ไทย", "ru": "English",
+                    "latin": "English", "": "English"}
+
+
+def _backqc_norm(s):
+    return re.sub(r"[^\w\s]", " ", (s or "").lower()).split()
+
+
+def _backqc_ratio(a, b):
+    import difflib
+    return difflib.SequenceMatcher(None, _backqc_norm(a), _backqc_norm(b)).ratio()
+
+
+def backtranslate_qc():
+    """🔍 Chọn SRT GỐC (tự đoán <tên>_vi.srt cạnh nó) → dịch ngược → báo cáo."""
+    if _BACKQC_RUNNING[0]:
+        log("🔍 [Soát dịch] Đang chạy — đợi xong.")
+        return
+    if (TRANSLATE_PROVIDER or "") == "Offline":
+        log("🔍 [Soát dịch] ❌ Provider Offline chỉ dịch SANG tiếng Việt — "
+            "chọn Claude/Gemini/OpenAI/Groq/DeepSeek để dịch ngược.")
+        return
+    try:
+        _translate_active_key()
+    except Exception as e:
+        log(f"🔍 [Soát dịch] ❌ {e}")
+        return
+    src_p = filedialog.askopenfilename(
+        title="Chọn SRT GỐC (bản trước khi dịch)",
+        filetypes=[("SRT", "*.srt"), ("All files", "*.*")])
+    if not src_p:
+        return
+    guess = os.path.splitext(src_p)[0] + "_vi.srt"
+    vi_p = guess if os.path.isfile(guess) else filedialog.askopenfilename(
+        title="Chọn SRT BẢN DỊCH (_vi.srt)",
+        filetypes=[("SRT", "*.srt"), ("All files", "*.*")])
+    if not vi_p:
+        return
+    try:
+        with open(src_p, "r", encoding="utf-8-sig") as f:
+            src_subs = list(srt.parse(f.read()))
+        with open(vi_p, "r", encoding="utf-8-sig") as f:
+            vi_subs = list(srt.parse(f.read()))
+    except Exception as e:
+        log(f"🔍 [Soát dịch] ❌ Không đọc được SRT: {e}")
+        return
+    n = min(len(src_subs), len(vi_subs))
+    if n == 0:
+        log("🔍 [Soát dịch] ❌ SRT rỗng.")
+        return
+    if len(src_subs) != len(vi_subs):
+        log(f"🔍 [Soát dịch] ⚠ Lệch số dòng ({len(src_subs)} vs {len(vi_subs)}) "
+            f"— chỉ soát {n} dòng đầu theo cặp.")
+    from tkinter import simpledialog
+    limit = simpledialog.askinteger(
+        "Soát bản dịch", f"Soát bao nhiêu dòng đầu? (tổng {n}; tốn thêm 1 lượt "
+        "API cho phần soát)", initialvalue=min(n, 300), minvalue=1, maxvalue=n)
+    if not limit:
+        return
+    # ngôn ngữ dịch ngược = ngôn ngữ đoán từ SRT gốc
+    back_lang = _BACKQC_LANG_MAP.get(
+        _detect_srt_lang([s.content for s in src_subs[:50]]), "English")
+    _BACKQC_RUNNING[0] = True
+
+    def _worker():
+        old_target = [None]
+        try:
+            src_texts = [clean_text(s.content) for s in src_subs[:limit]]
+            vi_texts = [clean_text(s.content) for s in vi_subs[:limit]]
+            log_color(f"🔍 [Soát dịch] Dịch ngược {limit} dòng về {back_lang} "
+                      f"bằng {TRANSLATE_PROVIDER}...", "#7cf")
+            # đổi tạm ngôn ngữ đích trên MAIN thread, khôi phục trong finally
+            _ev = threading.Event()
+
+            def _set_target(val, ev):
+                try:
+                    old_target[0] = translate_target_var.get()
+                    translate_target_var.set(val)
+                finally:
+                    ev.set()
+            app.after(0, lambda: _set_target(back_lang, _ev))
+            _ev.wait(timeout=10)
+            back = _translate_segments(vi_texts, "",
+                                       progress_cb=_make_translate_progress_cb(),
+                                       log_cb=log)
+            flagged = []
+            for i, (o, b) in enumerate(zip(src_texts, back)):
+                if len(_backqc_norm(o)) < 3:
+                    continue   # dòng quá ngắn — fuzzy không tin được
+                r = _backqc_ratio(o, b or "")
+                if r < _BACKQC_MIN_RATIO:
+                    flagged.append((i + 1, r, o, vi_texts[i], b or ""))
+            rep = [f"SOÁT BẢN DỊCH (dịch ngược về {back_lang}) — "
+                   f"{len(flagged)}/{limit} dòng đáng ngờ "
+                   f"(độ khớp < {_BACKQC_MIN_RATIO}):", ""]
+            for idx, r, o, v, b in flagged[:200]:
+                rep += [f"[{idx}] khớp {r:.2f}", f"  GỐC : {o}",
+                        f"  DỊCH: {v}", f"  NGƯỢC: {b}", ""]
+            rep_path = os.path.splitext(vi_p)[0] + "_backcheck.txt"
+            with open(rep_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(rep))
+            if flagged:
+                log_color(f"🔍 [Soát dịch] 🔴 {len(flagged)}/{limit} dòng đáng "
+                          f"ngờ → {os.path.basename(rep_path)} (mở xem, sửa "
+                          "trong 📝 Bảng phụ đề).", "#f96")
+            else:
+                log_color(f"🔍 [Soát dịch] ✅ {limit} dòng đều khớp tốt.", "#6f6")
+            try:
+                _reveal_output(rep_path)
+            except Exception:
+                pass
+        except Exception as e:
+            log(f"🔍 [Soát dịch] ❌ {e}")
+        finally:
+            if old_target[0]:
+                app.after(0, lambda: translate_target_var.set(old_target[0]))
+            _BACKQC_RUNNING[0] = False
+            app.after(0, lambda: update_progress(0, 1))
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+btn_backqc = ctk.CTkButton(_g4_run, text="🔍 Soát bản dịch (dịch ngược)",
+                           command=backtranslate_qc, height=36,
+                           font=("Arial", 13),
+                           fg_color="#8a5a2b", hover_color="#a56f3a")
+btn_backqc.pack(side="top", fill="x", padx=4, pady=4)
 
 # Hàng điều khiển dịch: Tạm dừng / Tiếp tục / Dừng hẳn (bật khi đang dịch)
 btn_tr_pause = ctk.CTkButton(_g4_ctrl, text="⏸ Tạm dừng dịch", command=_translate_pause,
@@ -28036,6 +28616,7 @@ def _ui_prefs_register():
         "pdf_bgm": pdf_bgm_var, "pdf_bgm_vol": pdf_bgm_vol_var,
         "pdf_intro": pdf_intro_var, "pdf_outro": pdf_outro_var,
         "pdf_loudnorm": pdf_loudnorm_var, "novel_translate": novel_translate_var,
+        "novel_cover": novel_cover_var,
     })
 
 def _ui_prefs_load():

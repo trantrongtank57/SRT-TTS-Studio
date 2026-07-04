@@ -326,6 +326,29 @@
 - [ ] BỎ tick 🌐 chạy cùng bộ → đọc bản GỐC, ra bộ mp3/audiobook riêng không lẫn bản `_vi`; file gộp `_full.txt` không chứa bản dịch
 - [ ] **📡 watch per bộ**: dòng `URL | hồ_sơ | dich` → bộ đó tự dịch chương mới rồi đọc bản dịch; dòng không có `dich` giữ nguyên hành vi cũ; có dòng `dich` mà thiếu key/model → 🔍 từ chối sớm
 
+## AH. Đợt 2026-07-04 (4): 🖼 Gói xuất bản + dịch thử 1 chương
+- [ ] Card truyện chữ có hàng **🖼 Ảnh bìa** (nhớ qua phiên); chạy 🚀 xong → thư mục truyện có `thumbnail.png` 1280×720 (bìa cover-fit + tên truyện chữ Việt trên dải mờ; không chọn bìa = nền tối) — verified PIL
+- [ ] File `_audiobook.mp3` sau 🚀 có **tag ID3**: album = tên truyện, artist = SRT TTS Studio, ảnh bìa nhúng (mở bằng player/Explorer thấy bìa) — verified ffprobe attached_pic=1, audio nguyên vẹn
+- [ ] **Dịch thử 1 chương**: 🚀 + 🌐 với bộ ≥5 chương chưa dịch → dịch đúng 1 chương rồi hiện dialog 400 ký tự đầu bản dịch; chọn **Yes** → dịch tiếp phần còn lại; chọn **No** → dừng + file `_vi` thử bị XÓA (đổi engine chạy lại sẽ dịch lại bản thử bằng engine mới)
+- [ ] Bộ <5 chương chưa dịch → không hỏi, dịch thẳng; 📡 watch với `| dich` → không bao giờ hỏi (chạy không người trông)
+
+## AI. Đợt 2026-07-04 (5): 🎭 Tag cảm xúc + 🐞 Gói hỗ trợ
+- [ ] SRT có dòng `[vui] Chào cậu!` + Edge TTS → nghe nhanh/cao hơn dòng thường; `[buồn]`/`[chậm]` → chậm/trầm hơn; **tag KHÔNG bị đọc thành tiếng**
+- [ ] Alias không dấu `[buon]`/`[gian]`/`[thi tham]` hoạt động như có dấu
+- [ ] Dòng `[nhạc] ♪...` hoặc `[tên nhân vật]` (ngoài whitelist) → giữ nguyên, đọc như cũ (verified fixture 9 case)
+- [ ] Engine local (VoxCPM/VieNeu/F5/Omni) với dòng có tag → tag bị bỏ khỏi text đưa vào helper (nghe không có "vui"), giọng không đổi (local không có rate/pitch)
+- [ ] Tag + casting per-rule rate/pitch → delta cảm xúc CỘNG DỒN lên rate/pitch của rule (verified combiner + kẹp biên ±200%)
+- [ ] Quick TTS gõ `[hét] Tránh ra!` → Nghe thử → to/nhanh rõ rệt
+- [ ] **🐞 Gói hỗ trợ** (trang Hệ thống, cạnh 📦): bấm → ra `srt_tts_support_<stamp>.zip` trên Desktop chứa 2 log mới nhất + ui_prefs + tts_prices + sysinfo.txt; **KHÔNG có settings.json/auth.dat** (mở zip kiểm tra); Explorer mở chọn sẵn file
+
+## AJ. Đợt 2026-07-04 (6): 🔍 Soát bản dịch + 🌊 Soát sóng
+- [ ] **🔍 Soát bản dịch (dịch ngược)** (trang Dịch, dưới Dịch Word/TXT): cần provider cloud (Offline → ❌ hướng dẫn); chọn SRT gốc → tự đoán `_vi.srt` cạnh nó → hỏi số dòng soát (mặc định ≤300) → dịch ngược về ngôn ngữ đoán từ SRT gốc (EN/中文/日本語/…) → ra `<tên>_backcheck.txt` liệt kê dòng khớp < 0.45 (mỗi dòng: GỐC/DỊCH/NGƯỢC) + Explorer mở chọn file
+- [ ] Bản dịch tốt → log `✅ N dòng đều khớp tốt`; sửa 1 dòng `_vi.srt` thành sai nghĩa hẳn → chạy lại → dòng đó bị flag 🔴
+- [ ] Ngôn ngữ đích ở trang Dịch được KHÔI PHỤC sau khi soát (kể cả khi lỗi giữa chừng)
+- [ ] **🌊 Soát sóng + phụ đề** (trang SRT, cột io dưới 🎧): load SRT + có final → 🌊 → chọn audio (mặc định final) → dải sóng vẽ ra (file dài log "hơi lâu"), vạch XANH đúng mốc bắt đầu từng dòng, mốc phút dưới đáy, cuộn ngang được — verified decode: đoạn lặng 8-12s hiện phẳng rõ giữa 2 khối sóng
+- [ ] Click lên sóng → vạch đỏ + status hiện `mm:ss | dòng gần nhất [n]: text`; **▶ Nghe 10s tại điểm click** phát đúng đoạn đó; ⏹ dừng phát
+- [ ] Chưa load SRT → sóng vẫn vẽ (không vạch xanh), không crash; audio 10 tiếng → px/giây tự giảm để không vượt trần canvas
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

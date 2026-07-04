@@ -6,6 +6,19 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **🎭 Tag cảm xúc theo dòng** — thêm `[vui]` / `[buồn]` / `[giận]` / `[sợ]` / `[nhanh]` /
+  `[chậm]` / `[thì thầm]` / `[hét]` vào đầu một dòng SRT hoặc đoạn text: **Edge TTS** tự đổi
+  tốc độ/cao độ theo cảm xúc (cộng dồn lên rate/pitch đang đặt, có kẹp biên), **tag không bị
+  đọc thành tiếng**. Hỗ trợ alias không dấu (`[buon]`/`[gian]`/`[thi tham]`…). Engine local
+  (VoxCPM/VieNeu/F5/Omni) chỉ bỏ tag khỏi text (không có rate/pitch nên giọng không đổi).
+- **🖼 Gói xuất bản audiobook** — ô "🖼 Ảnh bìa" mới trong card truyện chữ: sau khi ghép
+  audiobook, tự **nhúng ID3** (album = tên truyện, artist = SRT TTS Studio, ảnh bìa) vào mp3 +
+  tạo sẵn `thumbnail.png` 1280×720 (bìa cover-fit + tên truyện trên dải mờ; để trống = nền tối)
+  — cùng `youtube_description.txt` là bộ file sẵn sàng upload.
+- **🌐 Dịch thử 1 chương trước khi dịch cả bộ** — khi bật dịch cho bộ ≥5 chương, chuỗi 🚀 dịch
+  thử đúng 1 chương rồi hiện 400 ký tự đầu để duyệt: Đồng ý → dịch tiếp; Từ chối → xóa bản thử
+  (đổi engine/model chạy lại sẽ dịch lại) — tránh dịch nhầm engine cả nghìn chương. Watch tự
+  động không hỏi.
 - **🌐 Dịch truyện chữ nước ngoài → Việt trước khi đọc** — ô "Dịch sang tiếng Việt trước
   khi đọc" mới trong card 📖 Tải truyện chữ: chuỗi 🚀 Tải → Đọc → Audiobook giờ chèn thêm
   pha dịch từng chương (`chuong_NNNNN_vi.txt`) bằng đúng engine dịch đang chọn
