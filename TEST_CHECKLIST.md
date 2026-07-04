@@ -298,6 +298,34 @@
 - [ ] Đang chạy loạt bấm **⏹** → hủy cả loạt (không chỉ file hiện tại); 1 file lỗi → log ❌ và chạy tiếp file sau
 - [ ] Chọn 1 file như cũ → hành vi cũ giữ nguyên
 
+## AE. Đợt 2026-07-04: 🎺 Nhạc hiệu + chốt xác nhận chuỗi dài
+- [ ] Trang Tài liệu → dưới hàng 🎵 có hàng **🎺 Intro / Outro** (2 ô + 📁); giá trị nhớ qua phiên
+- [ ] Chọn intro/outro (file nhạc bất kỳ, kể cả stereo 44.1k) + Merge Audio → log `🎺 Đã nối nhạc hiệu (intro+outro)...` → final có nhạc hiệu đầu/cuối, phần giọng nguyên vẹn — đã verify lệnh (intro 2s+outro 3s vào track 6s → 11s)
+- [ ] Bật ".m4b có chương" + intro → mốc chương DỜI đúng theo intro, chương "Mở đầu" phủ đoạn nhạc hiệu (verified: marks 0/2.0/5.0)
+- [ ] Có cả 🎵 nhạc nền + 🎺 → nhạc nền CHỈ phủ phần giọng đọc, không đè lên jingle
+- [ ] Chuỗi 🚀 truyện chữ với intro/outro đã set → `_audiobook.mp3` + m4b có nhạc hiệu
+- [ ] **Chốt xác nhận chuỗi dài**: 🚀 với bộ ≥10 chương chưa đọc → sau pha tải hiện dialog "Sắp đọc N chương (~X ký tự ≈ Y giờ audio) / Giọng: ..." → chọn No → log hủy, phần đã tải giữ nguyên; chọn Yes → chạy tiếp
+- [ ] 🚀 với <10 chương mới (hoặc chạy lại đã gần đủ) → KHÔNG hỏi, chạy luôn
+- [ ] 📡 watch + 🔊 tự đọc → KHÔNG hỏi (chạy không người trông)
+
+## AF. Đợt 2026-07-04 (2): Giọng riêng per bộ + 🌙 Tắt máy + Chuẩn âm lượng
+- [ ] Hàng "Nghỉ giữa đoạn" có thêm checkbox **Chuẩn âm lượng**; Merge Audio với file giọng nhỏ tiếng → log `🔊 Đã chuẩn hoá âm lượng (-16 LUFS)` → nghe to đều (verified: -29dB → -15.7dB, sample-rate giữ nguyên)
+- [ ] Thứ tự xử lý đúng khi bật cả 4: chuẩn âm lượng GIỌNG trước → nhạc nền → nhạc hiệu → m4b (nhạc nền không bị kéo to, jingle không bị đổi mức)
+- [ ] **📡 Giọng riêng từng bộ**: dialog watch hiện hướng dẫn `URL | tên hồ sơ` + danh sách hồ sơ; dòng có `| ho_so_A` → pha 🔊 log `🎤 Giọng cho <bộ>: ho_so_A` và audio ĐÚNG giọng đó; dòng không có `|` → giọng hiện tại; xong tất cả log `↩ Đã khôi phục giọng ban đầu` và UI giọng trở về như cũ
+- [ ] Tên hồ sơ sai trong dòng watch → log ⚠ dùng giọng hiện tại, không chết
+- [ ] **🌙 Tắt máy khi xong** (checkbox hàng 🚀): tick + chạy 🚀 bộ nhỏ → xong log `🌙 XONG VIỆC — máy sẽ TẮT sau 60 giây` + Windows đếm ngược (hủy: `shutdown /a`); bấm ⏹ giữa chừng → KHÔNG tắt máy
+- [ ] Checkbox 🌙 mặc định TẮT mỗi lần mở app (cố ý không nhớ qua phiên)
+
+## AG. Đợt 2026-07-04 (3): 🌐 Dịch truyện nước ngoài → Việt → audiobook
+- [ ] Card truyện chữ có checkbox **🌐 Dịch sang tiếng Việt trước khi đọc**; trạng thái nhớ qua phiên
+- [ ] Tick 🌐 + provider cloud chưa có key → 🚀 báo ❌ sớm (trước khi tải); provider Offline chưa đặt model → ❌ hướng dẫn ⚙ Cài đặt
+- [ ] URL truyện tiếng Anh/Trung (trang dạng chapter-N) + Chương `1-3` + 🌐 → 🚀: pha `①b Dịch` chạy sau pha tải, ra `chuong_NNNNN_vi.txt` từng chương; pha TTS đọc bản DỊCH → mp3 là `chuong_NNNNN_vi.mp3`, audiobook là `<tên>_vi_audiobook.mp3` (verified logic bằng fixture: dịch 3 chương, resume 0 lần gọi engine, chương mới chỉ dịch 1)
+- [ ] Chạy lại 🚀 cùng bộ → pha dịch log `♻ N/M chương đã dịch`, KHÔNG gọi lại API
+- [ ] Bấm ⏹ giữa pha dịch → dừng (kể cả Offline subprocess); chương đang dịch dở KHÔNG ghi file → chạy lại dịch lại chương đó
+- [ ] Dialog xác nhận chuỗi dài hiện thêm dòng "Kèm DỊCH bằng <provider>"
+- [ ] BỎ tick 🌐 chạy cùng bộ → đọc bản GỐC, ra bộ mp3/audiobook riêng không lẫn bản `_vi`; file gộp `_full.txt` không chứa bản dịch
+- [ ] **📡 watch per bộ**: dòng `URL | hồ_sơ | dich` → bộ đó tự dịch chương mới rồi đọc bản dịch; dòng không có `dich` giữ nguyên hành vi cũ; có dòng `dich` mà thiếu key/model → 🔍 từ chối sớm
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

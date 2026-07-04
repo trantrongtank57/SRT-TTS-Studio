@@ -6,6 +6,26 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **🌐 Dịch truyện chữ nước ngoài → Việt trước khi đọc** — ô "Dịch sang tiếng Việt trước
+  khi đọc" mới trong card 📖 Tải truyện chữ: chuỗi 🚀 Tải → Đọc → Audiobook giờ chèn thêm
+  pha dịch từng chương (`chuong_NNNNN_vi.txt`) bằng đúng engine dịch đang chọn
+  (Claude/Gemini/OpenAI/Groq/DeepSeek hoặc Offline NLLB — chạy đêm miễn phí), rồi mới đọc
+  bản dịch → xuất **bộ audio `_vi` riêng** (tách hẳn bản gốc). Resume theo chương: dừng
+  giữa chừng chạy lại không tốn lại API. Trong 📡 Theo dõi bộ truyện, thêm ` | dich` sau URL
+  để bộ đó tự dịch rồi đọc.
+- **🎤 Giọng riêng từng bộ khi Theo dõi truyện** — mỗi dòng watch có thể ghi ` | tên hồ sơ giọng`
+  sau URL: chương mới của bộ đó được đọc bằng đúng hồ sơ giọng chỉ định, xong tự khôi phục
+  giọng ban đầu — theo dõi nhiều bộ với giọng khác nhau không bị lẫn.
+- **🎺 Nhạc hiệu Intro/Outro cho audiobook** — 2 ô "🎺 Intro / Outro" mới ở khu Merge Audio:
+  chọn file nhạc hiệu đầu/cuối, nó tự khớp sample-rate/kênh rồi nối vào đầu & cuối audiobook;
+  mốc chương `.m4b` tự dời theo độ dài intro (đoạn intro thành mục "Mở đầu"). Áp cho cả
+  Merge Audio tài liệu lẫn chuỗi 🚀 truyện chữ. Để trống = tắt; nhớ qua phiên.
+- **🔊 Chuẩn âm lượng audiobook (loudnorm)** — ô "Chuẩn âm lượng" mới cạnh tùy chọn m4b:
+  chuẩn hoá về -16 LUFS (chuẩn YouTube), hữu ích khi trộn nhiều engine giọng local mỗi mức
+  to nhỏ khác nhau. Thứ tự xử lý: loudnorm giọng → nhạc nền → nhạc hiệu → m4b.
+- **🌙 Tắt máy khi xong** — ô mới trong card truyện chữ: chuỗi 🚀 và 📡 Theo dõi tự tắt máy
+  sau 60 giây khi chạy xong (chỉ khi KHÔNG bị người dùng bấm dừng) — tiện để chạy bộ dài qua
+  đêm. Hủy bằng lệnh `shutdown /a`. Không nhớ qua phiên (tránh bất ngờ lần sau).
 - **⚡ Kịch bản 1-click** — dropdown mới trong card "Bật/tắt nhanh" (Bảng điều khiển):
   chọn Lồng tiếng phim / Truyện audio / Podcast là cả cụm tùy chọn (cắt lặng, loudnorm,
   cân âm lượng, định dạng ra, nghỉ giữa đoạn, m4b...) được set đúng một lượt;

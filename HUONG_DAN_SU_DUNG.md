@@ -193,6 +193,10 @@ cạnh audio thì chia kèm SRT từng phần (timestamp tự dời về 0).
    - **⏸ Nghỉ giữa đoạn (ms)** (mặc định 300) — chèn khoảng lặng giữa các đoạn để truyện audio
      nghe có nhịp thở tự nhiên; 0 = tắt.
    - **🎵 Nhạc nền** — chọn 1 file nhạc chạy nền dưới giọng đọc (âm lượng chỉnh được).
+   - **🎺 Intro / Outro** *(mới)* — chọn file nhạc hiệu đầu/cuối, tự nối vào đầu & cuối audiobook;
+     mốc chương `.m4b` tự dời theo độ dài intro (đoạn intro thành mục "Mở đầu"). Để trống = tắt.
+   - **🔊 Chuẩn âm lượng** *(mới)* — chuẩn hoá về -16 LUFS (chuẩn YouTube), hữu ích khi trộn
+     nhiều giọng local to nhỏ khác nhau.
    - **📚 Xuất .m4b có chương** — xuất thêm file audiobook `.m4b` với mốc chương tự nhận từ heading
      "Chương N…", tua theo chương trên mọi player. (Kèm luôn file mô tả chương cho YouTube.)
 6. Cần sửa một đoạn? Bấm **Regenerate đoạn PDF** để đọc lại riêng đoạn đó.
@@ -372,6 +376,29 @@ duyệt bạn đã mở site đó (đóng trình duyệt trước khi tải).
 
 **🔊 Truyện tranh → truyện audio** *(mới)* — nút trên card Dịch truyện: nạp file script dịch
 (`_script_dich.txt`) vào pipeline Tài liệu → Audio, ra file đọc truyện chỉ với vài click.
+
+### 📖 Tải truyện chữ → Audiobook
+
+Card **📖 Tải truyện chữ** (trang Tải truyện) tải chữ từ các trang truyện chữ → mỗi chương
+1 file `chuong_NNNNN.txt` + (tùy chọn) 1 file gộp cả bộ.
+
+- **🔊 Đọc TTS** — nạp các file `.txt` đã tải vào pipeline Tài liệu → Audio để đọc.
+- **🚀 Tải → Đọc → Audiobook (1 nút)** — làm trọn gói: tải → đọc **theo từng chương** → nối
+  thành `<tên>_audiobook.mp3` (+ tùy chọn `.m4b` có chương). Đọc theo chương nên chạy lại là
+  resume, chương mới không làm lệch chương cũ. Bộ dài (≥10 chương) sẽ hỏi xác nhận giọng/số giờ
+  trước khi chạy để tránh đọc nhầm giọng cả đêm.
+- **🌐 Dịch sang tiếng Việt trước khi đọc** *(mới)* — với truyện nước ngoài: tự dịch từng chương
+  (`chuong_NNNNN_vi.txt`) bằng engine dịch đang chọn (Claude/Gemini/OpenAI/Groq/DeepSeek hoặc
+  **Offline NLLB** miễn phí) rồi mới đọc → ra **bộ audio `_vi` riêng**. Resume theo chương: dừng
+  giữa chừng chạy lại không tốn lại API. *(Nhớ chọn giọng tiếng Việt trước khi chạy.)*
+- **🌙 Tắt máy khi xong** *(mới)* — tự tắt máy sau 60 giây khi chạy xong (chỉ khi không bấm dừng),
+  tiện chạy bộ dài qua đêm. Hủy bằng lệnh `shutdown /a`.
+- **📡 Theo dõi bộ truyện** — lưu danh sách bộ đang ra; bấm kiểm tra là chỉ tải chương **mới** +
+  cập nhật audiobook. Tùy chọn 🔊 đọc luôn chương mới. Mỗi dòng có thể ghi thêm sau URL:
+  - ` | tên hồ sơ giọng` *(mới)* — đọc bộ đó bằng **giọng riêng** rồi tự khôi phục giọng ban đầu.
+  - ` | dich` *(mới)* — dịch sang tiếng Việt rồi mới đọc (truyện nước ngoài).
+
+> Nhạc hiệu Intro/Outro, Nhạc nền, Chuẩn âm lượng (mục 6) áp dụng luôn cho audiobook truyện chữ.
 
 ---
 
