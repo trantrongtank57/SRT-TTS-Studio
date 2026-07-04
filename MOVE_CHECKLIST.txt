@@ -1,7 +1,7 @@
 ==========================================================================
  SRT TTS STUDIO — CHECKLIST CHUYỂN SANG MÁY MỚI
 ==========================================================================
- Cập nhật: 2026-06-11
+ Cập nhật: 2026-07-04
  Mục đích: Đảm bảo đầy đủ mô hình & phụ thuộc khi cài app sang máy khác.
 ==========================================================================
 
@@ -80,9 +80,10 @@
  Chạy: SRT_TTS_Studio_Setup.msi
  → Đã có sẵn sau khi cài:
      - App chính + ffmpeg.exe / ffprobe.exe
-     - 12 companion script (rvc_helper, voxcpm_helper, vieneu_helper,
+     - 13 companion script (rvc_helper, voxcpm_helper, vieneu_helper,
        f5tts_helper, omnivoice_helper, whisper_stt, audio_enhancer, pdf_helper,
-       srt_align_helper, videocr_helper, video_stt_helper, translate_helper)
+       srt_align_helper, videocr_helper, video_stt_helper, translate_helper,
+       manga_ocr_helper)
      - hubert_base.pt, rmvpe.pt, và toàn bộ rvc_env\
  → Chạy được NGAY:
      Edge TTS, các provider TTS (FPT/Vbee/Zalo/EverAI/MiniMax),

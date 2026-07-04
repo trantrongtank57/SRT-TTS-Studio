@@ -5544,6 +5544,56 @@ ctk.CTkButton(_db_toolbar, text="📄 Mở log hôm nay", width=150, height=32,
 
 # ── 🚀 Bắt đầu nhanh — người mới chọn use-case, app nhảy đúng trang + in các
 # bước vào logbox. Thuần điều hướng (show_workspace/log) — không pipeline mới.
+# ── Card Dashboard: 📖 Truyện chữ (read-only mirror + nút tắt) ──────────────
+# Đọc novel_watch.json + 2 Tk var (định nghĩa PHÍA DƯỚI → mọi truy cập qua
+# globals().get + try/except, refresh đầu deferred app.after(0) như toggles).
+_sec_db_novel = _make_section("📖 Truyện chữ",
+                              "Dây chuyền truyện → audiobook",
+                              "#4aa3df", ws="dashboard")
+_dbnv_vals = {}
+for _k, _lb in (("watch", "📡 Bộ đang theo dõi"),
+                ("autotts", "🔊 Tự đọc chương mới"),
+                ("opts", "Tùy chọn đang bật")):
+    _dbnv_vals[_k] = _db_kv(_sec_db_novel, "dbnv_" + _k, _lb)
+
+
+def _dbnv_refresh():
+    try:
+        n, tts = 0, False
+        wf = globals().get("_NOVEL_WATCH_FILE", "")
+        if wf and os.path.isfile(wf):
+            with open(wf, "r", encoding="utf-8") as f:
+                d = json.load(f) or {}
+            n = len([l for l in d.get("urls", []) if l.strip()])
+            tts = bool(d.get("tts"))
+        _dbnv_vals["watch"].configure(
+            text=str(n) if n else "0 — thêm ở nút 📡 trang Tải truyện")
+        _dbnv_vals["autotts"].configure(text="BẬT" if tts else "tắt")
+        opts = []
+        _tv = globals().get("novel_translate_var")
+        if _tv is not None and _tv.get():
+            opts.append("🌐 dịch")
+        _cv = globals().get("novel_cover_var")
+        if _cv is not None and _cv.get().strip():
+            opts.append("🖼 bìa")
+        _mv = globals().get("novel_m4b_var")
+        if _mv is not None and _mv.get():
+            opts.append(".m4b")
+        _dbnv_vals["opts"].configure(text=" · ".join(opts) or "—")
+    except Exception:
+        pass
+
+
+_dbnv_row = ctk.CTkFrame(_sec_db_novel, fg_color="transparent")
+_dbnv_row.pack(fill="x", padx=6, pady=(4, 2))
+ctk.CTkButton(_dbnv_row, text="🔄", width=40, command=lambda: _dbnv_refresh()
+              ).pack(side="left", padx=2)
+ctk.CTkButton(_dbnv_row, text="🔍 Kiểm tra chương mới", width=170,
+              command=lambda: open_novel_watch_dialog()).pack(side="left", padx=2)
+ctk.CTkButton(_dbnv_row, text="📖 Mở trang truyện", width=150,
+              command=lambda: show_workspace("manga")).pack(side="left", padx=2)
+app.after(0, lambda: _dbnv_refresh())
+
 _QUICKSTART_ITEMS = [
     ("🎞 Có file SRT → audio thuyết minh",
      "Đọc phụ đề thành giọng nói, ghép đúng timeline",
@@ -5575,6 +5625,13 @@ _QUICKSTART_ITEMS = [
      ["① Nhập API key (⚙ Cài đặt) hoặc chọn provider Offline (dịch local)",
       "② Bấm nút Dịch SRT / Dịch PDF / Dịch Word-TXT tương ứng",
       "💡 Ô 'Bối cảnh' (xưng hô nhân vật) là đòn bẩy chất lượng lớn nhất."]),
+    ("📖 Có link truyện chữ → audiobook (cả truyện nước ngoài)",
+     "Tải chương → (dịch Việt) → đọc TTS → audiobook m4b, theo dõi bộ đang ra",
+     "manga",
+     ["① Dán URL bộ truyện vào card '📖 Tải truyện chữ'",
+      "② Truyện nước ngoài: tick '🌐 Dịch sang tiếng Việt trước khi đọc'",
+      "③ Bấm '🚀 Tải → Đọc → Audiobook (1 nút)' — chạy lại = tiếp tục phần thiếu",
+      "💡 '📡 Theo dõi bộ truyện' + 🔊 = sáng nào cũng có chương mới đã đọc."]),
     ("🎤 Gõ text ngắn → nghe thử giọng",
      "Thử giọng/glossary nhanh không cần file",
      "textaudio",
@@ -9007,6 +9064,8 @@ def _novel_tts_chapters_sync(root, make_m4b, gap_ms=300, bgm="", bgm_vol=0.12,
         if _novel_concat_mp3s(part_files, chap_mp3, gap_ms):
             new_done += 1
             log(f"🚀 ✔ {stem}.mp3")
+            _prod_add("chapters", 1)
+            _prod_add("audio_sec", _probe_duration_sec(chap_mp3) or 0)
             try:
                 shutil.rmtree(parts_dir)   # regen 1 chương = xóa mp3 đó chạy lại
             except Exception:
@@ -15649,6 +15708,7 @@ def start_audio_to_video():
         if proc.returncode == 0 and os.path.isfile(out_path):
             mb = os.path.getsize(out_path) / 2**20
             log(f"[Audio→Video] ✅ Xong: {os.path.basename(out_path)} ({mb:.1f} MB)")
+            _prod_add("videos", 1)
             return True, out_path
         log(f"[Audio→Video] ❌ ffmpeg lỗi (exit {proc.returncode}) — "
             "xem file log để biết chi tiết.")
@@ -16701,6 +16761,7 @@ def merge_pdf_audio():
                 out_name = os.path.basename(output_path)
                 update_progress(100, 100)
                 app.after(0, lambda: log(f"[PDF] Merge OK → {out_name}"))
+                _prod_add("audio_sec", _probe_duration_sec(output_path) or 0)
                 # Thứ tự: loudnorm giọng → bgm (mức tương đối ổn định) → jingle
                 if do_loudnorm:
                     _loudnorm_into(output_path, "[PDF] 🔊")
@@ -27306,6 +27367,108 @@ def export_support_bundle():
         log(f"🐞 ❌ Không tạo được gói hỗ trợ: {e}")
 
 
+# ── 📈 Thống kê sản lượng — "nhà máy" chạy ra bao nhiêu mỗi tháng ───────────
+# production_stats.json (cạnh settings.json): {"YYYY-MM": {audio_sec, chapters,
+# videos}}. Cộng dồn tại 3 điểm sản xuất: đóng 1 chương audiobook
+# (_novel_tts_chapters_sync), merge Doc/PDF xong (merge_pdf_audio), xuất 1
+# video (Audio→Video _build_one). Ghi kiểu đọc-sửa-ghi, mọi lỗi nuốt — thống
+# kê không bao giờ được phép chặn pipeline.
+_PROD_STATS_FILE = os.path.join(
+    os.path.dirname(_SETTINGS_FILE) or ".", "production_stats.json")
+
+
+def _prod_add(field, amount):
+    if not amount:
+        return
+    try:
+        d = {}
+        if os.path.isfile(_PROD_STATS_FILE):
+            with open(_PROD_STATS_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f) or {}
+        m = d.setdefault(time.strftime("%Y-%m"), {})
+        m[field] = round(m.get(field, 0) + amount, 2)
+        with open(_PROD_STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+def open_prod_stats_dialog():
+    """📈 Bảng sản lượng theo tháng: giờ audio · chương audiobook · video."""
+    try:
+        d = {}
+        if os.path.isfile(_PROD_STATS_FILE):
+            with open(_PROD_STATS_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f) or {}
+    except Exception:
+        d = {}
+    win = ctk.CTkToplevel(app)
+    win.title("📈 Thống kê sản lượng")
+    win.geometry("520x360")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+    box = ctk.CTkTextbox(win, font=("Consolas", 13), wrap="none")
+    box.pack(fill="both", expand=True, padx=12, pady=12)
+    lines = [f"{'Tháng':<10}{'Giờ audio':>12}{'Chương':>10}{'Video':>8}",
+             "─" * 42]
+    ta = tc = tv = 0
+    for key in sorted(d, reverse=True):
+        m = d[key]
+        a, c, v = m.get("audio_sec", 0), int(m.get("chapters", 0)), \
+            int(m.get("videos", 0))
+        ta += a; tc += c; tv += v
+        lines.append(f"{key:<10}{a / 3600:>11.1f}h{c:>10}{v:>8}")
+    lines += ["─" * 42,
+              f"{'TỔNG':<10}{ta / 3600:>11.1f}h{tc:>10}{tv:>8}", "",
+              "Đếm tại: đóng chương audiobook (🚀/📡), Merge Audio",
+              "tài liệu, và Audio→Video. Merge SRT/mux chưa đếm."]
+    box.insert("1.0", "\n".join(lines) if d else
+               "Chưa có dữ liệu — chạy 🚀/Merge/Audio→Video sẽ tự đếm.")
+    box.configure(state="disabled")
+
+
+def _ctx_menu_toggle():
+    """🖱 Đăng ký/Gỡ 'Mở bằng SRT TTS Studio' cho .srt (HKCU — không cần admin).
+    Chỉ bản .exe (dev chạy python thì đường dẫn không bền). Yes=thêm, No=gỡ."""
+    import winreg
+    base = r"Software\Classes\SystemFileAssociations\.srt\shell\SRT_TTS_Studio"
+    ans = msg.askyesnocancel(
+        "Menu chuột phải Explorer",
+        "Yes = THÊM 'Mở bằng SRT TTS Studio' khi chuột phải file .srt\n"
+        "No = GỠ mục menu này\nCancel = thôi")
+    if ans is None:
+        return
+    try:
+        if ans:
+            if not getattr(sys, "frozen", False):
+                log("🖱 Menu chuột phải chỉ hỗ trợ bản .exe (đang chạy dev python).")
+                return
+            k = winreg.CreateKey(winreg.HKEY_CURRENT_USER, base)
+            winreg.SetValue(k, "", winreg.REG_SZ, "Mở bằng SRT TTS Studio")
+            kc = winreg.CreateKey(winreg.HKEY_CURRENT_USER, base + r"\command")
+            winreg.SetValue(kc, "", winreg.REG_SZ, f'"{sys.executable}" "%1"')
+            log("🖱 ✅ Đã thêm menu chuột phải cho file .srt.")
+        else:
+            for sub in (base + r"\command", base):
+                try:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, sub)
+                except Exception:
+                    pass
+            log("🖱 Đã gỡ menu chuột phải.")
+    except Exception as e:
+        log(f"🖱 ❌ Lỗi registry: {e}")
+
+
+btn_ctx_menu = ctk.CTkButton(_g6b, text="🖱 Chuột phải", width=110,
+                             command=_ctx_menu_toggle,
+                             height=36, font=("Arial", 13))
+btn_ctx_menu.pack(side="left", padx=4, pady=4)
+
+btn_prod_stats = ctk.CTkButton(_g6b, text="📈 Sản lượng",
+                               command=open_prod_stats_dialog,
+                               height=36, width=120, font=("Arial", 13))
+btn_prod_stats.pack(side="left", padx=4, pady=4)
+
 btn_support = ctk.CTkButton(_g6b, text="🐞 Gói hỗ trợ",
                             command=export_support_bundle,
                             height=36, width=130, font=("Arial", 13),
@@ -30041,6 +30204,90 @@ except ImportError:
 app.withdraw()
 app.after(50, show_splash_then_auth)
 
+
+# ── 🖱 Kéo-thả file vào cửa sổ + mở file từ Explorer (argv) ─────────────────
+# WM_DROPFILES qua ctypes thuần (không cần tkinterdnd2): DragAcceptFiles +
+# subclass WndProc của cửa sổ Tk. Callback PHẢI giữ ref toàn cục
+# (builtins._srt_drop_proc) — bị GC là crash access-violation. Mọi lỗi cài
+# đặt → tính năng tắt im lặng, app chạy bình thường.
+
+def _handle_dropped_files(paths):
+    """Nhận file thả/argv: phụ đề → load thẳng; loại khác → hướng dẫn."""
+    global SRT_FILE
+    p = (paths or [""])[0]
+    ext = os.path.splitext(p)[1].lower()
+    if ext in (".srt", ".ass", ".ssa", ".vtt"):
+        SRT_FILE = p
+        try:
+            load_subtitles(force_select=False)
+            set_mode("srt")
+            show_workspace("tts")
+            log(f"🖱 Đã load: {os.path.basename(p)}")
+        except Exception as e:
+            log(f"🖱 ⚠ Không load được file: {e}")
+    elif ext:
+        log(f"🖱 Kéo-thả hiện hỗ trợ phụ đề (.srt/.ass/.vtt) — "
+            f"file {ext} dùng nút Load ở trang tương ứng.")
+
+
+def _install_drop_target():
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u32 = ctypes.windll.user32
+        s32 = ctypes.windll.shell32
+        hwnd = u32.GetParent(app.winfo_id())
+        s32.DragAcceptFiles(hwnd, True)
+        WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, wintypes.HWND,
+                                     ctypes.c_uint, wintypes.WPARAM,
+                                     wintypes.LPARAM)
+        u32.CallWindowProcW.restype = ctypes.c_longlong
+        u32.CallWindowProcW.argtypes = [ctypes.c_longlong, wintypes.HWND,
+                                        ctypes.c_uint, wintypes.WPARAM,
+                                        wintypes.LPARAM]
+        u32.SetWindowLongPtrW.restype = ctypes.c_longlong
+        u32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int,
+                                          ctypes.c_longlong]
+        old = [0]
+
+        def _proc(h, msg, w, l):
+            if msg == 0x233:   # WM_DROPFILES
+                try:
+                    n = s32.DragQueryFileW(w, 0xFFFFFFFF, None, 0)
+                    buf = ctypes.create_unicode_buffer(1024)
+                    paths = []
+                    for i in range(min(int(n), 8)):
+                        s32.DragQueryFileW(w, i, buf, 1024)
+                        paths.append(buf.value)
+                    s32.DragFinish(w)
+                    if paths:
+                        app.after(0, lambda ps=paths: _handle_dropped_files(ps))
+                except Exception:
+                    pass
+                return 0
+            return u32.CallWindowProcW(old[0], h, msg, w, l)
+        _cb = WNDPROC(_proc)
+        import builtins as _bi
+        _bi._srt_drop_proc = _cb   # giữ ref vĩnh viễn — GC là crash
+        old[0] = u32.SetWindowLongPtrW(
+            hwnd, -4, ctypes.cast(_cb, ctypes.c_void_p).value)  # GWL_WNDPROC
+    except Exception:
+        pass
+
+
+def _open_argv_file():
+    """Mở file truyền qua dòng lệnh (menu chuột phải Explorer / 'Open with')."""
+    try:
+        p = sys.argv[1] if len(sys.argv) > 1 else ""
+        if p and os.path.isfile(p):
+            log(f"🖱 Mở từ Explorer: {os.path.basename(p)}")
+            _handle_dropped_files([p])
+    except Exception:
+        pass
+
+
+app.after(1200, _install_drop_target)
+app.after(2600, _open_argv_file)
 
 app.mainloop()
 

@@ -6,6 +6,39 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **🖱 Kéo-thả & chuột phải mở file** — kéo file `.srt`/`.ass`/`.vtt` từ Explorer thả thẳng vào
+  cửa sổ app là tự nạp + nhảy sang trang TTS; thêm tùy chọn "🖱 Chuột phải" (trang Hệ thống)
+  đăng ký menu chuột phải Windows "Mở bằng SRT TTS Studio" cho file `.srt`. Kèm card 📖 Truyện
+  chữ mới trên Bảng điều khiển (số bộ theo dõi + tùy chọn đang bật) và thẻ "📖 truyện chữ →
+  audiobook" trong 🚀 Bắt đầu nhanh.
+- **📈 Thống kê sản lượng** — nút "📈 Sản lượng" mới (trang Hệ thống): bảng theo tháng cộng dồn
+  số giờ audio, số chương audiobook và số video đã tạo (`production_stats.json`) — tự cập nhật
+  ở các mốc hoàn tất (đóng chương truyện, Merge tài liệu, Audio→Video).
+- **🌊 Soát sóng + phụ đề** — nút mới ở trang SRT: vẽ dạng sóng của file audio (kể cả file dài
+  10 tiếng) kèm vạch mốc bắt đầu từng dòng phụ đề — nhìn ra ngay chỗ mất tiếng, chồng giọng
+  hay lệch mà không cần nghe hết; click lên sóng để ▶ nghe 10 giây tại đúng điểm đó.
+- **🔍 Soát bản dịch (dịch ngược)** — nút mới ở trang Dịch: dịch ngược bản `_vi.srt` về ngôn ngữ
+  gốc rồi so với câu gốc, xuất `<tên>_backcheck.txt` liệt kê các dòng nghi dịch sai/lệch nghĩa
+  (kèm GỐC/DỊCH/NGƯỢC). Cần nhà cung cấp dịch cloud.
+- **🐞 Gói hỗ trợ** — nút mới (trang Hệ thống): đóng gói 2 log mới nhất + cấu hình UI + thông tin
+  máy thành 1 file zip trên Desktop để gửi khi báo lỗi — **không kèm** API key/mật khẩu.
+- **🖼 Audio → Video (ảnh nền)** — thẻ mới ở trang Video: ghép 1 file audio (+ ảnh nền tuỳ chọn
+  + phụ đề burn tuỳ chọn) thành video mp4 — cho kênh "truyện audio" cần khung video để đăng
+  YouTube. Kèm các tuỳ chọn: **🌊 Sóng nhạc động** (dải sóng chạy theo nhạc), **📐 Khung hình**
+  16:9 / **9:16 (TikTok/Shorts)** / 1:1, và **🎬 chế độ loạt** (chọn nhiều audio → xuất hàng loạt
+  video, mỗi audio tự ghép SRT cùng tên — khớp thẳng với `_pNN` của ✂ Chia final).
+- **📰 Đọc bài báo / RSS → Audio** — card mới ở trang Tài liệu: dán link 1 bài báo
+  (VnExpress/Dân Trí/Tuổi Trẻ…) hoặc link RSS → tự trích thân bài (bỏ menu/quảng cáo) → nạp vào
+  pipeline đọc TTS; RSS lấy N bài mới nhất, mỗi bài thành một "chương" cho .m4b. Thêm nút
+  **☕ Bản tin (1 nút)** làm trọn gói tải → đọc → ghép .m4b mục lục trong một lần bấm.
+- **📑 Mục lục chương cho YouTube** — khi Merge tài liệu xuất `.m4b` có chương, tự tạo thêm
+  `youtube_description.txt` (mỗi chương một dòng `MM:SS Tên`) — dán vào mô tả video là YouTube
+  hiện chapter.
+- **🔇 Cắt tại chỗ lặng khi ✂ Chia final** — tùy chọn (mặc định bật) dời mỗi mốc chia N phút về
+  chỗ lặng gần nhất (±45s) để không cắt giữa câu; nếu có `final_synced.srt` cạnh audio thì file
+  SRT chia kèm cũng khớp mốc mới.
+- **🎵 Nhạc nền audiobook (Tài liệu)** — hàng "🎵 Nhạc nền" mới ở khu Merge Audio tài liệu: nhạc
+  tự lặp dưới giọng đọc, cắt khi hết lời + fade 2s; áp cho cả chuỗi 🚀 truyện chữ.
 - **🎭 Tag cảm xúc theo dòng** — thêm `[vui]` / `[buồn]` / `[giận]` / `[sợ]` / `[nhanh]` /
   `[chậm]` / `[thì thầm]` / `[hét]` vào đầu một dòng SRT hoặc đoạn text: **Edge TTS** tự đổi
   tốc độ/cao độ theo cảm xúc (cộng dồn lên rate/pitch đang đặt, có kẹp biên), **tag không bị

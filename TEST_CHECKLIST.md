@@ -349,6 +349,20 @@
 - [ ] Click lên sóng → vạch đỏ + status hiện `mm:ss | dòng gần nhất [n]: text`; **▶ Nghe 10s tại điểm click** phát đúng đoạn đó; ⏹ dừng phát
 - [ ] Chưa load SRT → sóng vẫn vẽ (không vạch xanh), không crash; audio 10 tiếng → px/giây tự giảm để không vượt trần canvas
 
+## AK. Đợt 2026-07-04 (7): 📈 Thống kê sản lượng
+- [ ] Trang Hệ thống (hàng 📦/🐞) có nút **📈 Sản lượng**; chưa có dữ liệu → hiện hướng dẫn
+- [ ] Chạy 🚀 truyện chữ (vài chương) → mở 📈 → tháng này cộng đúng số chương + giờ audio (file `production_stats.json` cạnh settings.json)
+- [ ] Merge Audio tài liệu → giờ audio tăng thêm đúng độ dài output; Audio→Video (kể cả batch) → cột Video +1 mỗi file
+- [ ] Bảng hiện từng tháng mới→cũ + dòng TỔNG; qua tháng mới tự tách dòng (verified fixture cộng dồn)
+- [ ] Thống kê lỗi (file hỏng/khóa) → pipeline vẫn chạy bình thường, không crash
+
+## AL. Đợt 2026-07-04 (8): 🖱 Kéo-thả + chuột phải + card truyện Dashboard
+- [ ] **Kéo-thả**: kéo file `.srt` từ Explorer thả vào cửa sổ app → tự load + nhảy trang TTS + log `🖱 Đã load`; thả `.ass`/`.vtt` → convert + load như Load SRT; thả file khác (.mp4/.txt) → log hướng dẫn, không crash
+- [ ] Kéo-thả hỏng vì lý do gì đó (máy lạ) → app vẫn chạy bình thường (tính năng tắt im lặng)
+- [ ] **🖱 Chuột phải** (trang Hệ thống): bấm → Yes trên bản .exe → Explorer chuột phải file .srt có "Mở bằng SRT TTS Studio" → chọn → app mở và tự load file đó (sau splash/login ~2.6s); bấm → No → mục menu biến mất; bản dev python → log giải thích, không ghi registry
+- [ ] **Card 📖 Truyện chữ trên Dashboard**: hiện số bộ đang theo dõi + trạng thái 🔊 + tùy chọn đang bật (🌐/🖼/.m4b); nút 🔄 cập nhật, 🔍 mở dialog theo dõi, 📖 nhảy trang truyện
+- [ ] **🚀 Bắt đầu nhanh** có thẻ mới "📖 Có link truyện chữ → audiobook" → bấm nhảy trang truyện + in 4 bước
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

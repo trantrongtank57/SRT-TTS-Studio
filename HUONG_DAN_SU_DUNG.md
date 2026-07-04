@@ -78,6 +78,9 @@ Giao diện gồm:
 - **Thanh tiêu đề (trên cùng):** các nút điều khiển dùng chung — **Tạm dừng / Tiếp tục / Dừng /
   Làm lại** và **Chọn / Mở thư mục Output**. Các nút này tự bật/tắt theo tác vụ đang chạy.
 
+> 💡 *(mới)* Có thể **kéo-thả** file `.srt`/`.ass`/`.vtt` từ Explorer thả thẳng vào cửa sổ app để
+> nạp nhanh (tự nhảy sang trang TTS).
+
 Các trang chính trong sidebar:
 
 | Trang | Dùng để |
@@ -177,7 +180,8 @@ chừng rồi chạy lại, phần mềm **tự bỏ qua các dòng đã làm xo
 
 **✂ Chia final theo giờ** *(mới)* — chia file audio dài thành các phần N phút (mặc định 59 — vừa
 giới hạn upload) bằng stream-copy (không re-encode, gần như tức thì); nếu có `final_synced.srt`
-cạnh audio thì chia kèm SRT từng phần (timestamp tự dời về 0).
+cạnh audio thì chia kèm SRT từng phần (timestamp tự dời về 0). Tùy chọn **🔇 Cắt tại chỗ lặng**
+(mặc định bật) dời mốc chia về chỗ lặng gần nhất để không cắt giữa câu.
 
 **🎭 Tag cảm xúc theo dòng** *(mới)* — thêm tag vào **đầu** một dòng SRT (hoặc đoạn text):
 `[vui]` `[buồn]` `[giận]` `[sợ]` `[nhanh]` `[chậm]` `[thì thầm]` `[hét]` (hỗ trợ cả không dấu
@@ -203,7 +207,11 @@ cạnh audio thì chia kèm SRT từng phần (timestamp tự dời về 0).
    - **🔊 Chuẩn âm lượng** *(mới)* — chuẩn hoá về -16 LUFS (chuẩn YouTube), hữu ích khi trộn
      nhiều giọng local to nhỏ khác nhau.
    - **📚 Xuất .m4b có chương** — xuất thêm file audiobook `.m4b` với mốc chương tự nhận từ heading
-     "Chương N…", tua theo chương trên mọi player. (Kèm luôn file mô tả chương cho YouTube.)
+     "Chương N…", tua theo chương trên mọi player. Kèm luôn **📑 `youtube_description.txt`** *(mới)*
+     — mỗi chương một dòng `MM:SS Tên`, dán vào mô tả video là YouTube tự hiện chapter.
+   - **🎺 Intro / Outro** *(mới)* — nối nhạc hiệu đầu/cuối audiobook (mốc chương .m4b tự dời theo).
+   - **🔊 Chuẩn âm lượng** *(mới)* — chuẩn hoá -16 LUFS (chuẩn YouTube), hữu ích khi trộn nhiều
+     engine giọng to nhỏ khác nhau.
 6. Cần sửa một đoạn? Bấm **Regenerate đoạn PDF** để đọc lại riêng đoạn đó.
 
 > Word (.docx), **EPUB** và TXT dùng chung quy trình với PDF.
@@ -211,6 +219,12 @@ cạnh audio thì chia kèm SRT từng phần (timestamp tự dời về 0).
 **🎙 Podcast 2 giọng từ tài liệu (AI)** *(mới)* — kiểu NotebookLM: PDF/Word/EPUB/TXT → AI viết
 kịch bản hội thoại MC + chuyên gia → đọc bằng **2 hồ sơ giọng** → tự ghép thành 1 file podcast.
 Cần ≥2 hồ sơ giọng + API key dịch; kịch bản lưu `.txt` để xem/sửa; chạy lại là resume.
+
+**📰 Đọc bài báo / RSS → Audio** *(mới)* — card "📰 Đọc bài báo / RSS" trên trang này:
+- Dán link **1 bài báo** (VnExpress, Dân Trí, Tuổi Trẻ…) → phần mềm tự trích **thân bài**
+  (bỏ menu, quảng cáo) → nạp vào pipeline đọc TTS.
+- Dán link **RSS** + số bài → lấy N bài mới nhất, mỗi bài thành một "chương" (hợp với .m4b mục lục).
+- Nút **☕ Bản tin (1 nút)** làm trọn gói: tải → đọc → ghép .m4b trong một lần bấm.
 
 ---
 
@@ -247,6 +261,9 @@ nhanh lần sau. Rất tiện khi bạn có nhiều cấu hình cho từng dự 
   quét file để đề xuất từ nước ngoài cần phiên âm.
 - **Cắt lặng đầu/cuối** — bỏ khoảng lặng thừa.
 - **🔬 So giọng (A/B)** — đọc thử một câu bằng nhiều hồ sơ giọng để so sánh.
+- **🎭 Tag cảm xúc theo dòng** *(mới)* — đặt `[vui]` / `[buồn]` / `[giận]` / `[sợ]` / `[nhanh]` /
+  `[chậm]` / `[thì thầm]` / `[hét]` ở đầu một dòng SRT/đoạn text: Edge TTS tự đổi tốc độ/cao độ
+  theo cảm xúc, **tag không bị đọc thành tiếng** (có alias không dấu: `[buon]`, `[gian]`…).
 
 ---
 
@@ -341,6 +358,11 @@ Trang **🌐 Dịch thuật** — dịch **SRT / PDF / Word / TXT** sang tiếng
 
 Có **Tạm dừng / Tiếp tục / Dừng** riêng cho dịch. Dừng giữa chừng vẫn lưu phần đã dịch.
 
+**🔍 Soát bản dịch (dịch ngược)** *(mới)* — nút dưới "Dịch Word/TXT": dịch ngược bản `_vi.srt` về
+ngôn ngữ gốc rồi so với câu gốc, xuất `<tên>_backcheck.txt` liệt kê các dòng nghi dịch sai/lệch
+nghĩa (GỐC / DỊCH / NGƯỢC). Đây là công cụ **gợi ý** (bản dịch ngược cũng có thể sai) — cần nhà
+cung cấp dịch cloud.
+
 > **Tự chờ mạng khi rớt kết nối** *(mới)* — các batch tạo giọng qua nhà cung cấp online không còn
 > dừng hẳn khi mất mạng giữa chừng: phần mềm tự chờ mạng quay lại (tối đa 30 phút) rồi đọc tiếp,
 > nên batch qua đêm / hàng đợi / watch folder sống sót qua các cú rớt mạng ngắn.
@@ -353,6 +375,12 @@ Có **Tạm dừng / Tiếp tục / Dừng** riêng cho dịch. Dừng giữa ch
   (cần cài VideOCR CLI). Có Tạm dừng / Tiếp tục / Dừng.
 - **Speech-to-Text (STT)** — nhận diện lời nói trong video thành phụ đề/văn bản
   (faster-whisper). Chọn **Tách: câu** hoặc **karaoke** (2–4 từ/dòng), xuất srt/txt/docx/pdf.
+- **🖼 Audio → Video (ảnh nền)** *(mới)* — ghép 1 file audio (+ ảnh nền tuỳ chọn + phụ đề burn
+  tuỳ chọn) thành video mp4 — cho kênh "truyện audio" cần khung video để đăng YouTube. Tuỳ chọn:
+  - **🌊 Sóng nhạc động** — dải sóng chạy theo nhạc sát đáy màn hình.
+  - **📐 Khung hình** — 16:9 / **9:16 (TikTok/Shorts)** / 1:1.
+  - **🎬 Chế độ loạt** — chọn nhiều audio → xuất hàng loạt video; mỗi audio tự ghép SRT cùng tên
+    (khớp thẳng với các phần `_pNN` của ✂ Chia final → "audiobook dài → loạt video có sub" 2 click).
 - **Nén video** — giảm dung lượng.
 - **Sửa video** — sửa file video lỗi.
 - **Căn chỉnh thời gian SRT** — canh lại thời gian phụ đề theo giọng nói trong audio.
@@ -381,6 +409,18 @@ duyệt bạn đã mở site đó (đóng trình duyệt trước khi tải).
 
 **🔊 Truyện tranh → truyện audio** *(mới)* — nút trên card Dịch truyện: nạp file script dịch
 (`_script_dich.txt`) vào pipeline Tài liệu → Audio, ra file đọc truyện chỉ với vài click.
+
+**📖 Tải truyện chữ (web novel) → Audiobook** *(mới)* — card "📖 Tải truyện chữ":
+1. Dán link bộ truyện chữ → tải TEXT từng chương (`chuong_NNNNN.txt`) + (tuỳ chọn) file gộp cả bộ.
+2. Nút **🚀 Tải → Đọc → Audiobook (1 nút)** làm trọn gói: tải → đọc TTS từng chương → ghép thành
+   `<tên>_audiobook.mp3` + (tuỳ chọn) `.m4b` có chương. Resume theo chương; chạy lại chỉ đọc chương mới.
+3. Tuỳ chọn kèm theo: **🌐 Dịch sang tiếng Việt trước khi đọc** (truyện nước ngoài → bộ audio `_vi`
+   riêng), **🖼 Ảnh bìa** (nhúng ID3 + tạo `thumbnail.png` 1280×720 sẵn để upload), **🌙 Tắt máy
+   khi xong**, nhạc nền / nhạc hiệu / chuẩn âm lượng như audiobook tài liệu.
+4. **📡 Theo dõi bộ truyện** — lưu danh sách bộ, kiểm tra & tải chương mới, tuỳ chọn tự đọc luôn.
+   Mỗi dòng có thể ghi `URL | tên hồ sơ giọng | dich` để mỗi bộ một giọng và tự dịch nếu cần.
+
+> Trang web dùng nhiều JS/Cloudflare có thể không tải được (phần mềm sẽ báo rõ).
 
 ### 📖 Tải truyện chữ → Audiobook
 
@@ -423,6 +463,9 @@ Công cụ QC (trang TTS):
 - **🔁 Tạo lại dòng lỗi** — đọc lại các file bị đánh dấu lỗi.
 - **🧩 Tạo lại dòng thiếu** — đọc lại các dòng bị bỏ sót (FAIL).
 - **🎧 Nghe dòng lỗi** — nghe + tạo lại từng dòng để quyết định "đọc lại" hay "sửa chữ".
+- **🌊 Soát sóng + phụ đề** *(mới)* — vẽ dạng sóng của file audio (kể cả file dài hàng giờ) kèm vạch
+  mốc bắt đầu từng dòng phụ đề: nhìn ra ngay chỗ mất tiếng, chồng giọng hay lệch mà không cần nghe
+  hết; click lên sóng để ▶ nghe 10 giây tại đúng điểm đó.
 
 > Mẹo: nếu dừng giữa chừng và còn nhiều dòng, dùng **Tạo giọng/Tiếp tục** nhanh hơn (tự bỏ qua
 > file đã có). Nút 🧩 dành cho vài dòng lẻ bị lỗi sau khi chạy hết.
@@ -483,6 +526,10 @@ Một số model **tự tải về lần đầu chạy** (cần mạng): VieNeu,
 - **📂 Mở thư mục cấu hình**, **📦 Xuất / 📥 Nhập gói cấu hình** (sao lưu/chuyển máy thiết lập).
 - **🔍 Kiểm tra môi trường** — xem engine/model nào đã sẵn sàng (không cần khởi động lại).
 - **📄 Mở log hôm nay** — xem nhật ký chi tiết để gửi khi báo lỗi.
+- **📈 Sản lượng** *(mới)* — bảng theo tháng: số giờ audio, số chương audiobook, số video đã tạo.
+- **🐞 Gói hỗ trợ** *(mới)* — đóng gói log + cấu hình + thông tin máy thành 1 file zip trên Desktop
+  để gửi khi báo lỗi (**không kèm** API key / mật khẩu).
+- **🖱 Chuột phải** *(mới)* — đăng ký menu chuột phải Windows "Mở bằng SRT TTS Studio" cho file `.srt`.
 
 ---
 
