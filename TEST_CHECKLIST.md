@@ -28,20 +28,37 @@
 - [ ] **🤖 Tự phân vai (AI)**: tạo ≥2 hồ sơ giọng (tên gợi ý vd `nam_tre`/`nu_gia`) + nhập API key dịch → Load SRT hội thoại → **🎭 Phân vai** → **🤖 Tự phân vai (AI)** → chờ phân tích → bảng phân vai mở lại với các luật tự gán → **🎬 Lưu & Chạy** đọc đúng nhiều giọng
 - [ ] Bấm **Stop** giữa chừng → dừng êm; bấm TTS lại → `SKIP` các dòng đã có
 - [ ] Xong batch: nếu có FAIL → **📋 Báo cáo QC** liệt kê; **🎧 Nghe dòng lỗi** mở dialog ▶/🔁; **🧩 Tạo lại dòng thiếu** chạy được
+- [ ] Dòng bị `toolong` dai dẳng (hallucination) → log `🔪 … cứu 'toolong' bằng cách tách N câu — OK`, ra audio hoàn chỉnh thay vì FAIL (chỉ luồng provider không-RVC; câu quá ngắn/không tách được vẫn FAIL như cũ)
 - [ ] Sửa text 1 dòng (Regenerate Line) → file cũ thành `line_NNNN.old.mp3`
 - [ ] **Merge FFmpeg** → ra `final.mp3` + `final_synced.srt`; bật "Cân âm lượng các dòng" merge lại → log `🔉 Đã cân âm lượng N dòng`
 - [ ] Bật "Chuẩn hóa âm lượng (-16 LUFS)" → merge → final nghe đều
 - [ ] Thu nhỏ app lúc batch sắp xong → **toast Windows** hiện khi xong
 
+## C2. Gắn cảm xúc AI (SRT)
+- [ ] Trang SRT → **🎭 Tự gắn cảm xúc (AI)** (cần API key dịch) → confirm → ra `<tên>_emo.srt` + nạp lại; log "Phân bố: [vui]×N…"
+- [ ] Các dòng có tag `[vui]/[giận]/…` ở đầu → TTS Edge đọc đổi tốc độ/cao độ; engine khác không đọc tag thành tiếng
+- [ ] Chạy lại lần 2 → tag cũ được thay, không bị chồng `[vui] [buồn]`
+- [ ] Provider = Offline → nút báo lỗi hướng dẫn chọn Claude/Gemini/…
+
 ## D. Wizard lồng tiếng (test với video ngắn 1-2 phút)
-- [ ] **🎬 Lồng tiếng tự động** → dialog có dropdown Hồ sơ giọng + 4 checkbox
+- [ ] **🎬 Lồng tiếng tự động** → dialog có dropdown Hồ sơ giọng + các checkbox (gồm 👄 Khớp khẩu hình)
 - [ ] Chạy full chuỗi → 5 bước chạy lần lượt, ra `<video>_dubbed.mp4` + khối 📊 tổng kết
 - [ ] Bật "Gắn phụ đề cứng" → video ra có sub burn-in, chữ khớp tiếng (dùng final_synced.srt)
+- [ ] **👄 Khớp khẩu hình** (cần lipsync_env + Wav2Lip + GPU): tick → chạy → bước 6/6 → ra `<video>_dubbed_lipsync.mp4`, miệng khớp giọng, giữ nguyên phụ đề cứng + mix audio
+- [ ] Tick 👄 nhưng THIẾU env Wav2Lip → preflight báo lỗi rõ (không chạy dở rồi mới lỗi)
+- [ ] 👄 chạy nhưng Wav2Lip lỗi (vd video không có mặt) → log ⚠, vẫn giữ `<video>_dubbed.mp4` (fail-open)
+- [ ] Trang Video → card **👄 Khớp khẩu hình (Lip-sync)** đứng riêng: chọn video + tiếng → ra `_lipsync.mp4`; thiếu env → log hướng dẫn
 - [ ] ETA hiện trên thanh tiến trình dạng `45% · còn ~2p30s`
 - [ ] **📺 YouTube → Lồng tiếng**: dán 1 link vào ô YouTube → Bắt đầu → tải về (thanh % chạy) → chạy 5 bước → tự mở video `_dubbed.mp4` bằng trình phát mặc định
 - [ ] Dán **nhiều link** (mỗi dòng 1 link) → tải + dub tuần tự từng video, mỗi cái xong tự mở
 - [ ] Chưa cài yt-dlp → log báo `❌ Chưa cài yt-dlp ... pip install -U yt-dlp` (không treo)
 - [ ] Tắt "Mở xem ngay khi xong" → xong không tự mở; đổi thư mục Tải về → đóng/mở app vẫn nhớ
+
+## D2. Video Karaoke (chữ chạy theo giọng)
+- [ ] Trang Video → card 🖼 Audio → Video: chọn audio + SRT + tick **🎤 Karaoke (chữ chạy)** → Tạo Video → ra `<audio>_video.mp4`
+- [ ] Mở video: từng từ tô **vàng** dần theo giọng (chưa đọc = trắng), canh giữa đáy, viền đen dễ đọc, dấu tiếng Việt đúng
+- [ ] Bật kèm 🌊 Sóng nhạc / đổi Khung 9:16 → vẫn ra karaoke đúng khung, chữ nằm trên sóng
+- [ ] SRT lỗi/không đọc được → tự lùi về burn phụ đề thường (không chết cả video)
 
 ## E. Tiện ích & dịch
 - [ ] Trang Tools → **⏱ Dời thời gian SRT** → +500ms → ra `_shifted.srt` đúng

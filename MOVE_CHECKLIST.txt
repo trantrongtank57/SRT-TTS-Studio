@@ -10,7 +10,7 @@
  ⚡ TÓM TẮT 30 GIÂY — VÌ SAO SANG MÁY KHÁC HAY THIẾU
 ==========================================================================
  build_all.bat CHỈ đóng gói: app.exe + rvc_env + hubert_base.pt + rmvpe.pt
- + F5-TTS model. 7 THỨ DƯỚI ĐÂY KHÔNG đi theo build, phải copy TAY:
+ + F5-TTS model. 8 THỨ DƯỚI ĐÂY KHÔNG đi theo build, phải copy TAY:
 
    1. voxcpm_env\      (nguồn: E:\VoxCPM-1.5-VN\voxcpm_env)  ⚠ QUAN TRỌNG NHẤT
                        → thiếu = gãy VoxCPM, STT, lọc audio, căn SRT,
@@ -24,6 +24,15 @@
    7. Cache HF + torch (C:\Users\<user>\.cache\huggingface + \.cache\torch)
                        → 6 model auto-download. MÁY CÓ NET = bỏ qua (tự tải
                          lần đầu). MÁY KHÔNG NET = phải copy 2 thư mục này.
+   8. lipsync_env\ + Wav2Lip\   (TÙY CHỌN — 👄 Khớp khẩu hình / Lip-sync)
+                       → git clone github.com/Rudrabha/Wav2Lip (thư mục
+                         "Wav2Lip" có inference.py) đặt CẠNH exe + dựng
+                         lipsync_env (Python 3.10, pip install -r
+                         Wav2Lip/requirements.txt). Tải wav2lip_gan.pth →
+                         Wav2Lip\checkpoints\ và s3fd.pth →
+                         Wav2Lip\face_detection\detection\sfd\s3fd.pth
+                         (xem README Wav2Lip). CẦN GPU NVIDIA (CPU rất chậm).
+                         Thiếu = CHỈ tắt nút Lip-sync, app vẫn chạy.
 
  ❗ LƯU Ý: KHÔNG có settings.json trong folder → máy khác dựa hoàn toàn vào
    "auto-dò cạnh exe". Vì vậy CÁCH AN TOÀN NHẤT là đặt mục 1-6 NGAY CẠNH

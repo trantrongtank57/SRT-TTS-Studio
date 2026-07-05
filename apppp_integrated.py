@@ -947,6 +947,9 @@ F5TTS_ENV_OVERRIDE  = ""   # path tới f5tts_env\Scripts\python.exe; rỗng = t
 F5TTS_MODEL_DIR     = ""   # thư mục model F5-TTS-Vietnamese (chứa checkpoint .pt + vocab.txt)
 OMNIVOICE_ENV_OVERRIDE = ""   # path tới omnivoice_env\Scripts\python.exe; rỗng = tự tìm
 OMNIVOICE_MODEL_DIR    = ""   # thư mục/HF repo model OmniVoice; rỗng = tự tải từ HuggingFace
+LIPSYNC_ENV_OVERRIDE = ""   # path tới lipsync_env\Scripts\python.exe; rỗng = tự tìm
+LIPSYNC_REPO_DIR     = ""   # thư mục repo Wav2Lip (chứa inference.py); rỗng = tự tìm cạnh exe
+LIPSYNC_CHECKPOINT   = ""   # path tới wav2lip_gan.pth (hoặc wav2lip.pth); rỗng = tự tìm trong repo
 
 # File lưu cài đặt + mọi file trạng thái (voice_profiles/session/glossary/
 # ui_prefs/tts_prices/edge_voices/logs) đều nằm CÙNG thư mục với settings.json.
@@ -1005,6 +1008,7 @@ def _load_settings():
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global F5TTS_ENV_OVERRIDE, F5TTS_MODEL_DIR
     global OMNIVOICE_ENV_OVERRIDE, OMNIVOICE_MODEL_DIR
+    global LIPSYNC_ENV_OVERRIDE, LIPSYNC_REPO_DIR, LIPSYNC_CHECKPOINT
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global GROQ_API_KEY, DEEPSEEK_API_KEY, NOTIFY_WEBHOOK_URL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
@@ -1030,6 +1034,12 @@ def _load_settings():
                 OMNIVOICE_ENV_OVERRIDE = d["omnivoice_env_override"]
             if d.get("omnivoice_model_dir"):
                 OMNIVOICE_MODEL_DIR = d["omnivoice_model_dir"]
+            if d.get("lipsync_env_override"):
+                LIPSYNC_ENV_OVERRIDE = d["lipsync_env_override"]
+            if d.get("lipsync_repo_dir"):
+                LIPSYNC_REPO_DIR = d["lipsync_repo_dir"]
+            if d.get("lipsync_checkpoint"):
+                LIPSYNC_CHECKPOINT = d["lipsync_checkpoint"]
             if d.get("ffmpeg_dir"):
                 FFMPEG_DIR = d["ffmpeg_dir"]
                 # Áp dụng lại FFMPEG/FFPROBE ngay sau khi có FFMPEG_DIR
@@ -1070,12 +1080,15 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
                    translate_env_override=None,
                    vieneu_env_override=None, vieneu_model_dir=None,
                    f5tts_env_override=None, f5tts_model_dir=None,
-                   omnivoice_env_override=None, omnivoice_model_dir=None):
+                   omnivoice_env_override=None, omnivoice_model_dir=None,
+                   lipsync_env_override=None, lipsync_repo_dir=None,
+                   lipsync_checkpoint=None):
     """Lưu settings.json và áp dụng ngay vào các global path.
-    Các tham số translate_*/local_*/vieneu_*/f5tts_*/omnivoice_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
+    Các tham số translate_*/local_*/vieneu_*/f5tts_*/omnivoice_*/lipsync_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global F5TTS_ENV_OVERRIDE, F5TTS_MODEL_DIR
     global OMNIVOICE_ENV_OVERRIDE, OMNIVOICE_MODEL_DIR
+    global LIPSYNC_ENV_OVERRIDE, LIPSYNC_REPO_DIR, LIPSYNC_CHECKPOINT
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global GROQ_API_KEY, DEEPSEEK_API_KEY, NOTIFY_WEBHOOK_URL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
@@ -1088,6 +1101,9 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
     if f5tts_model_dir    is not None: F5TTS_MODEL_DIR    = f5tts_model_dir
     if omnivoice_env_override is not None: OMNIVOICE_ENV_OVERRIDE = omnivoice_env_override
     if omnivoice_model_dir    is not None: OMNIVOICE_MODEL_DIR    = omnivoice_model_dir
+    if lipsync_env_override is not None: LIPSYNC_ENV_OVERRIDE = lipsync_env_override
+    if lipsync_repo_dir     is not None: LIPSYNC_REPO_DIR     = lipsync_repo_dir
+    if lipsync_checkpoint   is not None: LIPSYNC_CHECKPOINT   = lipsync_checkpoint
     FFMPEG_DIR          = ffmpeg_dir
     if anthropic_api_key  is not None: ANTHROPIC_API_KEY  = anthropic_api_key
     if gemini_api_key     is not None: GEMINI_API_KEY     = gemini_api_key
@@ -1127,6 +1143,9 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
             "f5tts_model_dir":           F5TTS_MODEL_DIR,
             "omnivoice_env_override":    OMNIVOICE_ENV_OVERRIDE,
             "omnivoice_model_dir":       OMNIVOICE_MODEL_DIR,
+            "lipsync_env_override":      LIPSYNC_ENV_OVERRIDE,
+            "lipsync_repo_dir":          LIPSYNC_REPO_DIR,
+            "lipsync_checkpoint":        LIPSYNC_CHECKPOINT,
         }
         with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
@@ -6580,6 +6599,9 @@ _g_a2v4 = _sec_row(_sec_a2v)
 a2v_wave_var = ctk.BooleanVar(value=False)
 ctk.CTkCheckBox(_g_a2v4, variable=a2v_wave_var, text="🌊 Sóng nhạc động",
                 font=("Arial", 12), width=150).pack(side="left", padx=(4, 8))
+a2v_karaoke_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(_g_a2v4, variable=a2v_karaoke_var, text="🎤 Karaoke (chữ chạy)",
+                font=("Arial", 12), width=170).pack(side="left", padx=(0, 8))
 # Khung hình: ngang YouTube / dọc TikTok-Shorts / vuông
 _A2V_RATIOS = {"16:9 (YouTube)": (1280, 720), "9:16 (TikTok/Shorts)": (720, 1280),
                "1:1 (vuông)": (720, 720)}
@@ -6599,6 +6621,54 @@ btn_a2v_stop = ctk.CTkButton(_g_a2v4, text="⏹ Dừng",
                              height=36, font=("Arial", 13),
                              fg_color="#8B2020", hover_color="#5e1616")
 btn_a2v_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+# ── 👄 Khớp khẩu hình (Lip-sync) — Wav2Lip ───────────────────────────────────
+_LIPSYNC_RUNNING = [False]
+_LIPSYNC_PROC = [None]
+_LIPSYNC_QUALITY = {          # nhãn → (resize_factor, nosmooth)
+    "Nhanh (nhẹ máy)":  (2, False),
+    "Cân bằng":         (1, False),
+    "Nét (chậm)":       (1, True),
+}
+_sec_lipsync = _make_section(
+    "👄 Khớp khẩu hình (Lip-sync)",
+    "Chỉnh miệng nhân vật khớp TIẾNG MỚI sau khi lồng tiếng (Wav2Lip) — "
+    "cần lipsync_env + repo Wav2Lip cạnh exe",
+    "#c1596b", ws="video")
+lipsync_video_var = ctk.StringVar(value="")
+lipsync_audio_var = ctk.StringVar(value="")
+lipsync_quality_var = ctk.StringVar(value="Cân bằng")
+_g_ls1 = _sec_row(_sec_lipsync)
+ctk.CTkLabel(_g_ls1, text="Video:", font=("Arial", 12), width=64,
+             anchor="w").pack(side="left", padx=(4, 2))
+ctk.CTkEntry(_g_ls1, textvariable=lipsync_video_var,
+             placeholder_text="video có khuôn mặt rõ (nguồn khẩu hình)...").pack(
+    side="left", expand=True, fill="x", padx=(0, 4))
+ctk.CTkButton(_g_ls1, text="Browse", width=70,
+              command=lambda: _lipsync_browse(lipsync_video_var, "video")).pack(side="left", padx=(0, 4))
+_g_ls2 = _sec_row(_sec_lipsync)
+ctk.CTkLabel(_g_ls2, text="Tiếng mới:", font=("Arial", 12), width=64,
+             anchor="w").pack(side="left", padx=(4, 2))
+ctk.CTkEntry(_g_ls2, textvariable=lipsync_audio_var,
+             placeholder_text="final.mp3 / video _dubbed.mp4 (tự lấy tiếng)...").pack(
+    side="left", expand=True, fill="x", padx=(0, 4))
+ctk.CTkButton(_g_ls2, text="Browse", width=70,
+              command=lambda: _lipsync_browse(lipsync_audio_var, "audio")).pack(side="left", padx=(0, 4))
+_g_ls3 = _sec_row(_sec_lipsync)
+ctk.CTkLabel(_g_ls3, text="Chất lượng:", font=("Arial", 12)).pack(side="left",
+                                                                 padx=(4, 2))
+ctk.CTkOptionMenu(_g_ls3, variable=lipsync_quality_var, width=160,
+                  values=list(_LIPSYNC_QUALITY.keys())).pack(side="left", padx=(0, 8))
+btn_lipsync_run = ctk.CTkButton(_g_ls3, text="👄 Khớp khẩu hình",
+                                command=lambda: start_lipsync(),
+                                height=36, font=("Arial", 13),
+                                fg_color="#c1596b", hover_color="#d76b7e")
+btn_lipsync_run.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_lipsync_stop = ctk.CTkButton(_g_ls3, text="⏹ Dừng",
+                                 command=lambda: _lipsync_stop(),
+                                 height=36, font=("Arial", 13),
+                                 fg_color="#8B2020", hover_color="#5e1616")
+btn_lipsync_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 _sec6 = _make_section("Hệ thống", "Thiết lập chung · công cụ · thoát", "#5a6478", ws="system")
 _g6 = _sec_row(_sec6)
@@ -10991,6 +11061,30 @@ def show_settings_dialog():
                 filetypes=[("Python", "python.exe"), ("All", "*.*")]))
     ).pack(side="left")
 
+    # 3h. Lip-sync (Wav2Lip): repo + checkpoint + env python (tùy chọn)
+    v_ls_repo, _, fr3h = _row(body, "Wav2Lip repo (inference.py):")
+    v_ls_repo.set(LIPSYNC_REPO_DIR)
+    ctk.CTkButton(fr3h, text="Browse", width=72,
+        command=lambda: (lambda p: v_ls_repo.set(p) if p else None)(
+            filedialog.askdirectory(title="Chọn thư mục repo Wav2Lip (chứa inference.py)"))
+    ).pack(side="left")
+
+    v_ls_ck, _, fr3i = _row(body, "Wav2Lip checkpoint (.pth):")
+    v_ls_ck.set(LIPSYNC_CHECKPOINT)
+    ctk.CTkButton(fr3i, text="Browse", width=72,
+        command=lambda: (lambda p: v_ls_ck.set(p) if p else None)(
+            filedialog.askopenfilename(title="Chọn wav2lip_gan.pth",
+                filetypes=[("Checkpoint", "*.pth"), ("All", "*.*")]))
+    ).pack(side="left")
+
+    v_ls_env, _, fr3j = _row(body, "lipsync_env python.exe:")
+    v_ls_env.set(LIPSYNC_ENV_OVERRIDE)
+    ctk.CTkButton(fr3j, text="Browse", width=72,
+        command=lambda: (lambda p: v_ls_env.set(p) if p else None)(
+            filedialog.askopenfilename(title="Chọn python.exe của lipsync_env",
+                filetypes=[("Python", "python.exe"), ("All", "*.*")]))
+    ).pack(side="left")
+
     # 4. Subtitle Edit exe
     v_se, _, fr4 = _row(body, "SubtitleEdit.exe:")
     v_se.set(SUBTITLE_EDIT_PATH)
@@ -11159,6 +11253,9 @@ def show_settings_dialog():
             f5tts_model_dir           = v_f5_model.get().strip(),
             omnivoice_env_override    = v_omni_env.get().strip(),
             omnivoice_model_dir       = v_omni_model.get().strip(),
+            lipsync_env_override      = v_ls_env.get().strip(),
+            lipsync_repo_dir          = v_ls_repo.get().strip(),
+            lipsync_checkpoint        = v_ls_ck.get().strip(),
         )
         if ckpt:
             voxcpm_ckpt_var.set(ckpt)
@@ -13349,6 +13446,167 @@ def open_srt_ai_transform_dialog():
     ctk.CTkButton(win, text="🪄 Chạy trên toàn bộ SRT", command=_run,
                   fg_color="#6b4fa0", hover_color="#8B5CF6", height=40,
                   font=("Arial", 13, "bold")).pack(fill="x", padx=14, pady=(8, 14))
+
+
+def _emo_canon(word):
+    """Chuẩn hóa 1 từ cảm xúc LLM trả về → key trong _EMO_PRESETS, hoặc None.
+    Dùng chung logic alias/bỏ-dấu-cách với _emo_parse."""
+    key = (word or "").strip().lower().strip("[]").strip()
+    if not key or key in ("-", "none", "trung tính", "trung tinh", "binhthuong",
+                           "bình thường", "0"):
+        return None
+    key = _EMO_ALIAS.get(key, _EMO_ALIAS.get(key.replace(" ", ""),
+                                             key.replace(" ", "")))
+    return key if key in _EMO_PRESETS else None
+
+
+def srt_ai_emotion():
+    """🎭 Tự gắn cảm xúc (AI): nhờ LLM dịch (Claude/Gemini/OpenAI…) đọc từng dòng
+    SRT và chọn MỘT tag cảm xúc trong whitelist (_EMO_PRESETS) — hoặc trung tính.
+    Ghi <tên>_emo.srt với tag "[vui]/[giận]/…" chèn đầu dòng rồi nạp lại; _emo_parse
+    lúc TTS sẽ áp delta rate/pitch (Edge) hoặc chỉ bỏ tag (engine khác). Luôn bật,
+    tự khóa bằng _SRT_AI_RUNNING (chung với ✂/🪄), KHÔNG đăng ký set_mode."""
+    if _SRT_AI_RUNNING[0]:
+        log("[Gắn cảm xúc AI] Đang chạy — đợi xong đã.")
+        return
+    if not subtitles_cache or not SRT_FILE:
+        msg.showinfo("🎭 Tự gắn cảm xúc", "Hãy Load SRT trước.")
+        return
+    if (TRANSLATE_PROVIDER or "") == "Offline":
+        msg.showinfo("🎭 Tự gắn cảm xúc",
+                     "Provider Offline không phân tích cảm xúc được — chọn "
+                     "Claude/Gemini/OpenAI/Groq/DeepSeek ở trang Dịch rồi thử lại.")
+        return
+    try:
+        provider, api_key, model = _translate_active_key()
+    except Exception as e:
+        msg.showerror("🎭 Tự gắn cảm xúc", str(e))
+        return
+    n_tagged0 = sum(1 for s in subtitles_cache if _emo_parse(s.content)[0])
+    if not msg.askyesno(
+            "🎭 Tự gắn cảm xúc (AI)",
+            f"AI sẽ đọc {len(subtitles_cache)} dòng và gắn tag cảm xúc "
+            f"([vui]/[buồn]/[giận]/[sợ]/[nhanh]/[chậm]/[thì thầm]/[hét]) vào đầu "
+            f"mỗi dòng phù hợp, bằng {provider}.\n\n"
+            "• Tag CŨ trên các dòng sẽ được thay bằng tag mới (dòng trung tính bỏ tag).\n"
+            "• Kết quả ghi ra <tên>_emo.srt và nạp lại — SRT gốc giữ nguyên.\n"
+            "• Tác dụng rõ nhất với Edge TTS (đổi tốc độ/cao độ theo cảm xúc); "
+            "engine khác chỉ bỏ tag, không đọc thành tiếng.\n\n"
+            + (f"(Hiện đã có {n_tagged0} dòng gắn tag sẵn — sẽ được ghi đè.)\n\n"
+               if n_tagged0 else "")
+            + "Tiếp tục?"):
+        return
+
+    log(f"🎭 [Gắn cảm xúc AI] Phân tích {len(subtitles_cache)} dòng bằng {provider}…")
+    _SRT_AI_RUNNING[0] = True
+    snap = [{"start": s.start, "end": s.end, "content": s.content}
+            for s in subtitles_cache]
+    texts0 = [clean_text(s.content) for s in subtitles_cache]
+    src_path = SRT_FILE
+
+    def _worker():
+        system = (
+            "Bạn là đạo diễn lồng tiếng. Với mỗi dòng thoại được đánh dấu [[n]], hãy "
+            "chọn ĐÚNG MỘT nhãn cảm xúc/nhịp đọc phù hợp NHẤT từ danh sách sau "
+            "(dựa vào nội dung và ngữ cảnh hội thoại):\n"
+            "  vui   – vui vẻ, phấn khởi\n"
+            "  buồn  – buồn bã, thất vọng\n"
+            "  giận  – tức giận, gắt gỏng\n"
+            "  sợ    – sợ hãi, lo lắng, hoảng\n"
+            "  nhanh – gấp gáp, khẩn trương\n"
+            "  chậm  – chậm rãi, trầm ngâm\n"
+            "  thì thầm – nói nhỏ, thì thầm, bí mật\n"
+            "  hét   – hét lớn, la lên\n"
+            "  -     – TRUNG TÍNH (đa số câu kể/thoại bình thường nên là -)\n"
+            "Chỉ dùng '-' khi câu không mang cảm xúc rõ; ĐỪNG lạm dụng các nhãn mạnh. "
+            "Trả về đúng định dạng, mỗi dòng một mục: [[n]] nhãn — không giải thích, "
+            "nhãn phải là một trong: vui, buồn, giận, sợ, nhanh, chậm, thì thầm, hét, -")
+        results = {}       # idx0 → key cảm xúc (canonical)
+        n_fail = 0
+        done = 0
+        try:
+            idxs = [i for i, t in enumerate(texts0) if t]
+            for bs in range(0, len(idxs), _SRT_AI_BATCH):
+                batch = idxs[bs:bs + _SRT_AI_BATCH]
+                user = "\n".join(f"[[{k + 1}]] {texts0[i]}"
+                                 for k, i in enumerate(batch))
+                raw = None
+                for _try in range(2):
+                    try:
+                        raw = _llm_call(provider, api_key, model, system, user)
+                        break
+                    except Exception as e:
+                        if _try == 0:
+                            time.sleep(2)
+                        else:
+                            n_fail += len(batch)
+                            app.after(0, lambda e=e, nb=len(batch): log(
+                                f"🎭 [Gắn cảm xúc AI] ⚠ Lỗi API — bỏ qua {nb} dòng: {e}"))
+                if raw:
+                    parsed = _parse_marked(raw, len(batch))
+                    for k, i in enumerate(batch):
+                        key = _emo_canon(parsed.get(k))
+                        if key:
+                            results[i] = key
+                done += len(batch)
+                update_progress(done, len(idxs))
+
+            # thống kê phân bố cảm xúc để log
+            from collections import Counter
+            dist = Counter(results.values())
+
+            subs_out = []
+            for k, it in enumerate(snap):
+                _old, body = _emo_parse(it["content"])   # bỏ tag cũ (nếu có)
+                key = results.get(k)
+                if key:
+                    content = f"[{key}] {body.lstrip()}"
+                else:
+                    content = body if _old else it["content"]
+                subs_out.append(srt.Subtitle(index=k + 1, start=it["start"],
+                                             end=it["end"], content=content))
+            out_path = os.path.splitext(src_path)[0] + "_emo.srt"
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(srt.compose(subs_out))
+
+            def _apply():
+                global SRT_FILE, current_index
+                log("━━━ GẮN CẢM XÚC AI ━━━")
+                log(f"  • Gắn tag cho {len(results)}/{len(texts0)} dòng"
+                    + (f" ({n_fail} dòng lỗi API bỏ qua)" if n_fail else ""))
+                if dist:
+                    _d = " · ".join(f"[{k}]×{v}" for k, v in dist.most_common())
+                    log(f"  • Phân bố: {_d}")
+                log(f"  • 💡 Tác dụng rõ nhất với Edge TTS. Sửa tay bằng 📝 Bảng phụ đề "
+                    "nếu cần.")
+                log(f"[Gắn cảm xúc AI] 💾 {os.path.basename(out_path)} — nạp lại…")
+                SRT_FILE = out_path
+                current_index = 0
+                load_subtitles(force_select=False)
+                set_mode("srt")
+                if results and OUTPUT_DIR and os.path.isdir(OUTPUT_DIR):
+                    _have = [i for i in results if os.path.isfile(
+                        os.path.join(OUTPUT_DIR, f"line_{i:04d}.mp3"))]
+                    if _have and msg.askyesno(
+                            "🎭 Tự gắn cảm xúc",
+                            f"{len(_have)} dòng vừa gắn cảm xúc đã có audio (đọc "
+                            "GIỌNG CŨ).\nXóa audio các dòng đó để đọc lại với cảm xúc?"):
+                        for i in _have:
+                            try:
+                                os.remove(os.path.join(
+                                    OUTPUT_DIR, f"line_{i:04d}.mp3"))
+                            except Exception:
+                                pass
+                        log(f"🎭 [Gắn cảm xúc AI] Đã xóa {len(_have)} audio cũ — "
+                            "🧩 hoặc TTS/Resume để đọc lại.")
+            app.after(0, _apply)
+        except Exception as e:
+            app.after(0, lambda e=e: log(f"🎭 [Gắn cảm xúc AI] ❌ Lỗi: {e}"))
+        finally:
+            _SRT_AI_RUNNING[0] = False
+            update_progress(0, 1)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def open_srt_replace_dialog():
@@ -15612,6 +15870,97 @@ def _a2v_stop():
         log("[Audio→Video] Không có tiến trình nào đang chạy.")
 
 
+def _karaoke_ass_time(sec):
+    """giây → 'H:MM:SS.cc' (centiseconds) cho ASS."""
+    sec = max(0.0, sec)
+    h = int(sec // 3600); sec -= h * 3600
+    m = int(sec // 60); sec -= m * 60
+    s = int(sec)
+    cs = int(round((sec - s) * 100))
+    if cs >= 100:
+        cs = 99
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _karaoke_srt_to_ass(srt_path, w, h):
+    """Chuyển SRT → file ASS karaoke (tag \\k tô chữ chạy theo giọng). Mỗi dòng
+    phụ đề: chia thời lượng cho các TỪ theo độ dài chữ → libass tô dần từ màu
+    Secondary (chưa đọc, trắng) sang Primary (đang/đã đọc, vàng). Dùng chung
+    filter subtitles= với ảnh nền/sóng của Audio→Video. Trả path .ass hoặc None.
+    Không cần STT word-level — xấp xỉ trong từng khe phụ đề (mịn hơn nếu SRT đã
+    tách nhỏ, vd chế độ STT 'karaoke')."""
+    try:
+        with open(srt_path, "r", encoding="utf-8", errors="replace") as f:
+            subs = list(srt.parse(f.read()))
+    except Exception as e:
+        log(f"[Karaoke] ⚠ Không đọc được SRT: {e}")
+        return None
+    if not subs:
+        return None
+    fontsize = max(24, int(h // 11))
+    marginv = max(20, int(h // 8))
+    # ASS màu &HAABBGGRR: Primary(đã đọc)=vàng, Secondary(chưa đọc)=trắng,
+    # viền đen dày cho dễ đọc trên mọi nền.
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "WrapStyle: 0\n"
+        "ScaledBorderAndShadow: yes\n"
+        f"PlayResX: {w}\nPlayResY: {h}\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+        "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Karaoke,Arial,{fontsize},&H0000FFFF,&H00FFFFFF,&H00000000,"
+        f"&H64000000,-1,0,0,0,100,100,0,0,1,3,1,2,40,40,{marginv},1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
+        "Effect, Text\n")
+    lines = []
+    for sub in subs:
+        raw = clean_text(sub.content)
+        try:
+            raw = _emo_parse(raw)[1]           # bỏ tag cảm xúc [vui]… nếu có
+        except Exception:
+            pass
+        raw = raw.replace("{", "(").replace("}", ")").replace("\r", "")
+        words = raw.split()
+        if not words:
+            continue
+        st = sub.start.total_seconds()
+        en = sub.end.total_seconds()
+        total_cs = int(round((en - st) * 100))
+        if total_cs < len(words):
+            total_cs = len(words)              # tối thiểu 1cs/từ
+        weights = [max(1, len(_re_word_len(wd))) for wd in words]
+        tw = sum(weights)
+        durs, acc = [], 0
+        for i, wt in enumerate(weights):
+            d = max(1, int(round(total_cs * wt / tw)))
+            durs.append(d); acc += d
+        durs[-1] = max(1, durs[-1] + (total_cs - acc))   # bù làm tròn vào từ cuối
+        text = "".join(f"{{\\k{d}}}{wd} " for d, wd in zip(durs, words)).rstrip()
+        lines.append(
+            f"Dialogue: 0,{_karaoke_ass_time(st)},{_karaoke_ass_time(en)},"
+            f"Karaoke,,0,0,0,,{text}")
+    if not lines:
+        return None
+    out_ass = os.path.splitext(srt_path)[0] + "_karaoke.ass"
+    try:
+        with open(out_ass, "w", encoding="utf-8") as f:
+            f.write(header + "\n".join(lines) + "\n")
+    except Exception as e:
+        log(f"[Karaoke] ⚠ Không ghi được ASS: {e}")
+        return None
+    return out_ass
+
+
+def _re_word_len(word):
+    """Độ dài 'có nghĩa' của từ để chia thời gian (bỏ dấu câu 2 đầu)."""
+    return word.strip(".,!?;:\"'()[]…-—")
+
+
 def start_audio_to_video():
     if _A2V_RUNNING[0]:
         log("[Audio→Video] Đang chạy — đợi xong đã.")
@@ -15642,21 +15991,30 @@ def start_audio_to_video():
             log(l)
         return
     use_wave = bool(a2v_wave_var.get())   # đọc Tk var trên MAIN thread
+    use_karaoke = bool(globals().get("a2v_karaoke_var") and a2v_karaoke_var.get())
     _w, _h = _A2V_RATIOS.get(a2v_ratio_var.get(), (1280, 720))
 
     def _build_one(aud, srt_use):
         """Dựng 1 video. Trả về (ok, out_path)."""
         out_path = os.path.splitext(aud)[0] + "_video.mp4"
         dur = _probe_duration_sec(aud)
+        # Kiểu Karaoke: đổi SRT → ASS \k (chữ chạy theo giọng). Lỗi → burn SRT thường.
+        sub_target = srt_use
+        _kara = False
+        if use_karaoke and srt_use:
+            _ass = _karaoke_srt_to_ass(srt_use, _w, _h)
+            if _ass:
+                sub_target = _ass
+                _kara = True
         log(f"[Audio→Video] {os.path.basename(aud)} ({_fmt_dur(dur)}) "
             f"→ {os.path.basename(out_path)} [{_w}x{_h}]"
             + (" | ảnh nền" if img else " | nền màu tối")
             + (" | 🌊 sóng nhạc" if use_wave else "")
-            + (" | burn phụ đề" if srt_use else ""))
+            + (" | 🎤 karaoke" if _kara else (" | burn phụ đề" if srt_use else "")))
         # scale/pad về khung đã chọn, chẵn pixel (libx264 kỵ kích thước lẻ)
         base_vf = (f"scale={_w}:{_h}:force_original_aspect_ratio=decrease,"
                    f"pad={_w}:{_h}:(ow-iw)/2:(oh-ih)/2:color=black")
-        sub_vf = f",subtitles={_ff_sub_filterpath(srt_use)}" if srt_use else ""
+        sub_vf = f",subtitles={_ff_sub_filterpath(sub_target)}" if sub_target else ""
         if use_wave:
             # Sóng cần cả 2 stream → -filter_complex (không dùng chung -vf
             # được): nền [bg] + showwaves của audio (rate khớp fps 15,
@@ -15755,6 +16113,222 @@ def start_audio_to_video():
         finally:
             _A2V_PROC[0] = None
             _A2V_RUNNING[0] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# ── 👄 Khớp khẩu hình (Lip-sync) — Wav2Lip ───────────────────────────────────
+# Sau khi đã lồng tiếng, miệng nhân vật vẫn nhép theo tiếng GỐC. Bước này chỉnh
+# miệng khớp TIẾNG MỚI qua Wav2Lip. Wav2Lip là 1 REPO (không phải pip package) →
+# app gọi lipsync_helper.py (bằng lipsync_env python), helper ủy quyền inference.py
+# của repo rồi dịch tiến trình. Tách rời set_mode (pattern nút Dịch/Audio→Video):
+# nút luôn bật, tự khóa _LIPSYNC_RUNNING, ⏹ kill cả cây tiến trình.
+# _LIPSYNC_RUNNING/_LIPSYNC_PROC/_LIPSYNC_QUALITY được định nghĩa CẠNH UI card
+# (trang video) vì optionmenu cần _LIPSYNC_QUALITY.keys() lúc dựng giao diện.
+
+
+def _find_lipsync_python():
+    """lipsync_env\\Scripts\\python.exe: override (Settings) → cạnh app/parents."""
+    if LIPSYNC_ENV_OVERRIDE and os.path.isfile(LIPSYNC_ENV_OVERRIDE):
+        return LIPSYNC_ENV_OVERRIDE
+    for base in _install_dirs():
+        cand = os.path.join(base, "lipsync_env", "Scripts", "python.exe")
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _lipsync_repo_dir():
+    """Thư mục repo Wav2Lip (có inference.py): Settings → tự dò cạnh exe/parents."""
+    if LIPSYNC_REPO_DIR and os.path.isfile(os.path.join(LIPSYNC_REPO_DIR, "inference.py")):
+        return LIPSYNC_REPO_DIR
+    d = _auto_find_dir("Wav2Lip", "Wav2Lip-master", "wav2lip", "Wav2Lip-main")
+    if d and os.path.isfile(os.path.join(d, "inference.py")):
+        return d
+    # Settings trỏ vào dir dù chưa có inference.py — vẫn trả để báo lỗi rõ ràng
+    return LIPSYNC_REPO_DIR or d or ""
+
+
+def _lipsync_checkpoint(repo=""):
+    """wav2lip_gan.pth (ưu tiên) / wav2lip.pth: Settings → trong repo/checkpoints → cạnh exe."""
+    if LIPSYNC_CHECKPOINT and os.path.isfile(LIPSYNC_CHECKPOINT):
+        return LIPSYNC_CHECKPOINT
+    names = ("wav2lip_gan.pth", "wav2lip.pth")
+    roots = []
+    if repo:
+        roots += [os.path.join(repo, "checkpoints"), repo]
+    roots += _install_dirs()
+    for r in roots:
+        for n in names:
+            cand = os.path.join(r, n)
+            if os.path.isfile(cand):
+                return cand
+    return ""
+
+
+def _find_lipsync_helper():
+    """lipsync_helper.py: sys._MEIPASS → cạnh exe → cạnh script."""
+    cands = []
+    mp = getattr(sys, "_MEIPASS", "")
+    if mp:
+        cands.append(os.path.join(mp, "lipsync_helper.py"))
+    for base in _install_dirs():
+        cands.append(os.path.join(base, "lipsync_helper.py"))
+    cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "lipsync_helper.py"))
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _lipsync_browse(var, kind):
+    if kind == "video":
+        p = filedialog.askopenfilename(
+            title="Chọn VIDEO có khuôn mặt (nguồn khẩu hình)",
+            filetypes=[("Video", "*.mp4 *.mkv *.mov *.avi *.webm"),
+                       ("All files", "*.*")])
+    else:
+        p = filedialog.askopenfilename(
+            title="Chọn TIẾNG mới (audio, hoặc video đã lồng tiếng để lấy tiếng)",
+            initialdir=OUTPUT_DIR if os.path.isdir(OUTPUT_DIR or "") else None,
+            filetypes=[("Audio/Video", "*.wav *.mp3 *.m4a *.aac *.opus *.mp4 *.mkv *.mov"),
+                       ("All files", "*.*")])
+    if p:
+        var.set(p)
+
+
+def _lipsync_stop():
+    p = _LIPSYNC_PROC[0]
+    if p:
+        try:
+            _proc_tree_action(p, "kill")
+            log("[Lip-sync] ⏹ Đã dừng.")
+        except Exception:
+            pass
+    else:
+        log("[Lip-sync] Không có tiến trình nào đang chạy.")
+
+
+def start_lipsync():
+    if _LIPSYNC_RUNNING[0]:
+        log("[Lip-sync] Đang chạy — đợi xong đã.")
+        return
+    face = lipsync_video_var.get().strip()
+    audio = lipsync_audio_var.get().strip()
+    if not face or not os.path.isfile(face):
+        log("[Lip-sync] ❌ Chưa chọn video khuôn mặt hợp lệ.")
+        return
+    if not audio or not os.path.isfile(audio):
+        log("[Lip-sync] ❌ Chưa chọn file tiếng (audio hoặc video đã lồng tiếng).")
+        return
+    # Preflight môi trường — fail-soft, hướng dẫn rõ ràng
+    py = _find_lipsync_python()
+    if not py:
+        log("[Lip-sync] ❌ Không thấy lipsync_env\\Scripts\\python.exe.")
+        log("  • Dựng env Wav2Lip rồi đặt lipsync_env\\ cạnh exe, hoặc trỏ đường "
+            "dẫn trong ⚙ Cài đặt → lipsync_env python.exe.")
+        return
+    repo = _lipsync_repo_dir()
+    if not repo or not os.path.isfile(os.path.join(repo, "inference.py")):
+        log("[Lip-sync] ❌ Không thấy repo Wav2Lip (inference.py).")
+        log("  • git clone https://github.com/Rudrabha/Wav2Lip → đặt cạnh exe "
+            "(thư mục 'Wav2Lip'), hoặc trỏ trong ⚙ Cài đặt → Wav2Lip repo.")
+        return
+    ckpt = _lipsync_checkpoint(repo)
+    if not ckpt:
+        log("[Lip-sync] ❌ Không thấy checkpoint (wav2lip_gan.pth).")
+        log("  • Tải wav2lip_gan.pth (xem README Wav2Lip) đặt vào "
+            f"{os.path.join(repo, 'checkpoints')} hoặc cạnh exe.")
+        return
+    helper = _find_lipsync_helper()
+    if not helper:
+        log("[Lip-sync] ❌ Không thấy lipsync_helper.py.")
+        return
+    ffmpeg_ok, ffmpeg_path, guide = _check_ffmpeg_exists()
+    if not ffmpeg_ok:
+        for l in guide.splitlines():
+            log(l)
+        return
+    rf, nosmooth = _LIPSYNC_QUALITY.get(lipsync_quality_var.get(), (1, False))
+    out = os.path.splitext(face)[0] + "_lipsync.mp4"
+
+    def _run():
+        _LIPSYNC_RUNNING[0] = True
+        try:
+            update_progress(0, 1)
+            log_color("👄 [Lip-sync] Khớp khẩu hình bằng Wav2Lip…", "#7cf")
+            log(f"  • Khuôn mặt: {os.path.basename(face)}")
+            log(f"  • Tiếng mới: {os.path.basename(audio)}")
+            log(f"  • Repo: {repo}")
+            log(f"  • Checkpoint: {os.path.basename(ckpt)}  ·  Chất lượng: "
+                f"{lipsync_quality_var.get()}")
+            dev = "cuda" if globals().get("DETECTED_GPU") else "cpu"
+            cmd = [py, helper,
+                   "--repo-dir", repo,
+                   "--checkpoint", ckpt,
+                   "--face", face,
+                   "--audio", audio,
+                   "--out", out,
+                   "--resize-factor", str(rf),
+                   "--device", dev,
+                   "--ffmpeg", ffmpeg_path]
+            if nosmooth:
+                cmd.append("--nosmooth")
+            if dev == "cpu":
+                log("  • ⚠ Không thấy GPU NVIDIA — Wav2Lip chạy CPU sẽ RẤT chậm "
+                    "(vài phút/1 phút video). Nên chạy máy có GPU.")
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW)
+            RUNNING_PROCESSES.append(proc)
+            _LIPSYNC_PROC[0] = proc
+            err_msg = ""
+            for line in proc.stdout:
+                line = line.rstrip("\r\n")
+                if not line:
+                    continue
+                if line.startswith("PROGRESS:"):
+                    try:
+                        n, m = line[9:].split(":")
+                        update_progress(int(n), max(1, int(m)))
+                    except Exception:
+                        pass
+                elif line.startswith("PROGRESS_MSG:"):
+                    log(f"[Lip-sync] {line[13:]}")
+                elif line.startswith("WARN:"):
+                    log(f"[Lip-sync] ⚠ {line[5:]}")
+                elif line.startswith("ERROR:"):
+                    err_msg = line[6:]
+                    log(f"[Lip-sync] ❌ {err_msg}")
+                elif line.startswith("DONE:"):
+                    pass
+                else:
+                    log(f"[Lip-sync] {line}")
+            proc.wait()
+            try:
+                RUNNING_PROCESSES.remove(proc)
+            except ValueError:
+                pass
+            if proc.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 1024:
+                update_progress(1, 1)
+                mb = os.path.getsize(out) / 2**20
+                log(f"[Lip-sync] ✅ Xong: {os.path.basename(out)} ({mb:.1f} MB)")
+                app.after(0, show_fireworks)
+                try:
+                    _reveal_output(out)
+                except Exception:
+                    pass
+            else:
+                if not err_msg:
+                    log(f"[Lip-sync] ❌ Thất bại (exit {proc.returncode}). Xem log.")
+        except Exception as e:
+            log(f"[Lip-sync] ❌ {e}")
+        finally:
+            _LIPSYNC_PROC[0] = None
+            _LIPSYNC_RUNNING[0] = False
+            update_progress(0, 1)
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -16264,9 +16838,15 @@ async def _generate_pdf_tts():
                     log(f"[PDF] FAIL {current_index}")
                     FAIL_COUNT += 1
         elif ok and _bad:
-            _rename_bad_audio(filename, current_index, _reason, _detail, "PDF")
-            log(f"[PDF] FAIL {current_index}")
-            FAIL_COUNT += 1
+            if (_reason == "toolong" and not RVC_ENABLED
+                    and await _tts_recover_toolong(text, filename, current_index, "[PDF] ")):
+                log(f"[PDF] OK {current_index}")
+                _BATCH_STATS["gen"] += 1
+                _tts_cache_put(text, filename)
+            else:
+                _rename_bad_audio(filename, current_index, _reason, _detail, "PDF")
+                log(f"[PDF] FAIL {current_index}")
+                FAIL_COUNT += 1
         else:
             log(f"[PDF] FAIL {current_index}")
             FAIL_COUNT += 1
@@ -17542,6 +18122,116 @@ def _sanitize_tts_text(text):
     return t or text                          # tránh trả chuỗi rỗng
 
 
+# ── 🔪 Cứu dòng 'toolong' bằng cách TÁCH CÂU (fix xác định) ──────────────────
+# Edge TTS thỉnh thoảng hallucinate/lặp/runaway trên MỘT dòng: tạo lại cùng text
+# vẫn ra 'toolong' (retry loop chịu thua). Nhưng nếu TÁCH câu ra 2+ nửa rồi gen
+# TỪNG nửa riêng thì mỗi nửa là một lần sinh mới, thường ra đúng → ghép lại được
+# audio hoàn chỉnh. Chỉ áp cho luồng provider KHÔNG-RVC (RVC giữ nguyên độ dài
+# nên không phải nguồn 'toolong'; ghép rồi mới RVC sẽ phức tạp).
+def _tts_recovery_split(text):
+    """Tách text tại ranh câu gần GIỮA (ưu tiên .!?… → , ; : → khoảng trắng);
+    đệ quy nếu 1 nửa vẫn dài (>160 ký tự). → list ≥2 phần, hoặc [text] nếu
+    không tách được (quá ngắn / không có ranh giới)."""
+    t = (text or "").strip()
+    if len(t) < 20:
+        return [t]
+    seps = [m.end() for m in re.finditer(r"[.!?…]+\s+", t)]
+    if not seps:
+        seps = [m.end() for m in re.finditer(r"[,;:]\s+", t)]
+    if not seps:
+        seps = [m.start() for m in re.finditer(r"\s+", t)]
+    if not seps:
+        return [t]
+    mid = len(t) / 2
+    cut = min(seps, key=lambda p: abs(p - mid))
+    a, b = t[:cut].strip(), t[cut:].strip()
+    if not a or not b:
+        return [t]
+    out = []
+    for half in (a, b):
+        if len(half) > 160:
+            out.extend(_tts_recovery_split(half))
+        else:
+            out.append(half)
+    return out
+
+
+def _tts_recovery_concat(files, out):
+    """Ghép các mp3 (đã QC) thành 1 file out qua ffmpeg concat demuxer + re-encode
+    mp3 (đồng nhất, không lệch tiếng). → True nếu ra file hợp lệ."""
+    ff = get_ffmpeg()
+    if not (os.path.isfile(ff) or shutil.which(ff)):
+        return False
+    listtxt = out + ".rec_list.txt"
+    try:
+        with open(listtxt, "w", encoding="utf-8") as f:
+            for p in files:
+                ap = os.path.abspath(p).replace("\\", "/").replace("'", "'\\''")
+                f.write(f"file '{ap}'\n")
+        r = subprocess.run(
+            [ff, "-y", "-v", "error", "-f", "concat", "-safe", "0",
+             "-i", listtxt, "-acodec", "libmp3lame", "-q:a", "2", out],
+            capture_output=True, timeout=120, creationflags=CREATE_NO_WINDOW)
+        return (r.returncode == 0 and os.path.isfile(out)
+                and os.path.getsize(out) > 1024)
+    except Exception:
+        return False
+    finally:
+        try:
+            os.remove(listtxt)
+        except Exception:
+            pass
+
+
+async def _tts_recover_toolong(text, filename, idx, label=""):
+    """Cứu 1 dòng 'toolong': tách câu → gen từng nửa (QC riêng, 2 lần thử/nửa) →
+    ghép vào filename → QC bản ghép. → True nếu cứu được (filename giờ là audio
+    tốt), False nếu chịu thua (caller sẽ rename FAIL như cũ). save_tts đã áp
+    glossary/số + cắt lặng cho từng nửa nên ghép ra khít."""
+    parts = _tts_recovery_split(text)
+    if len(parts) < 2:
+        return False
+    loop = asyncio.get_event_loop()
+    tmps = []
+    try:
+        for i, part in enumerate(parts):
+            tmp = f"{filename}.rec{i}.mp3"
+            got = False
+            for _a in range(2):
+                try:
+                    okp = await save_tts(part, tmp)
+                except Exception:
+                    okp = False
+                if not okp:
+                    continue
+                b, _r, _d = await loop.run_in_executor(
+                    None, _audio_quality_check, tmp, part)
+                if not b:
+                    got = True
+                    break
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+            if not got:
+                return False          # 1 nửa vẫn hỏng → bỏ cứu
+            tmps.append(tmp)
+        if not _tts_recovery_concat(tmps, filename):
+            return False
+        b, _r, _d = await loop.run_in_executor(
+            None, _audio_quality_check, filename, text)
+        if b:
+            return False
+        log(f"  🔪 Dòng {idx}: cứu 'toolong' bằng cách tách {len(parts)} câu — OK")
+        return True
+    finally:
+        for t in tmps:
+            try:
+                os.remove(t)
+            except Exception:
+                pass
+
+
 # =========================
 # QC DASHBOARD — báo cáo audio lỗi + regenerate hàng loạt
 # =========================
@@ -18660,10 +19350,17 @@ async def _tts_par_one(idx, text, sem, state, dmin, dmax,
             _BATCH_STATS["gen"] += 1
             _tts_cache_put(text, filename)
         elif ok and _bad:
-            _rename_bad_audio(filename, idx, _reason, _detail,
-                              label.strip(" []") if label else "")
-            log(f"{label}FAIL {idx}")
-            FAIL_COUNT += 1
+            # Luồng song song = Edge KHÔNG-RVC → luôn cho phép cứu 'toolong'
+            if (_reason == "toolong"
+                    and await _tts_recover_toolong(text, filename, idx, label)):
+                log(f"{label}OK {idx}")
+                _BATCH_STATS["gen"] += 1
+                _tts_cache_put(text, filename)
+            else:
+                _rename_bad_audio(filename, idx, _reason, _detail,
+                                  label.strip(" []") if label else "")
+                log(f"{label}FAIL {idx}")
+                FAIL_COUNT += 1
         else:
             log(f"{label}FAIL {idx}")
             FAIL_COUNT += 1
@@ -18942,10 +19639,17 @@ async def generate_tts():
                     log(f"FAIL {current_index}")
                     FAIL_COUNT += 1
         elif ok and _bad:
-            # Hết lượt thử mà audio vẫn lỗi → đổi tên đánh dấu, Resume sẽ tạo lại
-            _rename_bad_audio(filename, current_index, _reason, _detail)
-            log(f"FAIL {current_index}")
-            FAIL_COUNT += 1
+            # 'toolong' dai dẳng → thử cứu bằng cách tách câu (fix xác định)
+            if (_reason == "toolong" and not RVC_ENABLED
+                    and await _tts_recover_toolong(text, filename, current_index)):
+                log(f"OK {current_index}")
+                _BATCH_STATS["gen"] += 1
+                _tts_cache_put(text, filename)
+            else:
+                # Hết lượt thử mà audio vẫn lỗi → đổi tên đánh dấu, Resume sẽ tạo lại
+                _rename_bad_audio(filename, current_index, _reason, _detail)
+                log(f"FAIL {current_index}")
+                FAIL_COUNT += 1
         else:
             log(f"FAIL {current_index}")
             FAIL_COUNT += 1
@@ -21341,6 +22045,7 @@ autodub_lang_var      = ctk.StringVar(value="auto")
 autodub_translate_var = ctk.BooleanVar(value=True)
 autodub_keep_var      = ctk.BooleanVar(value=False)
 autodub_burnsub_var   = ctk.BooleanVar(value=False)
+autodub_lipsync_var   = ctk.BooleanVar(value=False)   # bước 6 tùy chọn: khớp khẩu hình (Wav2Lip)
 # YouTube → lồng tiếng: thư mục tải video về + tự mở xem khi xong
 autodub_yt_dir_var    = ctk.StringVar(
     value=os.path.join(os.path.expanduser("~"), "Videos", "SRT_TTS_YouTube"))
@@ -21489,9 +22194,9 @@ def _autodub_busy():
     return False
 
 
-def _autodub_env_preflight(do_translate):
+def _autodub_env_preflight(do_translate, do_lipsync=False):
     """Preflight môi trường dùng chung (1 lần cho cả hàng đợi): ffmpeg, STT,
-    key dịch, engine giọng. → True nếu đủ điều kiện chạy."""
+    key dịch, engine giọng (+ Wav2Lip nếu bật lip-sync). → True nếu đủ điều kiện."""
     ffmpeg_ok, _fp, ffmpeg_guide = _check_ffmpeg_exists()
     if not ffmpeg_ok:
         for l in ffmpeg_guide.splitlines():
@@ -21537,12 +22242,122 @@ def _autodub_env_preflight(do_translate):
     if (not (VOXCPM_ENABLED or VIENEU_ENABLED or F5TTS_ENABLED or OMNIVOICE_ENABLED)
             and RVC_ENABLED and not _check_rvc_preflight()):
         return False
+    # Bước 6 tùy chọn: khớp khẩu hình — hard-fail sớm để khỏi phí cả tiếng dub
+    # rồi mới phát hiện thiếu env Wav2Lip.
+    if do_lipsync:
+        _lp = _find_lipsync_python()
+        _lr = _lipsync_repo_dir()
+        _lr_ok = bool(_lr and os.path.isfile(os.path.join(_lr, "inference.py")))
+        _lc = _lipsync_checkpoint(_lr if _lr_ok else "")
+        if not (_lp and _lr_ok and _lc and _find_lipsync_helper()):
+            _miss = []
+            if not _lp:      _miss.append("lipsync_env")
+            if not _lr_ok:   _miss.append("repo Wav2Lip (inference.py)")
+            if not _lc:      _miss.append("wav2lip_gan.pth")
+            if not _find_lipsync_helper(): _miss.append("lipsync_helper.py")
+            log("[Lồng tiếng] ❌ Bật 'Khớp khẩu hình' nhưng thiếu: "
+                + ", ".join(_miss) + ". Cài theo MOVE_CHECKLIST mục 8, hoặc bỏ "
+                "tick 'Khớp khẩu hình' để chạy không lip-sync.")
+            return False
     return True
 
 
+def _autodub_lipsync_step(dubbed_path, dub_audio, out_dir):
+    """Bước 6 tùy chọn: chỉnh miệng nhân vật khớp giọng đọc (Wav2Lip), ĐỒNG BỘ.
+    face = video đã ghép (giữ nguyên phụ đề cứng + mix audio ở khung hình),
+    audio = giọng đọc (final speech) để đồng bộ miệng; sau đó ghép LẠI track
+    audio ĐẦY ĐỦ của dubbed_path (giữ nhạc nền/ducking) vào video đã sửa miệng.
+    → path video _dubbed_lipsync.mp4, hoặc None (FAIL-OPEN: dub vẫn dùng được)."""
+    py = _find_lipsync_python()
+    repo = _lipsync_repo_dir()
+    ckpt = _lipsync_checkpoint(repo)
+    helper = _find_lipsync_helper()
+    ffmpeg_ok, ffmpeg_path, _guide = _check_ffmpeg_exists()
+    if not (py and repo and ckpt and helper and ffmpeg_ok):
+        log("[Lồng tiếng] ⚠ Bỏ qua khớp khẩu hình — thiếu env Wav2Lip (dub vẫn OK).")
+        return None
+    base = os.path.splitext(os.path.basename(dubbed_path))[0]
+    tmp_out = os.path.join(out_dir, base + "_ls_tmp.mp4")
+    final_out = os.path.join(out_dir, base + "_lipsync.mp4")
+    dev = "cuda" if globals().get("DETECTED_GPU") else "cpu"
+    cmd = [py, helper, "--repo-dir", repo, "--checkpoint", ckpt,
+           "--face", dubbed_path, "--audio", dub_audio, "--out", tmp_out,
+           "--device", dev, "--ffmpeg", ffmpeg_path]
+    if dev == "cpu":
+        log("[Lồng tiếng] ⚠ Không có GPU — Wav2Lip chạy CPU rất chậm.")
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+        RUNNING_PROCESSES.append(proc)
+        _LIPSYNC_PROC[0] = proc
+        for line in proc.stdout:
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            if line.startswith("PROGRESS:"):
+                try:
+                    n, m = line[9:].split(":")
+                    update_progress(int(n), max(1, int(m)))
+                except Exception:
+                    pass
+            elif line.startswith("PROGRESS_MSG:"):
+                log(f"[Lip-sync] {line[13:]}")
+            elif line.startswith("WARN:"):
+                log(f"[Lip-sync] ⚠ {line[5:]}")
+            elif line.startswith("ERROR:"):
+                log(f"[Lip-sync] ❌ {line[6:]}")
+            elif not line.startswith("DONE:"):
+                log(f"[Lip-sync] {line}")
+        proc.wait()
+        try:
+            RUNNING_PROCESSES.remove(proc)
+        except ValueError:
+            pass
+    except Exception as e:
+        log(f"[Lồng tiếng] ⚠ Khớp khẩu hình lỗi: {e} (dub vẫn OK).")
+        return None
+    finally:
+        _LIPSYNC_PROC[0] = None
+    if proc.returncode != 0 or not (os.path.isfile(tmp_out)
+                                    and os.path.getsize(tmp_out) > 1024):
+        log("[Lồng tiếng] ⚠ Khớp khẩu hình không ra file — giữ bản dub thường.")
+        return None
+    # Ghép track audio ĐẦY ĐỦ của dubbed_path (mix nhạc/ducking) vào video đã sửa
+    # miệng; -c copy nên nhanh. Lỗi ghép → dùng tmp (audio = giọng đọc) làm dự phòng.
+    try:
+        remux = subprocess.Popen(
+            [ffmpeg_path, "-y", "-i", tmp_out, "-i", dubbed_path,
+             "-map", "0:v:0", "-map", "1:a:0", "-c", "copy",
+             "-movflags", "+faststart", final_out],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+        for _l in remux.stdout:
+            pass
+        remux.wait()
+    except Exception:
+        remux = None
+    if remux and remux.returncode == 0 and os.path.isfile(final_out) \
+            and os.path.getsize(final_out) > 1024:
+        try:
+            os.remove(tmp_out)
+        except Exception:
+            pass
+        return final_out
+    # remux hỏng — dùng tmp làm kết quả
+    try:
+        os.replace(tmp_out, final_out)
+        return final_out
+    except Exception:
+        return tmp_out if os.path.isfile(tmp_out) else None
+
+
 def _autodub_chain_sync(video, stt_model, stt_lang, do_translate, keep_orig,
-                        burn_sub=False):
-    """Chạy 5 bước lồng tiếng cho MỘT video, ĐỒNG BỘ (gọi từ worker thread).
+                        burn_sub=False, lipsync=False):
+    """Chạy 5 (±1) bước lồng tiếng cho MỘT video, ĐỒNG BỘ (gọi từ worker thread).
+    lipsync=True thêm bước 6 khớp khẩu hình (Wav2Lip, fail-open).
     Caller tự quản _AUTODUB_RUNNING. → True nếu ra được <video>_dubbed.mp4."""
     global SRT_FILE, OUTPUT_DIR, current_index
     global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR, MUX_BURN_SRT
@@ -21657,6 +22472,14 @@ def _autodub_chain_sync(video, stt_model, stt_lang, do_translate, keep_orig,
             log("[Lồng tiếng] ❌ Bước ghép video không ra file — xem log Ghép Audio ở trên.")
             return False
 
+        # ── 6) Khớp khẩu hình (tùy chọn, fail-open) ──
+        if lipsync:
+            log_color("▶ Bước 6/6: Khớp khẩu hình (Wav2Lip)...", "#7c5cff")
+            _ls = _autodub_lipsync_step(dubbed_path, final_path, out_dir)
+            if _ls:
+                log(f"[Lồng tiếng] 👄 Khớp khẩu hình xong: {os.path.basename(_ls)}")
+                dubbed_path = _ls
+
         # ── Tổng kết chuỗi ──
         rep = dict(_LAST_MERGE_REPORT)
         log_color("━━━ LỒNG TIẾNG TỰ ĐỘNG: HOÀN TẤT ━━━",
@@ -21682,21 +22505,21 @@ def _autodub_chain_sync(video, stt_model, stt_lang, do_translate, keep_orig,
 
 
 def run_autodub_chain(video, stt_model, stt_lang, do_translate, keep_orig,
-                      burn_sub=False):
+                      burn_sub=False, lipsync=False):
     """Wizard 1 video: preflight fail-sớm rồi chạy chuỗi sync trong worker."""
     if _autodub_busy():
         return
     if not video or not os.path.isfile(video):
         log("[Lồng tiếng] ❌ Không thấy file video.")
         return
-    if not _autodub_env_preflight(do_translate):
+    if not _autodub_env_preflight(do_translate, lipsync):
         return
 
     def _run():
         _AUTODUB_RUNNING[0] = True
         try:
             _autodub_chain_sync(video, stt_model, stt_lang,
-                                do_translate, keep_orig, burn_sub)
+                                do_translate, keep_orig, burn_sub, lipsync)
         finally:
             _AUTODUB_RUNNING[0] = False
 
@@ -21757,7 +22580,7 @@ def run_autodub_preview(video, stt_model, stt_lang, do_translate, keep_orig,
 
 
 def run_autodub_queue(videos, stt_model, stt_lang, do_translate, keep_orig,
-                      burn_sub=False):
+                      burn_sub=False, lipsync=False):
     """Hàng đợi wizard: dub TUẦN TỰ nhiều video cùng cấu hình (chạy qua đêm).
     Một video lỗi → ghi nhận rồi chạy tiếp video sau; người dùng chủ động Dừng
     (Stop ở bất kỳ bước nào) → hủy luôn phần còn lại. Tổng kết ✅/❌ cuối hàng."""
@@ -21767,7 +22590,7 @@ def run_autodub_queue(videos, stt_model, stt_lang, do_translate, keep_orig,
     if not vids:
         log("[Lồng tiếng] ❌ Hàng đợi trống / file không tồn tại.")
         return
-    if not _autodub_env_preflight(do_translate):
+    if not _autodub_env_preflight(do_translate, lipsync):
         return
 
     def _run():
@@ -21779,7 +22602,7 @@ def run_autodub_queue(videos, stt_model, stt_lang, do_translate, keep_orig,
             for k, v in enumerate(vids, 1):
                 log_color(f"▶▶ Video {k}/{n}: {os.path.basename(v)}", "#36c5ff")
                 ok = _autodub_chain_sync(v, stt_model, stt_lang,
-                                         do_translate, keep_orig, burn_sub)
+                                         do_translate, keep_orig, burn_sub, lipsync)
                 results.append((v, ok))
                 if not ok and (stop_requested or VIDEO_STT_STOP
                                or TRANSLATE_STOP or VIDEOTOOL_STOP):
@@ -21985,7 +22808,7 @@ def _open_in_player(path):
 
 
 def run_autodub_youtube(urls, dest_dir, stt_model, stt_lang, do_translate,
-                        keep_orig, burn_sub=False, auto_open=True):
+                        keep_orig, burn_sub=False, auto_open=True, lipsync=False):
     """Dán 1+ link YouTube → tải → lồng tiếng (chuỗi wizard) → tự mở xem khi xong.
     Nhiều link = hàng đợi tuần tự (mỗi video tải xong rồi mới dub video đó)."""
     if _autodub_busy():
@@ -22001,7 +22824,7 @@ def run_autodub_youtube(urls, dest_dir, stt_model, stt_lang, do_translate,
     if not cmd0:
         log("[YouTube] ❌ Chưa cài yt-dlp. Mở CMD chạy:  pip install -U yt-dlp")
         return
-    if not _autodub_env_preflight(do_translate):
+    if not _autodub_env_preflight(do_translate, lipsync):
         return
 
     def _run():
@@ -22037,7 +22860,7 @@ def run_autodub_youtube(urls, dest_dir, stt_model, stt_lang, do_translate,
                     continue
                 log(f"[YouTube] ✅ Đã tải: {os.path.basename(video)}")
                 ok = _autodub_chain_sync(video, stt_model, stt_lang,
-                                         do_translate, keep_orig, burn_sub)
+                                         do_translate, keep_orig, burn_sub, lipsync)
                 results.append((url, ok))
                 if ok and auto_open:
                     dubbed = os.path.join(
@@ -22445,6 +23268,13 @@ def open_autodub_dialog():
                       values=["Trắng", "Vàng", "Xanh lá"], width=92,
                       font=("Arial", 12)).pack(side="left")
 
+    row4b = ctk.CTkFrame(win, fg_color="transparent")
+    row4b.pack(fill="x", padx=14, pady=4)
+    ctk.CTkCheckBox(row4b, text="👄 Khớp khẩu hình (Wav2Lip) — chỉnh miệng khớp giọng đọc",
+                    variable=autodub_lipsync_var, font=("Arial", 12)).pack(side="left")
+    ctk.CTkLabel(row4b, text="(cần lipsync_env + GPU — chậm; xem MOVE_CHECKLIST)",
+                 font=("Arial", 10), text_color="#999").pack(side="left", padx=(6, 0))
+
     ctk.CTkLabel(win, text="Có thể Tạm dừng/Dừng từng bước bằng các nút điều khiển sẵn có\n"
                            "(STT ở trang Tách Nội Dung; Dịch ở trang Dịch; TTS/Mux bằng nút chung trên thanh tiêu đề).",
                  font=("Arial", 11), text_color="#999",
@@ -22476,14 +23306,16 @@ def open_autodub_dialog():
                  bool(autodub_translate_var.get()),
                  bool(autodub_keep_var.get()))
         _bs = bool(autodub_burnsub_var.get())
+        _ls = bool(autodub_lipsync_var.get())
         if yt_links:   # ưu tiên link YouTube nếu có
             run_autodub_youtube(yt_links, autodub_yt_dir_var.get(), *_args,
                                 burn_sub=_bs,
-                                auto_open=bool(autodub_yt_open_var.get()))
+                                auto_open=bool(autodub_yt_open_var.get()),
+                                lipsync=_ls)
         elif multi:
-            run_autodub_queue(vids, *_args, burn_sub=_bs)
+            run_autodub_queue(vids, *_args, burn_sub=_bs, lipsync=_ls)
         else:
-            run_autodub_chain(entry_val, *_args, burn_sub=_bs)
+            run_autodub_chain(entry_val, *_args, burn_sub=_bs, lipsync=_ls)
 
     def _start_preview():
         # Dub thử chỉ nhận FILE video (link YouTube phải tải về trước — dùng nút full)
@@ -27049,6 +27881,12 @@ btn_srt_ai_free = ctk.CTkButton(_g1_io, text="🪄 Sửa SRT bằng AI (yêu c�
                                 fg_color="#6b4fa0", hover_color="#8B5CF6")
 btn_srt_ai_free.pack(side="top", fill="x", padx=4, pady=4)
 
+btn_srt_emo = ctk.CTkButton(_g1_io, text="🎭 Tự gắn cảm xúc (AI)",
+                            command=srt_ai_emotion,
+                            height=36, font=("Arial", 13),
+                            fg_color="#6b4fa0", hover_color="#8B5CF6")
+btn_srt_emo.pack(side="top", fill="x", padx=4, pady=4)
+
 btn_qc_listen = ctk.CTkButton(_g1_io, text="🎧 Nghe dòng lỗi", command=open_qc_listen_dialog,
                               height=36, font=("Arial", 13))
 btn_qc_listen.pack(side="top", fill="x", padx=4, pady=4)
@@ -28766,6 +29604,7 @@ def _ui_prefs_register():
         "autodub_model": autodub_model_var, "autodub_lang": autodub_lang_var,
         "autodub_translate": autodub_translate_var,
         "autodub_keep": autodub_keep_var, "autodub_burnsub": autodub_burnsub_var,
+        "autodub_lipsync": autodub_lipsync_var,
         "autodub_yt_dir": autodub_yt_dir_var, "autodub_yt_open": autodub_yt_open_var,
         "watch_dir": watch_dir_var,   # CHỈ đường dẫn — trạng thái bật không persist
         "translate_bilingual": translate_bilingual_var,
@@ -28905,6 +29744,8 @@ _TOOLTIP_TEXTS = {
     "btn_srt_replace": "Tìm & thay hàng loạt trong SRT (hỗ trợ regex) → _edit.srt; mời xóa audio các dòng bị đổi để đọc lại.",
     "btn_srt_table":   "Bảng toàn bộ phụ đề: trạng thái từng dòng (lỗi/đã có audio), sửa text, nghe, đọc lại — tất cả trong 1 cửa sổ.",
     "btn_srt_ai_free": "Gõ yêu cầu tùy ý (viết trang trọng hơn, đổi xưng hô, bỏ từ tục…) — AI áp dụng cho toàn bộ SRT. Cần API key dịch.",
+    "btn_srt_emo":     "AI đọc từng dòng và gắn tag cảm xúc ([vui]/[giận]/[sợ]…) vào đầu dòng → giọng đọc biểu cảm hơn. Rõ nhất với Edge TTS. Cần API key dịch.",
+    "btn_lipsync_run": "Khớp khẩu hình: chỉnh miệng nhân vật khớp TIẾNG MỚI sau khi lồng tiếng (Wav2Lip). Cần lipsync_env + repo Wav2Lip + wav2lip_gan.pth. Chạy nhanh trên GPU NVIDIA.",
     "btn_qc_report":   "Tổng hợp các dòng audio LỖI (câm / quá dài / quá ngắn) và dòng thiếu file sau batch.",
     "btn_qc_regen":    "Đọc lại tự động các dòng audio bị đánh dấu lỗi (novoice/toolong/tooshort).",
     "btn_qc_missing":  "Đọc lại các dòng FAIL (có text nhưng thiếu file mp3) — dùng sau khi batch xong còn sót vài dòng.",
@@ -29825,6 +30666,22 @@ def _run_startup_diagnostics():
         log_color("✅ omnivoice_env python: OK (OmniVoice Vietnamese)", _OK)
     else:
         log_color("⚠ omnivoice_env python: chưa tìm thấy — OmniVoice tắt. Đặt omnivoice_env cạnh exe hoặc trỏ ⚙ Cài đặt",
+                  _YEL, force_color=True)
+
+    # 11c. Lip-sync (Wav2Lip) — tùy chọn: cần lipsync_env + repo + checkpoint
+    _ls_py = _find_lipsync_python()
+    _ls_repo = _lipsync_repo_dir()
+    _ls_repo_ok = bool(_ls_repo and os.path.isfile(os.path.join(_ls_repo, "inference.py")))
+    _ls_ck = _lipsync_checkpoint(_ls_repo if _ls_repo_ok else "")
+    if _ls_py and _ls_repo_ok and _ls_ck:
+        log_color("✅ Lip-sync (Wav2Lip): OK — env + repo + checkpoint đủ", _OK)
+    else:
+        _miss = []
+        if not _ls_py:      _miss.append("lipsync_env")
+        if not _ls_repo_ok: _miss.append("repo Wav2Lip (inference.py)")
+        if not _ls_ck:      _miss.append("wav2lip_gan.pth")
+        log_color("ℹ Lip-sync (Wav2Lip): tắt — thiếu " + ", ".join(_miss)
+                  + ". (Tùy chọn: khớp khẩu hình sau khi lồng tiếng — xem MOVE_CHECKLIST)",
                   _YEL, force_color=True)
 
     # 12. Model HuggingFace tải-runtime (KHÔNG nằm trong thư mục model copy tay).
