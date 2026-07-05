@@ -34,6 +34,7 @@ Cách gọi (app dựng sẵn):
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,45 @@ def _find_inference(repo_dir):
         if os.path.isfile(p):
             return p
     return ""
+
+
+def _region_box(region, W, H):
+    """Vùng khuôn mặt cần khớp (đa mặt): trả (x, y, w, h) CHẴN pixel, hoặc None.
+    left/right = nửa trái/phải (2 người cạnh nhau); center = giữa; top/bottom =
+    nửa trên/dưới. Wav2Lip chỉ dò 1 mặt/khung → crop vùng còn 1 mặt rồi dán lại."""
+    ev = lambda v: int(v) - (int(v) % 2)          # toạ độ: chẵn, cho phép 0
+    evd = lambda v: max(2, int(v) - (int(v) % 2))  # kích thước: chẵn, ≥2
+    region = (region or "").lower()
+    if region == "left":
+        x, y, w, h = 0, 0, W // 2, H
+    elif region == "right":
+        x, y, w, h = W // 2, 0, W - W // 2, H
+    elif region == "center":
+        x, y, w, h = W // 4, 0, W // 2, H
+    elif region == "top":
+        x, y, w, h = 0, 0, W, H // 2
+    elif region == "bottom":
+        x, y, w, h = 0, H // 2, W, H - H // 2
+    else:
+        return None
+    return (ev(x), ev(y), evd(w), evd(h))
+
+
+def _probe_video(path):
+    """(W, H, fps, nframes, duration_s) qua cv2. Lỗi → (0,0,25.0,0,0.0)."""
+    try:
+        import cv2
+        cap = cv2.VideoCapture(os.path.abspath(path))
+        W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+        cap.release()
+        if fps <= 0:
+            fps = 25.0
+        return W, H, fps, n, (n / fps if n else 0.0)
+    except Exception:
+        return 0, 0, 25.0, 0, 0.0
 
 
 def _torch_report():
@@ -161,35 +201,16 @@ def run(args):
         except Exception:
             pass
 
-    cmd = [sys.executable, inf,
-           "--checkpoint_path", os.path.abspath(args.checkpoint),
-           "--face", os.path.abspath(args.face),
-           "--audio", os.path.abspath(args.audio),
-           "--outfile", out,
-           "--wav2lip_batch_size", str(args.wav2lip_batch_size)]
-    if args.resize_factor and args.resize_factor > 1:
-        cmd += ["--resize_factor", str(args.resize_factor)]
-    if args.pads:
-        cmd += ["--pads"] + [str(x) for x in args.pads]
-    if args.nosmooth:
-        cmd += ["--nosmooth"]
-
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     # ffmpeg: Wav2Lip gọi `ffmpeg` từ PATH — nối thư mục ffmpeg do app truyền vào
     if args.ffmpeg and os.path.isfile(args.ffmpeg):
         env["PATH"] = os.path.dirname(os.path.abspath(args.ffmpeg)) + os.pathsep + env.get("PATH", "")
-    # device
     if args.device == "cpu":
         env["CUDA_VISIBLE_DEVICES"] = ""
+    ffmpeg = args.ffmpeg if (args.ffmpeg and os.path.isfile(args.ffmpeg)) else "ffmpeg"
 
-    _emit("PROGRESS_MSG", "Bắt đầu Wav2Lip (dò mặt + khớp miệng)…")
-    # QUAN TRỌNG — KHÔNG dùng stdout=PIPE: inference.py gọi ffmpeg mux cuối qua
-    # subprocess.call(shell=True); ffmpeg con thừa kế cùng pipe stdout/stderr và
-    # BỊ DEADLOCK (0% CPU, treo vô hạn — đã bắt được khi test, standalone thì
-    # chạy ngay). Cho con ghi thẳng ra FILE LOG rồi tail file → hết pipe, hết
-    # deadlock. stdin=DEVNULL để ffmpeg không chờ lệnh tương tác.
     tail = []                      # giữ vài dòng cuối để báo lỗi có ngữ cảnh
     state = {"total": 0, "last_emit": 0.0}
 
@@ -212,70 +233,284 @@ def run(args):
         if mm:
             done, tot = int(mm.group(1)), int(mm.group(2))
             now = time.time()
-            if now - state["last_emit"] > 0.4 and tot > 0:
-                _emit("PROGRESS", f"{min(done, tot)}:{tot}")
+            if tot > 0 and now - state["last_emit"] > 0.4:
+                gt = state.get("global_total") or 0
+                if gt > 0:
+                    # chế độ chia đoạn: quy đổi tiến độ trong-đoạn về tổng thể
+                    frac = min(done, tot) / tot
+                    g = state.get("offset", 0) + int(frac * state.get("chunk_frames", tot))
+                    g = max(state.get("max_prog", 0), min(g, gt))
+                    state["max_prog"] = g
+                    _emit("PROGRESS", f"{g}:{gt}")
+                else:
+                    _emit("PROGRESS", f"{min(done, tot)}:{tot}")
                 state["last_emit"] = now
             return
         low = line.lower()
         if "face not detected" in low or "traceback" in low or "error" in low:
             _emit("WARN", line)
 
-    logf = tempfile.NamedTemporaryFile(
-        prefix="wav2lip_log_", suffix=".txt", delete=False, mode="w",
-        encoding="utf-8", errors="replace")
-    log_path = logf.name
-    rc = 2
-    try:
+    def _wav2lip_once(face_video, outfile, audio_path=None):
+        """Chạy inference.py 1 lần trên face_video → outfile. → mã thoát (rc).
+        KHÔNG dùng stdout=PIPE: inference.py gọi ffmpeg mux cuối qua
+        subprocess.call(shell=True), ffmpeg con thừa kế pipe → DEADLOCK 0% CPU
+        (đã bắt được khi test). Cho con ghi ra FILE LOG rồi tail; stdin=DEVNULL."""
+        cmd = [sys.executable, inf,
+               "--checkpoint_path", os.path.abspath(args.checkpoint),
+               "--face", os.path.abspath(face_video),
+               "--audio", os.path.abspath(audio_path or args.audio),
+               "--outfile", os.path.abspath(outfile),
+               "--wav2lip_batch_size", str(args.wav2lip_batch_size),
+               "--face_det_batch_size", str(args.face_det_batch_size)]
+        if args.resize_factor and args.resize_factor > 1:
+            cmd += ["--resize_factor", str(args.resize_factor)]
+        if args.pads:
+            cmd += ["--pads"] + [str(x) for x in args.pads]
+        if args.nosmooth:
+            cmd += ["--nosmooth"]
+        logf = tempfile.NamedTemporaryFile(
+            prefix="wav2lip_log_", suffix=".txt", delete=False, mode="w",
+            encoding="utf-8", errors="replace")
+        log_path = logf.name
+        rc = 2
         try:
-            proc = subprocess.Popen(
-                cmd, cwd=repo,
-                stdin=subprocess.DEVNULL,
-                stdout=logf, stderr=subprocess.STDOUT,
-                env=env, creationflags=CREATE_NO_WINDOW)
-        except Exception as e:
-            _emit("ERROR", f"Không khởi động được inference.py: {e}")
-            sys.exit(2)
-        # Tail file log: tqdm dùng '\r' nên tách theo cả \r lẫn \n
-        rbuf = ""
-        with open(log_path, "r", encoding="utf-8", errors="replace") as rf:
-            while True:
-                chunk = rf.read()
-                if chunk:
-                    rbuf += chunk
-                    parts = re.split(r"[\r\n]+", rbuf)
-                    rbuf = parts.pop()          # phần cuối có thể chưa trọn dòng
-                    for ln in parts:
-                        _handle(ln)
-                elif proc.poll() is not None:
-                    if rbuf.strip():
-                        _handle(rbuf)
+            try:
+                proc = subprocess.Popen(
+                    cmd, cwd=repo, stdin=subprocess.DEVNULL,
+                    stdout=logf, stderr=subprocess.STDOUT,
+                    env=env, creationflags=CREATE_NO_WINDOW)
+            except Exception as e:
+                _emit("ERROR", f"Không khởi động được inference.py: {e}")
+                return 2
+            rbuf = ""      # tqdm dùng '\r' nên tách theo cả \r lẫn \n
+            with open(log_path, "r", encoding="utf-8", errors="replace") as rf:
+                while True:
+                    chunk = rf.read()
+                    if chunk:
+                        rbuf += chunk
+                        parts = re.split(r"[\r\n]+", rbuf)
+                        rbuf = parts.pop()
+                        for ln in parts:
+                            _handle(ln)
+                    elif proc.poll() is not None:
+                        if rbuf.strip():
+                            _handle(rbuf)
+                        break
+                    else:
+                        time.sleep(0.3)
+            rc = proc.returncode
+        finally:
+            try:
+                logf.close()
+            except Exception:
+                pass
+            try:
+                os.remove(log_path)
+            except Exception:
+                pass
+        return rc
+
+    def _fail(rc):
+        ctx = " | ".join(tail[-6:])
+        if any("face not detected" in t.lower() for t in tail):
+            _emit("ERROR",
+                  "Wav2Lip không tìm thấy khuôn mặt trong MỌI khung hình. Dùng "
+                  "video cận cảnh 1 khuôn mặt rõ, tăng --pads, hoặc chọn đúng "
+                  "vùng mặt (--region). Chi tiết: " + ctx)
+        else:
+            _emit("ERROR", f"Wav2Lip thất bại (exit {rc}). {ctx}")
+        sys.exit(2)
+
+    def _done(path):
+        gt = state.get("global_total") or state.get("total") or 1
+        _emit("PROGRESS", f"{gt}:{gt}")
+        _emit("DONE", path)
+
+    def _ff(cmd_tail, timeout=36000):
+        """Chạy 1 lệnh ffmpeg (im lặng) → CompletedProcess."""
+        return subprocess.run(
+            [ffmpeg, "-y", "-v", "error"] + cmd_tail,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+            creationflags=CREATE_NO_WINDOW)
+
+    def _run_full(out):
+        """Chế độ cả-khung: HẠ độ phân giải + CHIA ĐOẠN trước khi đưa vào
+        Wav2Lip — vì inference.py nạp TOÀN BỘ khung hình vào RAM cùng lúc
+        (video 1080p dài → tràn RAM → Windows ghi pagefile → nghẽn đĩa)."""
+        import math
+        W, H, fps, nframes, dur = _probe_video(args.face)
+        mh = args.max_height or 0
+        chunk_s = args.chunk_seconds or 0
+        do_scale = mh > 0 and H > mh
+        scale_tail = (["-vf", f"scale=-2:{mh}:flags=bicubic"] if do_scale else [])
+        state["global_total"] = 0
+
+        # Video ngắn hoặc không đọc được thời lượng → chạy 1 lần (vẫn hạ nét nếu cần)
+        if chunk_s <= 0 or dur <= 0 or dur <= chunk_s * 1.5:
+            face_in, tmpd = args.face, None
+            if do_scale:
+                tmpd = tempfile.mkdtemp(prefix="wav2lip_scale_")
+                face_in = os.path.join(tmpd, "scaled.mp4")
+                _emit("PROGRESS_MSG",
+                      f"Hạ độ phân giải {W}x{H} → cao {mh}px cho nhẹ RAM…")
+                r = _ff(["-i", os.path.abspath(args.face)] + scale_tail +
+                        ["-c:v", "libx264", "-crf", "18", "-preset", "ultrafast",
+                         "-pix_fmt", "yuv420p", "-c:a", "copy", face_in])
+                if r.returncode != 0 or not os.path.isfile(face_in):
+                    _emit("WARN", f"Hạ độ phân giải lỗi, dùng gốc: {(r.stderr or '')[-160:]}")
+                    face_in = args.face
+            try:
+                _emit("PROGRESS_MSG", "Bắt đầu Wav2Lip (dò mặt + khớp miệng)…")
+                rc = _wav2lip_once(face_in, out)
+                if rc == 0 and os.path.isfile(out) and os.path.getsize(out) > 1024:
+                    _done(out)
+                    return
+                _fail(rc)
+            finally:
+                if tmpd:
+                    shutil.rmtree(tmpd, ignore_errors=True)
+            return
+
+        # ── Chia đoạn: cắt (kèm hạ nét) → Wav2Lip từng đoạn → nối lại ──
+        nseg = int(math.ceil(dur / chunk_s))
+        state["global_total"] = nframes if nframes > 0 else int(dur * fps)
+        state["offset"] = 0
+        state["max_prog"] = 0
+        _emit("PROGRESS_MSG",
+              f"Chia {dur:.0f}s → {nseg} đoạn × {chunk_s}s"
+              + (f", hạ xuống {mh}px" if do_scale else "")
+              + " (chống tràn RAM)…")
+        tmpd = tempfile.mkdtemp(prefix="wav2lip_seg_")
+        seg_outs = []
+        try:
+            for i in range(nseg):
+                t0 = i * chunk_s
+                seg_dur = min(float(chunk_s), dur - t0)
+                if seg_dur <= 0.05:
                     break
-                else:
-                    time.sleep(0.3)
-        rc = proc.returncode
-    finally:
-        try:
-            logf.close()
-        except Exception:
-            pass
-        try:
-            os.remove(log_path)
-        except Exception:
-            pass
-    total = state["total"]
-    if rc == 0 and os.path.isfile(out) and os.path.getsize(out) > 1024:
-        _emit("PROGRESS", f"{total or 1}:{total or 1}")
-        _emit("DONE", out)
+                seg_vid = os.path.join(tmpd, f"in_{i:04d}.mp4")
+                seg_wav = os.path.join(tmpd, f"in_{i:04d}.wav")
+                seg_out = os.path.join(tmpd, f"out_{i:04d}.mp4")
+                _emit("PROGRESS_MSG", f"Đoạn {i + 1}/{nseg} — cắt + khớp khẩu hình…")
+                rv = _ff(["-ss", f"{t0:.3f}", "-i", os.path.abspath(args.face),
+                          "-t", f"{seg_dur:.3f}", "-an"] + scale_tail +
+                         ["-c:v", "libx264", "-crf", "18", "-preset", "ultrafast",
+                          "-pix_fmt", "yuv420p", seg_vid])
+                if rv.returncode != 0 or not os.path.isfile(seg_vid):
+                    _emit("ERROR", f"Cắt đoạn {i + 1} lỗi: {(rv.stderr or '')[-180:]}")
+                    sys.exit(2)
+                ra = _ff(["-ss", f"{t0:.3f}", "-i", os.path.abspath(args.audio),
+                          "-t", f"{seg_dur:.3f}", "-vn", "-ac", "1", "-ar",
+                          "16000", seg_wav])
+                if ra.returncode != 0 or not os.path.isfile(seg_wav):
+                    _emit("ERROR", f"Cắt tiếng đoạn {i + 1} lỗi: {(ra.stderr or '')[-180:]}")
+                    sys.exit(2)
+                state["chunk_frames"] = max(1, int(seg_dur * fps))
+                rc = _wav2lip_once(seg_vid, seg_out, seg_wav)
+                if rc != 0 or not (os.path.isfile(seg_out) and os.path.getsize(seg_out) > 1024):
+                    # FAIL-OPEN theo đoạn: đoạn này khớp lỗi (vd không khung nào có
+                    # mặt) → GIỮ NGUYÊN đoạn gốc, không làm chết cả video. Các đoạn
+                    # còn lại vẫn được khớp khẩu hình.
+                    _emit("WARN", f"Đoạn {i + 1}/{nseg} không khớp được "
+                                  "(không thấy mặt?) — giữ nguyên đoạn gốc.")
+                    try:
+                        shutil.copyfile(seg_vid, seg_out)
+                    except Exception:
+                        seg_out = seg_vid
+                seg_outs.append(seg_out)
+                state["offset"] = min(state["global_total"],
+                                      state["offset"] + state["chunk_frames"])
+                state["max_prog"] = state["offset"]
+                for f in (seg_vid, seg_wav):   # xoá input đoạn ngay → đỡ tốn đĩa
+                    if f == seg_out:           # trừ khi đang dùng làm output đoạn
+                        continue
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+            if not seg_outs:
+                _emit("ERROR", "Không tạo được đoạn nào để khớp khẩu hình.")
+                sys.exit(2)
+            listf = os.path.join(tmpd, "concat.txt")
+            with open(listf, "w", encoding="utf-8") as lf:
+                for p in seg_outs:
+                    lf.write("file '" + p.replace("\\", "/").replace("'", "'\\''") + "'\n")
+            _emit("PROGRESS_MSG", f"Nối {len(seg_outs)} đoạn + ghép tiếng gốc…")
+            # video = nối các đoạn (copy); audio = LẤY LẠI tiếng gốc chất lượng đầy đủ
+            base = ["-f", "concat", "-safe", "0", "-i", listf,
+                    "-i", os.path.abspath(args.audio),
+                    "-map", "0:v:0", "-map", "1:a:0?",
+                    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+            r2 = _ff(base + ["-c:v", "copy", out])
+            if r2.returncode != 0 or not (os.path.isfile(out) and os.path.getsize(out) > 1024):
+                r3 = _ff(base + ["-c:v", "libx264", "-crf", "18", "-preset",
+                                 "veryfast", "-pix_fmt", "yuv420p", out])
+                if r3.returncode != 0 or not (os.path.isfile(out) and os.path.getsize(out) > 1024):
+                    _emit("ERROR", f"Nối đoạn lỗi: {(r3.stderr or r2.stderr or '')[-200:]}")
+                    sys.exit(2)
+            _done(out)
+        finally:
+            shutil.rmtree(tmpd, ignore_errors=True)
+
+    region = (args.region or "full").lower()
+    if region == "full":
+        _run_full(out)
         return
-    # Thất bại — cố đưa ra nguyên nhân dễ hiểu
-    ctx = " | ".join(tail[-6:])
-    if any("face not detected" in t.lower() for t in tail):
-        _emit("ERROR",
-              "Wav2Lip không tìm thấy khuôn mặt trong MỌI khung hình. Dùng video "
-              "cận cảnh 1 khuôn mặt rõ, hoặc tăng --pads. Chi tiết: " + ctx)
-    else:
-        _emit("ERROR", f"Wav2Lip thất bại (exit {rc}). {ctx}")
-    sys.exit(2)
+
+    # ── Chế độ ĐA MẶT: crop vùng chọn (còn 1 mặt) → Wav2Lip → dán ngược ──
+    try:
+        import cv2
+        cap = cv2.VideoCapture(os.path.abspath(args.face))
+        W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+    except Exception as e:
+        _emit("ERROR", f"Không đọc được kích thước video: {e}")
+        sys.exit(2)
+    box = _region_box(region, W, H)
+    if not box or W <= 0 or H <= 0:
+        _emit("ERROR", f"Vùng '{region}' không hợp lệ (khung {W}x{H}).")
+        sys.exit(2)
+    x, y, w, h = box
+    _emit("PROGRESS_MSG",
+          f"Đa mặt: cắt vùng '{region}' {w}x{h} @({x},{y}) rồi khớp khẩu hình…")
+    tmpd = tempfile.mkdtemp(prefix="wav2lip_crop_")
+    crop_vid = os.path.join(tmpd, "crop.mp4")
+    synced = os.path.join(tmpd, "synced.mp4")
+    try:
+        r1 = subprocess.run(
+            [ffmpeg, "-y", "-v", "error", "-i", os.path.abspath(args.face),
+             "-filter:v", f"crop={w}:{h}:{x}:{y}", "-an",
+             "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", crop_vid],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=36000,
+            creationflags=CREATE_NO_WINDOW)
+        if r1.returncode != 0 or not os.path.isfile(crop_vid):
+            _emit("ERROR", f"Cắt vùng lỗi: {(r1.stderr or '')[-200:]}")
+            sys.exit(2)
+        rc = _wav2lip_once(crop_vid, synced)
+        if rc != 0 or not (os.path.isfile(synced) and os.path.getsize(synced) > 1024):
+            _fail(rc)
+        _emit("PROGRESS_MSG", "Dán vùng đã khớp ngược vào video gốc…")
+        r3 = subprocess.run(
+            [ffmpeg, "-y", "-v", "error",
+             "-i", os.path.abspath(args.face), "-i", synced,
+             "-filter_complex", f"[0:v][1:v]overlay={x}:{y}[v]",
+             "-map", "[v]", "-map", "1:a:0?",
+             "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+             "-c:a", "aac", "-b:a", "192k",
+             "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=36000,
+            creationflags=CREATE_NO_WINDOW)
+        if r3.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 1024:
+            _done(out)
+            return
+        _emit("ERROR", f"Dán ngược lỗi: {(r3.stderr or '')[-200:]}")
+        sys.exit(2)
+    finally:
+        shutil.rmtree(tmpd, ignore_errors=True)
 
 
 def main():
@@ -288,10 +523,24 @@ def main():
     ap.add_argument("--pads", type=int, nargs=4, default=[0, 10, 0, 0],
                     help="top bottom left right (mặc định 0 10 0 0 — chừa cằm)")
     ap.add_argument("--resize-factor", type=int, default=1)
-    ap.add_argument("--wav2lip-batch-size", type=int, default=128)
+    ap.add_argument("--max-height", type=int, default=720,
+                    help="hạ video xuống tối đa chiều cao này TRƯỚC khi khớp "
+                         "(chống tràn RAM; 0 = giữ nguyên độ phân giải)")
+    ap.add_argument("--chunk-seconds", type=int, default=30,
+                    help="chia video thành đoạn dài ngần này giây, khớp từng "
+                         "đoạn rồi nối (chặn RAM cho video dài; 0 = không chia)")
+    ap.add_argument("--wav2lip-batch-size", type=int, default=16,
+                    help="batch model Wav2Lip trên GPU (giảm nếu tràn VRAM; "
+                         "128 gốc quá nặng cho GPU 8GB → tràn sang shared RAM)")
+    ap.add_argument("--face-det-batch-size", type=int, default=4,
+                    help="batch dò mặt S3FD trên GPU (thủ phạm chính ngốn VRAM; "
+                         "giảm nếu tràn)")
     ap.add_argument("--nosmooth", action="store_true")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     ap.add_argument("--ffmpeg", default="")
+    ap.add_argument("--region", default="full",
+                    choices=["full", "left", "right", "center", "top", "bottom"],
+                    help="đa mặt: chỉ khớp mặt ở vùng này (crop→sync→dán ngược)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 

@@ -48,6 +48,9 @@
 - [ ] Tick 👄 nhưng THIẾU env Wav2Lip → preflight báo lỗi rõ (không chạy dở rồi mới lỗi)
 - [ ] 👄 chạy nhưng Wav2Lip lỗi (vd video không có mặt) → log ⚠, vẫn giữ `<video>_dubbed.mp4` (fail-open)
 - [ ] Trang Video → card **👄 Khớp khẩu hình (Lip-sync)** đứng riêng: chọn video + tiếng → ra `_lipsync.mp4`; thiếu env → log hướng dẫn
+- [ ] **✨ Làm nét mặt (GFPGAN)**: tick checkbox trên card Lip-sync (hoặc trong wizard) → sau khớp khẩu hình chạy thêm GFPGAN → ra `_lipsync_hd.mp4`, mặt nét hơn hẳn vùng miệng
+- [ ] Tick ✨ nhưng thiếu gfpgan/model → wizard preflight báo lỗi rõ; card standalone log ⚠ và giữ bản chưa nét (fail-open)
+- [ ] **👥 Đa mặt**: video 2 người cạnh nhau → chọn "Vùng mặt = Nửa trái/phải" → chỉ mặt bên đó được khớp miệng, nửa còn lại nguyên vẹn (crop→sync→dán ngược); "Cả khung" = như cũ
 - [ ] ETA hiện trên thanh tiến trình dạng `45% · còn ~2p30s`
 - [ ] **📺 YouTube → Lồng tiếng**: dán 1 link vào ô YouTube → Bắt đầu → tải về (thanh % chạy) → chạy 5 bước → tự mở video `_dubbed.mp4` bằng trình phát mặc định
 - [ ] Dán **nhiều link** (mỗi dòng 1 link) → tải + dub tuần tự từng video, mỗi cái xong tự mở

@@ -26,13 +26,23 @@
                          lần đầu). MÁY KHÔNG NET = phải copy 2 thư mục này.
    8. lipsync_env\ + Wav2Lip\   (TÙY CHỌN — 👄 Khớp khẩu hình / Lip-sync)
                        → git clone github.com/Rudrabha/Wav2Lip (thư mục
-                         "Wav2Lip" có inference.py) đặt CẠNH exe + dựng
-                         lipsync_env (Python 3.10, pip install -r
-                         Wav2Lip/requirements.txt). Tải wav2lip_gan.pth →
-                         Wav2Lip\checkpoints\ và s3fd.pth →
-                         Wav2Lip\face_detection\detection\sfd\s3fd.pth
-                         (xem README Wav2Lip). CẦN GPU NVIDIA (CPU rất chậm).
-                         Thiếu = CHỈ tắt nút Lip-sync, app vẫn chạy.
+                         "Wav2Lip") đặt CẠNH exe. Dựng lipsync_env (Python 3.10):
+                           pip install torch==2.4.1 torchvision==0.19.1 \
+                              --index-url https://download.pytorch.org/whl/cu121
+                           pip install numpy==1.23.5 librosa==0.9.2 numba==0.56.4 \
+                              opencv-python==4.9.0.80 scipy tqdm
+                         (KHÔNG dùng requirements.txt gốc — pin quá cổ).
+                         Tải wav2lip_gan.pth → Wav2Lip\checkpoints\ và s3fd.pth →
+                         Wav2Lip\face_detection\detection\sfd\s3fd.pth.
+                         CẦN GPU NVIDIA (CPU rất chậm). Thiếu = CHỈ tắt nút
+                         Lip-sync, app vẫn chạy.
+                       → ✨ Làm nét mặt (GFPGAN, tùy chọn thêm): trong lipsync_env
+                         chạy  pip install gfpgan  rồi PATCH 1 dòng trong
+                         ...\site-packages\basicsr\data\degradations.py:
+                           from torchvision.transforms.functional_tensor import rgb_to_grayscale
+                         → đổi 'functional_tensor' thành 'functional'.
+                         Tải GFPGANv1.4.pth → Wav2Lip\checkpoints\. (2 model phụ
+                         của facexlib tự tải lần đầu.) Thiếu = chỉ tắt "Làm nét mặt".
 
  ❗ LƯU Ý: KHÔNG có settings.json trong folder → máy khác dựa hoàn toàn vào
    "auto-dò cạnh exe". Vì vậy CÁCH AN TOÀN NHẤT là đặt mục 1-6 NGAY CẠNH

@@ -950,6 +950,7 @@ OMNIVOICE_MODEL_DIR    = ""   # thư mục/HF repo model OmniVoice; rỗng = t�
 LIPSYNC_ENV_OVERRIDE = ""   # path tới lipsync_env\Scripts\python.exe; rỗng = tự tìm
 LIPSYNC_REPO_DIR     = ""   # thư mục repo Wav2Lip (chứa inference.py); rỗng = tự tìm cạnh exe
 LIPSYNC_CHECKPOINT   = ""   # path tới wav2lip_gan.pth (hoặc wav2lip.pth); rỗng = tự tìm trong repo
+LIPSYNC_GFPGAN_MODEL = ""   # path tới GFPGANv1.4.pth (làm nét mặt); rỗng = tự tìm cạnh checkpoint
 
 # File lưu cài đặt + mọi file trạng thái (voice_profiles/session/glossary/
 # ui_prefs/tts_prices/edge_voices/logs) đều nằm CÙNG thư mục với settings.json.
@@ -1008,7 +1009,7 @@ def _load_settings():
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global F5TTS_ENV_OVERRIDE, F5TTS_MODEL_DIR
     global OMNIVOICE_ENV_OVERRIDE, OMNIVOICE_MODEL_DIR
-    global LIPSYNC_ENV_OVERRIDE, LIPSYNC_REPO_DIR, LIPSYNC_CHECKPOINT
+    global LIPSYNC_ENV_OVERRIDE, LIPSYNC_REPO_DIR, LIPSYNC_CHECKPOINT, LIPSYNC_GFPGAN_MODEL
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global GROQ_API_KEY, DEEPSEEK_API_KEY, NOTIFY_WEBHOOK_URL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
@@ -1040,6 +1041,8 @@ def _load_settings():
                 LIPSYNC_REPO_DIR = d["lipsync_repo_dir"]
             if d.get("lipsync_checkpoint"):
                 LIPSYNC_CHECKPOINT = d["lipsync_checkpoint"]
+            if d.get("lipsync_gfpgan_model"):
+                LIPSYNC_GFPGAN_MODEL = d["lipsync_gfpgan_model"]
             if d.get("ffmpeg_dir"):
                 FFMPEG_DIR = d["ffmpeg_dir"]
                 # Áp dụng lại FFMPEG/FFPROBE ngay sau khi có FFMPEG_DIR
@@ -1082,13 +1085,13 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
                    f5tts_env_override=None, f5tts_model_dir=None,
                    omnivoice_env_override=None, omnivoice_model_dir=None,
                    lipsync_env_override=None, lipsync_repo_dir=None,
-                   lipsync_checkpoint=None):
+                   lipsync_checkpoint=None, lipsync_gfpgan_model=None):
     """Lưu settings.json và áp dụng ngay vào các global path.
     Các tham số translate_*/local_*/vieneu_*/f5tts_*/omnivoice_*/lipsync_* = None → giữ nguyên giá trị hiện tại (không ghi đè)."""
     global VIDEOCR_CLI_DIR, SUBTITLE_EDIT_PATH, VOXCPM_ENV_OVERRIDE, VIENEU_ENV_OVERRIDE, VIENEU_MODEL_DIR, FFMPEG_DIR, FFMPEG, FFPROBE
     global F5TTS_ENV_OVERRIDE, F5TTS_MODEL_DIR
     global OMNIVOICE_ENV_OVERRIDE, OMNIVOICE_MODEL_DIR
-    global LIPSYNC_ENV_OVERRIDE, LIPSYNC_REPO_DIR, LIPSYNC_CHECKPOINT
+    global LIPSYNC_ENV_OVERRIDE, LIPSYNC_REPO_DIR, LIPSYNC_CHECKPOINT, LIPSYNC_GFPGAN_MODEL
     global ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TRANSLATE_PROVIDER, TRANSLATE_MODEL
     global GROQ_API_KEY, DEEPSEEK_API_KEY, NOTIFY_WEBHOOK_URL
     global LOCAL_TRANSLATE_MODEL_DIR, LOCAL_TRANSLATE_SRC_LANG, TRANSLATE_ENV_OVERRIDE
@@ -1104,6 +1107,7 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
     if lipsync_env_override is not None: LIPSYNC_ENV_OVERRIDE = lipsync_env_override
     if lipsync_repo_dir     is not None: LIPSYNC_REPO_DIR     = lipsync_repo_dir
     if lipsync_checkpoint   is not None: LIPSYNC_CHECKPOINT   = lipsync_checkpoint
+    if lipsync_gfpgan_model is not None: LIPSYNC_GFPGAN_MODEL = lipsync_gfpgan_model
     FFMPEG_DIR          = ffmpeg_dir
     if anthropic_api_key  is not None: ANTHROPIC_API_KEY  = anthropic_api_key
     if gemini_api_key     is not None: GEMINI_API_KEY     = gemini_api_key
@@ -1146,6 +1150,7 @@ def _save_settings(videocr_cli_dir, voxcpm_env_override, subtitle_edit_path,
             "lipsync_env_override":      LIPSYNC_ENV_OVERRIDE,
             "lipsync_repo_dir":          LIPSYNC_REPO_DIR,
             "lipsync_checkpoint":        LIPSYNC_CHECKPOINT,
+            "lipsync_gfpgan_model":      LIPSYNC_GFPGAN_MODEL,
         }
         with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
@@ -6625,10 +6630,14 @@ btn_a2v_stop.pack(side="left", expand=True, fill="x", padx=4, pady=4)
 # ── 👄 Khớp khẩu hình (Lip-sync) — Wav2Lip ───────────────────────────────────
 _LIPSYNC_RUNNING = [False]
 _LIPSYNC_PROC = [None]
-_LIPSYNC_QUALITY = {          # nhãn → (resize_factor, nosmooth)
-    "Nhanh (nhẹ máy)":  (2, False),
-    "Cân bằng":         (1, False),
-    "Nét (chậm)":       (1, True),
+_LIPSYNC_QUALITY = {          # nhãn → (max_height, chunk_seconds, nosmooth)
+    # max_height = hạ video xuống tối đa chiều cao này TRƯỚC khi khớp;
+    # chunk_seconds = chia video thành đoạn ngần này giây rồi khớp từng đoạn
+    # → chặn RAM (Wav2Lip nạp toàn bộ khung hình 1 đoạn vào RAM cùng lúc).
+    # RAM ~ chiều-cao² × chunk_seconds → NHẸ MÁY = đoạn NGẮN + hạ nét nhiều.
+    "Nhẹ máy (ít RAM)":     (480, 10, False),
+    "Cân bằng":             (640, 15, False),
+    "Nét hơn (nặng RAM)":   (720, 10, True),
 }
 _sec_lipsync = _make_section(
     "👄 Khớp khẩu hình (Lip-sync)",
@@ -6638,6 +6647,12 @@ _sec_lipsync = _make_section(
 lipsync_video_var = ctk.StringVar(value="")
 lipsync_audio_var = ctk.StringVar(value="")
 lipsync_quality_var = ctk.StringVar(value="Cân bằng")
+# Đa mặt: chỉ khớp mặt ở 1 vùng (crop→sync→dán ngược) — cho cảnh 2 người cạnh
+# nhau / người ngồi cố định 1 phía. "Cả khung" = Wav2Lip dò mặt tự động.
+_LIPSYNC_REGIONS = {"Cả khung (tự động)": "full", "Nửa trái": "left",
+                    "Nửa phải": "right", "Giữa": "center",
+                    "Nửa trên": "top", "Nửa dưới": "bottom"}
+lipsync_region_var = ctk.StringVar(value="Cả khung (tự động)")
 _g_ls1 = _sec_row(_sec_lipsync)
 ctk.CTkLabel(_g_ls1, text="Video:", font=("Arial", 12), width=64,
              anchor="w").pack(side="left", padx=(4, 2))
@@ -6654,11 +6669,21 @@ ctk.CTkEntry(_g_ls2, textvariable=lipsync_audio_var,
     side="left", expand=True, fill="x", padx=(0, 4))
 ctk.CTkButton(_g_ls2, text="Browse", width=70,
               command=lambda: _lipsync_browse(lipsync_audio_var, "audio")).pack(side="left", padx=(0, 4))
+_g_ls2b = _sec_row(_sec_lipsync)
+ctk.CTkLabel(_g_ls2b, text="Vùng mặt:", font=("Arial", 12), width=64,
+             anchor="w").pack(side="left", padx=(4, 2))
+ctk.CTkOptionMenu(_g_ls2b, variable=lipsync_region_var, width=190,
+                  values=list(_LIPSYNC_REGIONS.keys())).pack(side="left", padx=(0, 8))
+ctk.CTkLabel(_g_ls2b, text="(đa mặt: chọn nửa khung chứa người cần khớp)",
+             font=("Arial", 10), text_color="#999").pack(side="left")
 _g_ls3 = _sec_row(_sec_lipsync)
 ctk.CTkLabel(_g_ls3, text="Chất lượng:", font=("Arial", 12)).pack(side="left",
                                                                  padx=(4, 2))
 ctk.CTkOptionMenu(_g_ls3, variable=lipsync_quality_var, width=160,
                   values=list(_LIPSYNC_QUALITY.keys())).pack(side="left", padx=(0, 8))
+lipsync_enhance_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(_g_ls3, variable=lipsync_enhance_var, text="✨ Làm nét mặt",
+                font=("Arial", 12), width=130).pack(side="left", padx=(0, 8))
 btn_lipsync_run = ctk.CTkButton(_g_ls3, text="👄 Khớp khẩu hình",
                                 command=lambda: start_lipsync(),
                                 height=36, font=("Arial", 13),
@@ -11085,6 +11110,14 @@ def show_settings_dialog():
                 filetypes=[("Python", "python.exe"), ("All", "*.*")]))
     ).pack(side="left")
 
+    v_ls_gf, _, fr3k = _row(body, "GFPGAN model (làm nét mặt):")
+    v_ls_gf.set(LIPSYNC_GFPGAN_MODEL)
+    ctk.CTkButton(fr3k, text="Browse", width=72,
+        command=lambda: (lambda p: v_ls_gf.set(p) if p else None)(
+            filedialog.askopenfilename(title="Chọn GFPGANv1.4.pth",
+                filetypes=[("Checkpoint", "*.pth"), ("All", "*.*")]))
+    ).pack(side="left")
+
     # 4. Subtitle Edit exe
     v_se, _, fr4 = _row(body, "SubtitleEdit.exe:")
     v_se.set(SUBTITLE_EDIT_PATH)
@@ -11256,6 +11289,7 @@ def show_settings_dialog():
             lipsync_env_override      = v_ls_env.get().strip(),
             lipsync_repo_dir          = v_ls_repo.get().strip(),
             lipsync_checkpoint        = v_ls_ck.get().strip(),
+            lipsync_gfpgan_model      = v_ls_gf.get().strip(),
         )
         if ckpt:
             voxcpm_ckpt_var.set(ckpt)
@@ -15732,8 +15766,13 @@ def _run_mux_thread():
     _VIDEOTOOL_OUT = out_path
     update_progress(1, 100)
 
+    # Khi burn phụ đề cứng (re-encode) + có GPU: giải mã video nguồn bằng phần
+    # cứng (NVDEC) để CPU không phải gánh decode — libass vẫn chạy CPU nhưng
+    # bỏ được phần decode. -hwaccel auto tự fallback software nếu init lỗi.
+    _hw = ["-hwaccel", "auto"] if (burn_srt and DETECTED_GPU) else []
     cmd = [
         ffmpeg_path, "-y",
+    ] + _hw + [
         "-i", vid,
         "-i", aud,
     ] + (["-i", music_wav] if music_wav else []) + [
@@ -16182,6 +16221,103 @@ def _find_lipsync_helper():
     return None
 
 
+def _find_faceenhance_helper():
+    """faceenhance_helper.py: sys._MEIPASS → cạnh exe → cạnh script."""
+    cands = []
+    mp = getattr(sys, "_MEIPASS", "")
+    if mp:
+        cands.append(os.path.join(mp, "faceenhance_helper.py"))
+    for base in _install_dirs():
+        cands.append(os.path.join(base, "faceenhance_helper.py"))
+    cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "faceenhance_helper.py"))
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _lipsync_gfpgan_model():
+    """GFPGANv1.4.pth (làm nét mặt): Settings → cạnh checkpoint Wav2Lip / repo / exe."""
+    if LIPSYNC_GFPGAN_MODEL and os.path.isfile(LIPSYNC_GFPGAN_MODEL):
+        return LIPSYNC_GFPGAN_MODEL
+    names = ("GFPGANv1.4.pth", "GFPGANv1.3.pth", "GFPGANCleanv1-NoCE-C2.pth")
+    repo = _lipsync_repo_dir()
+    roots = []
+    if repo:
+        roots += [os.path.join(repo, "checkpoints"), repo]
+    roots += _install_dirs()
+    for r in roots:
+        for n in names:
+            cand = os.path.join(r, n)
+            if os.path.isfile(cand):
+                return cand
+    return ""
+
+
+def _run_faceenhance(in_video, out_video, label=""):
+    """Làm nét khuôn mặt 1 video bằng GFPGAN (faceenhance_helper.py, lipsync_env),
+    ĐỒNG BỘ (gọi từ worker thread). FAIL-OPEN: thiếu env/model hoặc lỗi → log ⚠ +
+    return False (caller giữ video chưa nét). → True nếu ra out_video."""
+    py = _find_lipsync_python()
+    helper = _find_faceenhance_helper()
+    model = _lipsync_gfpgan_model()
+    ffmpeg_ok, ffmpeg_path, _g = _check_ffmpeg_exists()
+    if not (py and helper and model and ffmpeg_ok):
+        _miss = []
+        if not py:     _miss.append("lipsync_env")
+        if not helper: _miss.append("faceenhance_helper.py")
+        if not model:  _miss.append("GFPGANv1.4.pth")
+        if not ffmpeg_ok: _miss.append("ffmpeg")
+        log(f"{label}⚠ Bỏ qua làm nét mặt — thiếu {', '.join(_miss)} (video vẫn OK).")
+        return False
+    dev = "cuda" if globals().get("DETECTED_GPU") else "cpu"
+    cmd = [py, helper, "--input", in_video, "--output", out_video,
+           "--model", model, "--ffmpeg", ffmpeg_path, "--device", dev]
+    if dev == "cpu":
+        log(f"{label}⚠ Không có GPU — GFPGAN chạy CPU rất chậm.")
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+        RUNNING_PROCESSES.append(proc)
+        _LIPSYNC_PROC[0] = proc
+        for line in proc.stdout:
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            if line.startswith("PROGRESS:"):
+                try:
+                    n, m = line[9:].split(":")
+                    update_progress(int(n), max(1, int(m)))
+                except Exception:
+                    pass
+            elif line.startswith("PROGRESS_MSG:"):
+                log(f"{label}{line[13:]}")
+            elif line.startswith("WARN:"):
+                log(f"{label}⚠ {line[5:]}")
+            elif line.startswith("ERROR:"):
+                log(f"{label}❌ {line[6:]}")
+            elif not line.startswith("DONE:"):
+                log(f"{label}{line}")
+        proc.wait()
+        try:
+            RUNNING_PROCESSES.remove(proc)
+        except ValueError:
+            pass
+    except Exception as e:
+        log(f"{label}⚠ Làm nét mặt lỗi: {e} (video vẫn OK).")
+        return False
+    finally:
+        _LIPSYNC_PROC[0] = None
+    ok = (proc.returncode == 0 and os.path.isfile(out_video)
+          and os.path.getsize(out_video) > 1024)
+    if not ok:
+        log(f"{label}⚠ Làm nét mặt không ra file — giữ video chưa nét.")
+    return ok
+
+
 def _lipsync_browse(var, kind):
     if kind == "video":
         p = filedialog.askopenfilename(
@@ -16250,7 +16386,10 @@ def start_lipsync():
         for l in guide.splitlines():
             log(l)
         return
-    rf, nosmooth = _LIPSYNC_QUALITY.get(lipsync_quality_var.get(), (1, False))
+    mh, chunk_s, nosmooth = _LIPSYNC_QUALITY.get(
+        lipsync_quality_var.get(), (640, 15, False))
+    use_enh = bool(globals().get("lipsync_enhance_var") and lipsync_enhance_var.get())
+    region = _LIPSYNC_REGIONS.get(lipsync_region_var.get(), "full")
     out = os.path.splitext(face)[0] + "_lipsync.mp4"
 
     def _run():
@@ -16270,11 +16409,15 @@ def start_lipsync():
                    "--face", face,
                    "--audio", audio,
                    "--out", out,
-                   "--resize-factor", str(rf),
+                   "--max-height", str(mh),
+                   "--chunk-seconds", str(chunk_s),
+                   "--region", region,
                    "--device", dev,
                    "--ffmpeg", ffmpeg_path]
             if nosmooth:
                 cmd.append("--nosmooth")
+            if region != "full":
+                log(f"  • Vùng mặt: {lipsync_region_var.get()} (đa mặt — crop→sync→dán)")
             if dev == "cpu":
                 log("  • ⚠ Không thấy GPU NVIDIA — Wav2Lip chạy CPU sẽ RẤT chậm "
                     "(vài phút/1 phút video). Nên chạy máy có GPU.")
@@ -16312,12 +16455,18 @@ def start_lipsync():
             except ValueError:
                 pass
             if proc.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 1024:
+                _final = out
+                if use_enh:
+                    log("[Lip-sync] ✨ Làm nét khuôn mặt (GFPGAN)…")
+                    _hd = os.path.splitext(face)[0] + "_lipsync_hd.mp4"
+                    if _run_faceenhance(out, _hd, "[Lip-sync] "):
+                        _final = _hd
                 update_progress(1, 1)
-                mb = os.path.getsize(out) / 2**20
-                log(f"[Lip-sync] ✅ Xong: {os.path.basename(out)} ({mb:.1f} MB)")
+                mb = os.path.getsize(_final) / 2**20
+                log(f"[Lip-sync] ✅ Xong: {os.path.basename(_final)} ({mb:.1f} MB)")
                 app.after(0, show_fireworks)
                 try:
-                    _reveal_output(out)
+                    _reveal_output(_final)
                 except Exception:
                     pass
             else:
@@ -22046,6 +22195,7 @@ autodub_translate_var = ctk.BooleanVar(value=True)
 autodub_keep_var      = ctk.BooleanVar(value=False)
 autodub_burnsub_var   = ctk.BooleanVar(value=False)
 autodub_lipsync_var   = ctk.BooleanVar(value=False)   # bước 6 tùy chọn: khớp khẩu hình (Wav2Lip)
+autodub_faceenh_var   = ctk.BooleanVar(value=False)   # kèm làm nét mặt (GFPGAN) sau lip-sync
 # YouTube → lồng tiếng: thư mục tải video về + tự mở xem khi xong
 autodub_yt_dir_var    = ctk.StringVar(
     value=os.path.join(os.path.expanduser("~"), "Videos", "SRT_TTS_YouTube"))
@@ -22194,9 +22344,10 @@ def _autodub_busy():
     return False
 
 
-def _autodub_env_preflight(do_translate, do_lipsync=False):
+def _autodub_env_preflight(do_translate, do_lipsync=False, do_faceenh=False):
     """Preflight môi trường dùng chung (1 lần cho cả hàng đợi): ffmpeg, STT,
-    key dịch, engine giọng (+ Wav2Lip nếu bật lip-sync). → True nếu đủ điều kiện."""
+    key dịch, engine giọng (+ Wav2Lip nếu lip-sync, + GFPGAN nếu làm nét mặt).
+    → True nếu đủ điều kiện."""
     ffmpeg_ok, _fp, ffmpeg_guide = _check_ffmpeg_exists()
     if not ffmpeg_ok:
         for l in ffmpeg_guide.splitlines():
@@ -22259,10 +22410,21 @@ def _autodub_env_preflight(do_translate, do_lipsync=False):
                 + ", ".join(_miss) + ". Cài theo MOVE_CHECKLIST mục 8, hoặc bỏ "
                 "tick 'Khớp khẩu hình' để chạy không lip-sync.")
             return False
+    # Làm nét mặt (GFPGAN) — hard-fail sớm nếu bật mà thiếu
+    if do_faceenh:
+        if not (_find_lipsync_python() and _find_faceenhance_helper()
+                and _lipsync_gfpgan_model()):
+            _fm = []
+            if not _find_lipsync_python():     _fm.append("lipsync_env")
+            if not _find_faceenhance_helper(): _fm.append("faceenhance_helper.py")
+            if not _lipsync_gfpgan_model():    _fm.append("GFPGANv1.4.pth")
+            log("[Lồng tiếng] ❌ Bật 'Làm nét mặt' nhưng thiếu: " + ", ".join(_fm)
+                + ". Cài GFPGAN (MOVE_CHECKLIST mục 8) hoặc bỏ tick 'Làm nét mặt'.")
+            return False
     return True
 
 
-def _autodub_lipsync_step(dubbed_path, dub_audio, out_dir):
+def _autodub_lipsync_step(dubbed_path, dub_audio, out_dir, enhance=False):
     """Bước 6 tùy chọn: chỉnh miệng nhân vật khớp giọng đọc (Wav2Lip), ĐỒNG BỘ.
     face = video đã ghép (giữ nguyên phụ đề cứng + mix audio ở khung hình),
     audio = giọng đọc (final speech) để đồng bộ miệng; sau đó ghép LẠI track
@@ -22280,9 +22442,17 @@ def _autodub_lipsync_step(dubbed_path, dub_audio, out_dir):
     tmp_out = os.path.join(out_dir, base + "_ls_tmp.mp4")
     final_out = os.path.join(out_dir, base + "_lipsync.mp4")
     dev = "cuda" if globals().get("DETECTED_GPU") else "cpu"
+    # Hạ nét + chia đoạn (mặc định "Cân bằng") để Wav2Lip không nạp toàn bộ
+    # khung hình 1080p vào RAM → tránh tràn RAM/nghẽn đĩa khi lồng tiếng video dài.
+    _lm, _lc, _lns = _LIPSYNC_QUALITY.get(
+        lipsync_quality_var.get() if globals().get("lipsync_quality_var") else "",
+        (640, 15, False))
     cmd = [py, helper, "--repo-dir", repo, "--checkpoint", ckpt,
            "--face", dubbed_path, "--audio", dub_audio, "--out", tmp_out,
+           "--max-height", str(_lm), "--chunk-seconds", str(_lc),
            "--device", dev, "--ffmpeg", ffmpeg_path]
+    if _lns:
+        cmd.append("--nosmooth")
     if dev == "cpu":
         log("[Lồng tiếng] ⚠ Không có GPU — Wav2Lip chạy CPU rất chậm.")
     try:
@@ -22339,25 +22509,35 @@ def _autodub_lipsync_step(dubbed_path, dub_audio, out_dir):
         remux.wait()
     except Exception:
         remux = None
+    result = None
     if remux and remux.returncode == 0 and os.path.isfile(final_out) \
             and os.path.getsize(final_out) > 1024:
         try:
             os.remove(tmp_out)
         except Exception:
             pass
-        return final_out
-    # remux hỏng — dùng tmp làm kết quả
-    try:
-        os.replace(tmp_out, final_out)
-        return final_out
-    except Exception:
-        return tmp_out if os.path.isfile(tmp_out) else None
+        result = final_out
+    else:
+        # remux hỏng — dùng tmp làm kết quả
+        try:
+            os.replace(tmp_out, final_out)
+            result = final_out
+        except Exception:
+            result = tmp_out if os.path.isfile(tmp_out) else None
+    # Làm nét mặt (GFPGAN) — fail-open: lỗi → giữ bản chưa nét
+    if result and enhance:
+        log("[Lồng tiếng] ✨ Làm nét khuôn mặt (GFPGAN)…")
+        _hd = os.path.splitext(result)[0] + "_hd.mp4"
+        if _run_faceenhance(result, _hd, "[Lồng tiếng] "):
+            result = _hd
+    return result
 
 
 def _autodub_chain_sync(video, stt_model, stt_lang, do_translate, keep_orig,
-                        burn_sub=False, lipsync=False):
+                        burn_sub=False, lipsync=False, faceenh=False):
     """Chạy 5 (±1) bước lồng tiếng cho MỘT video, ĐỒNG BỘ (gọi từ worker thread).
-    lipsync=True thêm bước 6 khớp khẩu hình (Wav2Lip, fail-open).
+    lipsync=True thêm bước 6 khớp khẩu hình (Wav2Lip, fail-open); faceenh=True
+    kèm làm nét mặt GFPGAN sau lip-sync.
     Caller tự quản _AUTODUB_RUNNING. → True nếu ra được <video>_dubbed.mp4."""
     global SRT_FILE, OUTPUT_DIR, current_index
     global MUX_VIDEO_FILE, MUX_AUDIO_FILE, MUX_OUTPUT_DIR, MUX_BURN_SRT
@@ -22475,7 +22655,7 @@ def _autodub_chain_sync(video, stt_model, stt_lang, do_translate, keep_orig,
         # ── 6) Khớp khẩu hình (tùy chọn, fail-open) ──
         if lipsync:
             log_color("▶ Bước 6/6: Khớp khẩu hình (Wav2Lip)...", "#7c5cff")
-            _ls = _autodub_lipsync_step(dubbed_path, final_path, out_dir)
+            _ls = _autodub_lipsync_step(dubbed_path, final_path, out_dir, faceenh)
             if _ls:
                 log(f"[Lồng tiếng] 👄 Khớp khẩu hình xong: {os.path.basename(_ls)}")
                 dubbed_path = _ls
@@ -22505,21 +22685,21 @@ def _autodub_chain_sync(video, stt_model, stt_lang, do_translate, keep_orig,
 
 
 def run_autodub_chain(video, stt_model, stt_lang, do_translate, keep_orig,
-                      burn_sub=False, lipsync=False):
+                      burn_sub=False, lipsync=False, faceenh=False):
     """Wizard 1 video: preflight fail-sớm rồi chạy chuỗi sync trong worker."""
     if _autodub_busy():
         return
     if not video or not os.path.isfile(video):
         log("[Lồng tiếng] ❌ Không thấy file video.")
         return
-    if not _autodub_env_preflight(do_translate, lipsync):
+    if not _autodub_env_preflight(do_translate, lipsync, faceenh):
         return
 
     def _run():
         _AUTODUB_RUNNING[0] = True
         try:
             _autodub_chain_sync(video, stt_model, stt_lang,
-                                do_translate, keep_orig, burn_sub, lipsync)
+                                do_translate, keep_orig, burn_sub, lipsync, faceenh)
         finally:
             _AUTODUB_RUNNING[0] = False
 
@@ -22580,7 +22760,7 @@ def run_autodub_preview(video, stt_model, stt_lang, do_translate, keep_orig,
 
 
 def run_autodub_queue(videos, stt_model, stt_lang, do_translate, keep_orig,
-                      burn_sub=False, lipsync=False):
+                      burn_sub=False, lipsync=False, faceenh=False):
     """Hàng đợi wizard: dub TUẦN TỰ nhiều video cùng cấu hình (chạy qua đêm).
     Một video lỗi → ghi nhận rồi chạy tiếp video sau; người dùng chủ động Dừng
     (Stop ở bất kỳ bước nào) → hủy luôn phần còn lại. Tổng kết ✅/❌ cuối hàng."""
@@ -22590,7 +22770,7 @@ def run_autodub_queue(videos, stt_model, stt_lang, do_translate, keep_orig,
     if not vids:
         log("[Lồng tiếng] ❌ Hàng đợi trống / file không tồn tại.")
         return
-    if not _autodub_env_preflight(do_translate, lipsync):
+    if not _autodub_env_preflight(do_translate, lipsync, faceenh):
         return
 
     def _run():
@@ -22602,7 +22782,7 @@ def run_autodub_queue(videos, stt_model, stt_lang, do_translate, keep_orig,
             for k, v in enumerate(vids, 1):
                 log_color(f"▶▶ Video {k}/{n}: {os.path.basename(v)}", "#36c5ff")
                 ok = _autodub_chain_sync(v, stt_model, stt_lang,
-                                         do_translate, keep_orig, burn_sub, lipsync)
+                                         do_translate, keep_orig, burn_sub, lipsync, faceenh)
                 results.append((v, ok))
                 if not ok and (stop_requested or VIDEO_STT_STOP
                                or TRANSLATE_STOP or VIDEOTOOL_STOP):
@@ -22808,7 +22988,8 @@ def _open_in_player(path):
 
 
 def run_autodub_youtube(urls, dest_dir, stt_model, stt_lang, do_translate,
-                        keep_orig, burn_sub=False, auto_open=True, lipsync=False):
+                        keep_orig, burn_sub=False, auto_open=True, lipsync=False,
+                        faceenh=False):
     """Dán 1+ link YouTube → tải → lồng tiếng (chuỗi wizard) → tự mở xem khi xong.
     Nhiều link = hàng đợi tuần tự (mỗi video tải xong rồi mới dub video đó)."""
     if _autodub_busy():
@@ -22824,7 +23005,7 @@ def run_autodub_youtube(urls, dest_dir, stt_model, stt_lang, do_translate,
     if not cmd0:
         log("[YouTube] ❌ Chưa cài yt-dlp. Mở CMD chạy:  pip install -U yt-dlp")
         return
-    if not _autodub_env_preflight(do_translate, lipsync):
+    if not _autodub_env_preflight(do_translate, lipsync, faceenh):
         return
 
     def _run():
@@ -22860,7 +23041,7 @@ def run_autodub_youtube(urls, dest_dir, stt_model, stt_lang, do_translate,
                     continue
                 log(f"[YouTube] ✅ Đã tải: {os.path.basename(video)}")
                 ok = _autodub_chain_sync(video, stt_model, stt_lang,
-                                         do_translate, keep_orig, burn_sub, lipsync)
+                                         do_translate, keep_orig, burn_sub, lipsync, faceenh)
                 results.append((url, ok))
                 if ok and auto_open:
                     dubbed = os.path.join(
@@ -23274,6 +23455,12 @@ def open_autodub_dialog():
                     variable=autodub_lipsync_var, font=("Arial", 12)).pack(side="left")
     ctk.CTkLabel(row4b, text="(cần lipsync_env + GPU — chậm; xem MOVE_CHECKLIST)",
                  font=("Arial", 10), text_color="#999").pack(side="left", padx=(6, 0))
+    row4c = ctk.CTkFrame(win, fg_color="transparent")
+    row4c.pack(fill="x", padx=14, pady=(0, 4))
+    ctk.CTkCheckBox(row4c, text="✨ Làm nét khuôn mặt (GFPGAN) sau khi khớp khẩu hình",
+                    variable=autodub_faceenh_var, font=("Arial", 12)).pack(side="left", padx=(24, 0))
+    ctk.CTkLabel(row4c, text="(chữa vùng miệng Wav2Lip bị mờ — cần cài thêm gfpgan)",
+                 font=("Arial", 10), text_color="#999").pack(side="left", padx=(6, 0))
 
     ctk.CTkLabel(win, text="Có thể Tạm dừng/Dừng từng bước bằng các nút điều khiển sẵn có\n"
                            "(STT ở trang Tách Nội Dung; Dịch ở trang Dịch; TTS/Mux bằng nút chung trên thanh tiêu đề).",
@@ -23307,15 +23494,16 @@ def open_autodub_dialog():
                  bool(autodub_keep_var.get()))
         _bs = bool(autodub_burnsub_var.get())
         _ls = bool(autodub_lipsync_var.get())
+        _fe = bool(autodub_faceenh_var.get())
         if yt_links:   # ưu tiên link YouTube nếu có
             run_autodub_youtube(yt_links, autodub_yt_dir_var.get(), *_args,
                                 burn_sub=_bs,
                                 auto_open=bool(autodub_yt_open_var.get()),
-                                lipsync=_ls)
+                                lipsync=_ls, faceenh=_fe)
         elif multi:
-            run_autodub_queue(vids, *_args, burn_sub=_bs, lipsync=_ls)
+            run_autodub_queue(vids, *_args, burn_sub=_bs, lipsync=_ls, faceenh=_fe)
         else:
-            run_autodub_chain(entry_val, *_args, burn_sub=_bs, lipsync=_ls)
+            run_autodub_chain(entry_val, *_args, burn_sub=_bs, lipsync=_ls, faceenh=_fe)
 
     def _start_preview():
         # Dub thử chỉ nhận FILE video (link YouTube phải tải về trước — dùng nút full)
@@ -29604,7 +29792,7 @@ def _ui_prefs_register():
         "autodub_model": autodub_model_var, "autodub_lang": autodub_lang_var,
         "autodub_translate": autodub_translate_var,
         "autodub_keep": autodub_keep_var, "autodub_burnsub": autodub_burnsub_var,
-        "autodub_lipsync": autodub_lipsync_var,
+        "autodub_lipsync": autodub_lipsync_var, "autodub_faceenh": autodub_faceenh_var,
         "autodub_yt_dir": autodub_yt_dir_var, "autodub_yt_open": autodub_yt_open_var,
         "watch_dir": watch_dir_var,   # CHỈ đường dẫn — trạng thái bật không persist
         "translate_bilingual": translate_bilingual_var,
@@ -30674,7 +30862,9 @@ def _run_startup_diagnostics():
     _ls_repo_ok = bool(_ls_repo and os.path.isfile(os.path.join(_ls_repo, "inference.py")))
     _ls_ck = _lipsync_checkpoint(_ls_repo if _ls_repo_ok else "")
     if _ls_py and _ls_repo_ok and _ls_ck:
-        log_color("✅ Lip-sync (Wav2Lip): OK — env + repo + checkpoint đủ", _OK)
+        _gf = _lipsync_gfpgan_model()
+        _enh = " + ✨ làm nét mặt (GFPGAN)" if (_gf and _find_faceenhance_helper()) else ""
+        log_color("✅ Lip-sync (Wav2Lip): OK — env + repo + checkpoint đủ" + _enh, _OK)
     else:
         _miss = []
         if not _ls_py:      _miss.append("lipsync_env")
