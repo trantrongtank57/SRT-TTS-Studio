@@ -22,7 +22,7 @@ JSON output:
 Args:
   --images-json <file>   JSON: ["path1.jpg", "path2.png", ...]
   --out-json <file>      nơi ghi kết quả
-  --lang <code>          en | chinese_sim | chinese_cht | japan | korean
+  --lang <code>          en | chinese_sim | chinese_cht | japan | korean | vi | fr | de | ru | th
   --device <auto|cpu|cuda>
   --min-conf <float>     bỏ qua box có độ tin cậy < ngưỡng (mặc định 0.3)
   --selftest             chỉ kiểm tra env (python/torch/easyocr) rồi thoát
@@ -56,6 +56,9 @@ _LANG_MAP = {
     "de":          ["de", "en"],
     "ru":          ["ru", "en"],
     "th":          ["th", "en"],
+    # sách/tài liệu tiếng Việt (card 📷 Ảnh scan sách → Đọc) — EasyOCR có 'vi'
+    "vi":          ["vi", "en"],
+    "vietnamese":  ["vi", "en"],
 }
 
 

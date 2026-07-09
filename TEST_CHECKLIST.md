@@ -383,6 +383,24 @@
 - [ ] **Card 📖 Truyện chữ trên Dashboard**: hiện số bộ đang theo dõi + trạng thái 🔊 + tùy chọn đang bật (🌐/🖼/.m4b); nút 🔄 cập nhật, 🔍 mở dialog theo dõi, 📖 nhảy trang truyện
 - [ ] **🚀 Bắt đầu nhanh** có thẻ mới "📖 Có link truyện chữ → audiobook" → bấm nhảy trang truyện + in 4 bước
 
+## AM. Đợt 2026-07-09: 📖 Wikipedia + 📷 Scan sách + 📝 Sub YouTube + 🧹 Dọn dẹp
+- [ ] **📖 Wikipedia → Audio** (card 📰 trang Tài liệu): dán `https://vi.wikipedia.org/wiki/Hà_Nội` → 📰 Tải & nạp → log `📖 ✔ Hà Nội: N mục` (không có mục Tham khảo/Liên kết ngoài) → chunks nạp vào Đọc (TTS); Merge với `.m4b có chương` → mục lục tua theo mục (mỗi mục = "Phần i")
+- [ ] Link Wikipedia tiếng khác (en.wikipedia.org) + bản mobile (`vi.m.wikipedia.org`) đều nhận; link sai dạng → log ❌ rõ ràng
+- [ ] ☕ Bản tin (1 nút) với link Wikipedia → chạy hết chuỗi Tải → Đọc → Merge
+- [ ] **📷 Ảnh scan sách** (card mới trang Tài liệu): chọn thư mục ảnh chụp trang sách (đặt tên 001.jpg…) + Ngôn ngữ "Tiếng Việt" → 📷 OCR & nạp → log tiến trình OCR (lần đầu tải model EasyOCR) → ra `sach_ocr.txt` trong thư mục ảnh + chunks nạp vào Đọc (TTS)
+- [ ] Thư mục chứa nhiều thư mục con → mỗi thư mục 1 "Chương i: <tên>"; ⏹ Dừng giữa chừng → dừng êm, không crash; thiếu easyocr/voxcpm_env → lỗi có hướng dẫn, không đơ UI
+- [ ] **📝 Sub YouTube** (checkbox mới trong card 📺 của wizard 🎬, mặc định BẬT): dub 1 video YouTube CÓ phụ đề → log `📝 Dùng phụ đề có sẵn … — bỏ qua bước STT` rồi vào thẳng bước Dịch; video KHÔNG có sub → log `📝 … dùng STT Whisper` và chạy STT như cũ
+- [ ] Video nhiều bản sub (Ngôn ngữ video = auto) → log `ưu tiên ngôn ngữ gốc video (xx)`; tắt checkbox → luôn STT; 📡 Theo dõi kênh cũng ăn theo checkbox này
+- [ ] **🧹 Dọn dẹp** (nút mới trang Hệ thống): mở dialog → 6 nhóm hiện `N file — X MB` (quét nền); tick nhóm → 🧹 Xóa → confirm → log `🧹 Đã xóa N file — giải phóng X MB`; nhóm recordings TỰ GIỮ file mà hồ sơ giọng/ô Audio mẫu đang trỏ tới; log luôn giữ 2 file mới nhất
+
+## AN. Đợt 2026-07-09 (2): 📄 PDF scan + ✂ SponsorBlock + ⬆ yt-dlp + 🔊 sfx + 🏷 logo + 🎼 LRC
+- [ ] **📄 PDF scan** (card 📷, nút 📄 mới): chọn 1 PDF scan (mỗi trang là ảnh) → tách ảnh + OCR + `sach_ocr.txt` cạnh PDF + nạp Đọc (TTS); PDF chữ (không có ảnh nhúng) → log hướng dẫn dùng Load PDF thường
+- [ ] **✂ SponsorBlock** (checkbox mới card 📺 wizard 🎬): bật + dub 1 video YouTube có đoạn sponsor → log `✂ SponsorBlock: sẽ cắt...`, video tải về ngắn hơn bản gốc; đang bật ✂ + 📝 sub sẵn → log tự bỏ lối tắt sub và STT như thường
+- [ ] **⬆ Cập nhật yt-dlp** (trang Hệ thống): bấm → log tiến trình + phiên bản mới; tải YouTube bằng yt-dlp cũ lỗi "Unable to extract" → log gợi ý bấm nút này
+- [ ] **🔊 [sfx:tên]**: tạo thư mục `sfx\` cạnh settings.json, bỏ `mưa.mp3` vào → TXT có dòng riêng `[sfx:mưa]` → Load Word/TXT → tag thành chunk riêng, TTS log ⏭ bỏ qua (không FAIL) → Merge Audio → log `🔊 Chèn 1 hiệu ứng`, nghe đúng vị trí; tên không có trong sfx\ → chỉ ⚠, merge vẫn chạy
+- [ ] **🏷 Logo** (ô mới card Audio → Video): chọn PNG → 🎬 Tạo Video → logo góc phải trên (thử cả khi bật 🌊 sóng); wizard 🎬 có "Gắn phụ đề cứng" → video dubbed cũng có logo; mux KHÔNG burn → không logo (vẫn -c:v copy nhanh)
+- [ ] **🎼 LRC**: ô Phụ đề chọn file `.lrc` + bật 🎤 Karaoke → video lyric chữ chạy theo mốc thời gian trong file lời; file .lrc không có mốc → ⚠ bỏ qua phụ đề, video vẫn ra
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

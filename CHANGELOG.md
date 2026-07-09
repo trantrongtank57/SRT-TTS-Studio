@@ -6,6 +6,47 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **📄 PDF scan → OCR → Đọc** — card 📷 Ảnh scan sách nhận thêm FILE PDF scan (mỗi trang là
+  ảnh): nút 📄 mới tách ảnh từng trang bằng pypdf rồi đi qua đúng đường OCR → `sach_ocr.txt`
+  → Đọc (TTS). PDF chữ vẫn dùng Load PDF thường.
+- **✂ SponsorBlock khi tải YouTube** — checkbox mới trong card 📺 của wizard 🎬: cắt luôn các
+  đoạn quảng cáo/tự quảng bá/xin like-sub/intro-outro (dữ liệu cộng đồng SponsorBlock) ngay
+  khi tải — không tốn tiền dịch + TTS cho đoạn rác. Khi bật, chuỗi tự bỏ lối tắt "phụ đề có
+  sẵn" (timestamp lệch sau khi cắt) và STT trên video đã cắt.
+- **⬆ Cập nhật yt-dlp** — nút mới (trang Hệ thống): tự chạy `yt-dlp -U` (bản exe) hoặc
+  `pip install -U yt-dlp` vào đúng env (bản module) rồi báo phiên bản mới; khi tải YouTube
+  lỗi kiểu "Unable to extract..." log tự gợi ý bấm nút này (YouTube đổi API thường xuyên).
+- **🔊 Tag hiệu ứng âm thanh `[sfx:tên]`** — trong tài liệu/truyện (TXT/docx/EPUB/truyện chữ),
+  một dòng riêng dạng `[sfx:mưa]` sẽ chèn file âm thanh `mưa.mp3/wav/...` từ thư mục `sfx\`
+  (cạnh settings.json hoặc cạnh exe) vào đúng vị trí khi Merge Audio thay vì đọc — truyện
+  audio thành audio drama (gõ cửa, sấm, bước chân...). Mọi engine TTS tự bỏ qua tag; thiếu
+  file chỉ cảnh báo, mốc chương .m4b vẫn đúng.
+- **🏷 Logo kênh** — ô Logo mới trên card 🖼 Audio → Video: PNG logo đè góc phải trên mọi
+  video xuất từ card này (cả chế độ 🌊 sóng nhạc), và tự áp luôn cho bước gắn phụ đề cứng
+  của Ghép Audio → Video / wizard lồng tiếng (chỉ khi re-encode — mux thường vẫn giữ tốc độ
+  copy). Logo tự scale ~14% bề ngang khung.
+- **🎼 Lời bài hát .lrc → video karaoke** — ô Phụ đề của Audio → Video nhận thêm file `.lrc`
+  (lời nhạc có mốc thời gian tải trên mạng, hỗ trợ cả enhanced LRC): tự chuyển thành SRT
+  theo mốc trong file, kết hợp checkbox 🎤 Karaoke sẵn có → video lyric chữ chạy theo nhạc
+  từ 1 file nhạc + 1 file lời. Chế độ loạt cũng tự ghép `<tên audio>.lrc` cạnh file.
+- **📖 Wikipedia → Audio** — card 📰 (trang Tài liệu) nhận thêm link bài Wikipedia (mọi ngôn ngữ,
+  cả bản mobile): lấy nội dung qua API chính chủ (không scrape HTML), mỗi mục lớn thành
+  "Phần i: <tên mục>" → Merge với `.m4b có chương` cho mục lục tua theo mục; tự bỏ các mục
+  Tham khảo/Liên kết ngoài/Xem thêm. ☕ Bản tin (1 nút) cũng dùng được link Wikipedia.
+- **📷 Ảnh chụp / scan sách → Đọc (OCR)** — card mới ở trang Tài liệu: chọn thư mục ảnh chụp
+  trang sách → nhận dạng chữ bằng EasyOCR (tái dùng voxcpm_env + manga_ocr_helper, thêm
+  tiếng Việt), block xếp theo thứ tự đọc, text lưu ra `sach_ocr.txt` để dò lỗi rồi nạp thẳng
+  vào pipeline Đọc (TTS). Thư mục chứa nhiều thư mục con = mỗi thư mục 1 chương → audiobook
+  `.m4b` có mục lục.
+- **📝 Dùng phụ đề có sẵn của YouTube** — checkbox mới trong card 📺 của wizard 🎬 Lồng tiếng
+  (mặc định bật): video YouTube có phụ đề (người làm hoặc auto-caption) thì tải phụ đề đó
+  thay vì chạy STT Whisper — nhanh và thường chính xác hơn. Ưu tiên sub người làm đúng
+  ngôn ngữ gốc video; auto-caption được tự khử lặp kiểu cuộn; video không có sub phù hợp
+  thì tự quay về STT như cũ. 📡 Theo dõi kênh hưởng chung.
+- **🧹 Dọn dẹp file tạm** — nút mới (trang Hệ thống): quét 6 nhóm file app sinh ra (nghe thử
+  %TEMP%, log phiên cũ, backup regen `.old.mp3` + take thử, audio lỗi QC, cache TTS, bản ghi
+  âm mẫu) kèm số file + dung lượng từng nhóm, xóa nhóm được tick. Bản ghi âm mà hồ sơ giọng
+  đang dùng được tự động giữ lại; log luôn giữ 2 file mới nhất.
 - **🖱 Kéo-thả & chuột phải mở file** — kéo file `.srt`/`.ass`/`.vtt` từ Explorer thả thẳng vào
   cửa sổ app là tự nạp + nhảy sang trang TTS; thêm tùy chọn "🖱 Chuột phải" (trang Hệ thống)
   đăng ký menu chuột phải Windows "Mở bằng SRT TTS Studio" cho file `.srt`. Kèm card 📖 Truyện

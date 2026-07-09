@@ -6,11 +6,11 @@ $zip   = "E:\SRT_TTS_Studio_source_$stamp.zip"
 $files = @(
   # source chính + entry
   "apppp_integrated.py","srt_tts_launch.py",
-  # 14 helper
+  # 15 helper
   "rvc_helper.py","voxcpm_helper.py","vieneu_helper.py","f5tts_helper.py","omnivoice_helper.py",
   "whisper_stt.py","audio_enhancer.py","pdf_helper.py","srt_align_helper.py",
   "videocr_helper.py","video_stt_helper.py","translate_helper.py","manga_ocr_helper.py",
-  "lipsync_helper.py",
+  "lipsync_helper.py","faceenhance_helper.py",
   # standalone CLI tool
   "truyenqq_dl.py",
   # build/audit
