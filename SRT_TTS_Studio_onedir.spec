@@ -29,6 +29,7 @@ a = Analysis(
         ('toyeucaunhieulamday.wav',     '.'),
         ('chungtakhongthuocvenhau.wav', '.'),
         ('error.wav',                   '.'),
+        ('CHANGELOG.md',                '.'),   # 🆕 dialog "Có gì mới"
     ],
     hiddenimports=[
         'edge_tts', 'edge_tts.communicate', 'srt',

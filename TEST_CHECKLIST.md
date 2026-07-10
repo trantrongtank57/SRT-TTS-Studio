@@ -440,6 +440,26 @@
 - [ ] Tắt checkbox → mọi câu đọc giọng Việt như cũ; bật/tắt xen kẽ trên cùng SRT → dòng trùng không dùng nhầm cache của chế độ kia (♻ chỉ hiện trong cùng chế độ)
 - [ ] Giọng đang chọn KHÔNG phải vi-* (vd en-US) → checkbox không có tác dụng (không đổi giọng lung tung)
 
+## AT. Đợt 2026-07-10 (4): nhiều bộ truyện + soát chương + bgm theo chương + 🩺 AI + 🗂 + 🎴 + 🎭 dấu câu
+- [ ] **Nhiều bộ**: ô URL dán 2 link cách nhau `;` → ⬇ tải tuần tự cả 2 (log `━━ Bộ 1/2 ━━`), tổng kết cuối; 🚀 với 2 bộ cũng chạy tuần tự; ⏹ giữa bộ 1 → không chạy bộ 2
+- [ ] **🕳 Soát chương**: xóa tay 1 file chương giữa bộ rồi tải lại (site đã hết chương đó) → log `🕳 ⚠ THIẾU ... chương`; bộ đủ → `🕳 ✅ liền mạch`
+- [ ] **🎵 BGM theo chương**: ô Nhạc nền trỏ vào THƯ MỤC 2-3 bài → chạy 🚀 → log `theo chương: N bài xoay vòng`, nghe 2 chương liên tiếp khác nhạc; ô là 1 FILE → hành vi cũ (mix cả audiobook)
+- [ ] **🩺 Hỏi AI lỗi** (trang Hệ thống, cần key dịch cloud): gây 1 lỗi bất kỳ (vd TTS thiếu model) rồi bấm → cửa sổ hiện chẩn đoán tiếng Việt hợp lý; provider Offline → từ chối có hướng dẫn
+- [ ] **🗂 Giữ final cũ**: tick → Merge 2 lần → bản đầu thành `final_YYYYmmdd_HHMMSS.mp3`, bản mới là final.mp3; bỏ tick → ghi đè như cũ
+- [ ] **🎴 Anki**: SRT dịch song ngữ + đã TTS → bấm → `anki_deck\` có deck.txt + media\ + hướng dẫn; import thử vào Anki: thẻ có audio bấm phát được, mặt sau là nghĩa
+- [ ] **🎭 Nhịp dấu câu**: tick → TTS câu "Chạy mau!" nhanh hơn rõ so với không tick; câu "Thôi vậy..." chậm lại; dòng có tag `[vui]` sẵn không bị đổi
+- [ ] Autosave/cache: bật/tắt 🎭 dấu câu trên cùng SRT → dòng trùng không dùng nhầm cache chế độ kia
+
+## AU. Đợt 2026-07-10 (5): ⏱ chống treo + 🔁 chương lỗi + 📖 glossary bộ + 🎧/🌐 nghe + encoding + 🌧 sfxbg + 🆕
+- [ ] **⏱ Chống treo**: chạy 1 job rồi treo giả (suspend ffmpeg bằng Process Explorer) >10' → logbox cảnh báo `⏱ ⚠ CHỐNG TREO` + webhook nhận tin (nếu cấu hình); tick "Tự Dừng khi treo 10'" → job tự Dừng
+- [ ] **🔁 Tải lại chương lỗi**: bộ có chương ngắn (<300 byte) → bấm, chọn thư mục bộ → confirm hiện số thiếu/số lỗi → xóa + tải bù (URL từ nguon.txt); bộ tải bằng bản mới có sẵn `nguon.txt` trong thư mục
+- [ ] **📖 Glossary bộ**: tạo `glossary_series.json` `{"Tên": "cách đọc"}` trong thư mục bộ → chạy 🚀 → log `📖 Từ điển riêng bộ truyện: N mục` + TTS đọc theo; xong chuỗi → Quick TTS đọc từ đó theo từ điển CHUNG (overlay đã gỡ)
+- [ ] **🎧 Nghe theo chương**: chọn thư mục bộ (có audio_chap) → danh sách chương + ▶ phát, chương đang phát đổi màu, ⏹ dừng
+- [ ] **🌐 Trang nghe cả bộ**: ra `player_book.html` trong audio_chap → mở browser: click chương phát, hết chương TỰ chuyển chương sau
+- [ ] **Encoding**: file .txt lưu GBK (truyện Trung raw) → Load Word/TXT hoặc dịch → chữ Trung hiển thị đúng (không mojibake); file UTF-8 tiếng Việt vẫn chuẩn
+- [ ] **🌧 [sfxbg:]**: TXT có `[sfxbg:mưa]` … `[sfxbg:off]` (dòng riêng, có mưa.mp3 trong sfx\) → Đọc + Merge → log `🌧 Đã trộn N đoạn` — đoạn giữa 2 tag có tiếng mưa dưới giọng, ngoài đoạn thì không; tổng thời lượng không đổi
+- [ ] **🆕 Có gì mới**: xóa `whatsnew_seen.txt` trong thư mục cấu hình → mở app → sau khi đăng nhập vài giây hiện dialog CHANGELOG phần đầu → bấm Đã đọc → mở lại app không hiện nữa
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

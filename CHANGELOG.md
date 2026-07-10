@@ -6,6 +6,50 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **⏱ Chống treo (watchdog)** — đang chạy job mà tiến độ đứng im quá 10 phút (ffmpeg/helper
+  đơ, mạng nghẽn) → cảnh báo logbox + bắn webhook (1 lần mỗi đợt treo); checkbox mới trang
+  Hệ thống "⏱ Tự Dừng khi treo 10'" → tự bấm Dừng để watch/queue chạy việc kế thay vì đứng
+  hình tới sáng.
+- **🔁 Tải lại chương lỗi** — nút mới trên card Truyện chữ: chọn thư mục bộ → xóa các chương
+  ngắn bất thường rồi tải bù (URL nguồn đọc từ `nguon.txt` tự ghi khi tải — bộ cũ thì lấy từ
+  ô URL). Khép vòng với 🕳 soát chương.
+- **📖 Từ điển phát âm THEO BỘ truyện** — đặt `glossary_series.json` (term → cách đọc) trong
+  thư mục bộ: chuỗi 🚀/📡 tự nạp khi đọc bộ đó (đè từ điển chung khi trùng term), tự gỡ khi
+  xong — "Ryu" mỗi bộ đọc một kiểu không còn giẫm nhau.
+- **🎧 Nghe theo chương** — nút mới card Truyện chữ: liệt kê mp3 chương trong `audio_chap\`
+  với ▶ từng chương (tựa lấy từ dòng đầu file chương), khỏi mò Explorer.
+- **🌐 Trang nghe cả bộ (HTML)** — nút mới card Truyện chữ: `player_book.html` trong
+  audio_chap — danh sách chương, click phát, hết chương tự chuyển chương sau (offline).
+- **Đọc TXT mã hóa lạ (GBK/Shift-JIS/Big5/CP949)** — raw truyện Trung/Nhật/Hàn không phải
+  UTF-8 giờ tự nhận diện bảng mã đúng (chấm điểm ký tự CJK/kana/hangul thật) thay vì ra
+  mojibake mà TTS đọc thành rác. UTF-8/UTF-16/cp1258 như cũ.
+- **🌧 Hiệu ứng NỀN `[sfxbg:tên]`** — trong tài liệu (Merge Audio): dòng riêng `[sfxbg:mưa]`
+  bật ambience loop DƯỚI giọng đọc từ vị trí đó tới `[sfxbg:off]` (hoặc hết audio), fade
+  in/out, tối đa 8 đoạn — kết hợp `[sfx:]` chèn tiếng động là thành audio drama. File lấy
+  từ thư mục `sfx\` như [sfx:].
+- **🆕 "Có gì mới"** — sau khi cập nhật bản mới, lần mở đầu tiên app hiện phần đầu CHANGELOG
+  (đọc 1 lần, bấm Đã đọc là thôi) — tính năng mới không còn nằm im không ai biết.
+- **⬇🚀 Tải/chạy NHIỀU bộ truyện 1 lần** — ô URL truyện chữ nhận nhiều link (cách nhau `;`
+  hoặc khoảng trắng): nút ⬇ tải tuần tự từng bộ; nút 🚀 chạy cả chuỗi (tải → dịch → đọc →
+  audiobook) tuần tự từng bộ — "nạp 5 bộ rồi đi ngủ". Bộ bị dừng/hủy → ngưng cả hàng; bộ lỗi
+  → chạy tiếp bộ sau; 🌙 tắt máy chỉ khi chạy hết.
+- **🕳 Soát chương thiếu/lỗi** — sau mỗi lần tải truyện tự quét: lỗ hổng số thứ tự chương
+  (…998 rồi nhảy 1000) + chương ngắn bất thường (<300 byte — tải lỗi/trang trắng) → báo danh
+  sách để chạy lại tải bù. Chương lẻ (10.5) và bản dịch `_vi` được tính đúng.
+- **🎵 Nhạc nền ĐỔI THEO CHƯƠNG** — ô Nhạc nền (chuỗi 🚀 truyện chữ) nhận THƯ MỤC nhạc: mỗi
+  chương mix 1 bài xoay vòng (trộn lúc đóng chương — re-run rẻ, chương cũ giữ nguyên) —
+  truyện 10 tiếng đỡ nghe 1 bài loop. Merge tài liệu thường gặp thư mục thì dùng bài đầu.
+- **🩺 Hỏi AI vì sao lỗi** — nút mới trang Hệ thống: gửi ~40 dòng log gần nhất (đường dẫn cá
+  nhân đã ẩn) cho AI dịch-provider → chẩn đoán tiếng Việt (nguyên nhân + cách sửa từng bước)
+  hiện trong cửa sổ riêng — user tự cứu mình trước khi phải gửi 🐞 Gói hỗ trợ.
+- **🗂 Giữ bản final cũ** — checkbox mới cạnh tùy chọn Merge: merge lại không ghi đè —
+  bản cũ tự đổi tên `final_YYYYmmdd_HHMMSS.*` để so sánh trước/sau khi regen vài dòng.
+- **🎴 Xuất thẻ Anki (học ngoại ngữ)** — nút mới trang SRT: từ SRT (bản dịch SONG NGỮ càng
+  tốt) + audio từng dòng có sẵn → `anki_deck\deck.txt` + thư mục media (tên file duy nhất,
+  không đụng collection.media) + hướng dẫn import — mỗi câu 1 thẻ có phát âm.
+- **🎭 Nhịp đọc theo dấu câu** — checkbox mới tab Giọng nói (mặc định tắt, Edge): câu kết `!`
+  đọc nhanh hơn chút, câu bỏ lửng `...` đọc chậm lại — bản heuristic miễn phí của 🎭 Tự gắn
+  cảm xúc AI; tag tường minh `[vui]`… luôn thắng; cache dòng trùng tách chế độ bật/tắt.
 - **📁 Dịch cả thư mục** — nút mới trang Dịch: chọn thư mục → dịch tuần tự mọi `.txt/.docx`
   bên trong sang tiếng Việt ("thả 50 chương docx vào là đi ngủ"). Resume theo file (đã có
   `_vi.*` thì skip, kể cả khi đã đổi định dạng ra); tự bỏ qua file phụ của app

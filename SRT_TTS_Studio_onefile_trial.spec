@@ -49,6 +49,7 @@ a = Analysis(
         ('manga_ocr_helper.py',        '.'),
         ('lipsync_helper.py',          '.'),
         ('faceenhance_helper.py',      '.'),
+        ('CHANGELOG.md',               '.'),   # 🆕 dialog "Có gì mới"
     ],
     hiddenimports=[
         'edge_tts', 'edge_tts.communicate', 'srt',

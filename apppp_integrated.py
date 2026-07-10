@@ -1781,6 +1781,11 @@ ctk.CTkCheckBox(voice_row1c,
                 text="🌐 Câu ngoại ngữ tự đổi giọng phù hợp (chỉ Edge + giọng "
                      "vi-*; cả câu là tiếng Anh/Trung/Nhật/Hàn/Nga/Thái mới đổi)",
                 variable=code_switch_var, font=("Arial", 12)).pack(side="left")
+auto_emo_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(voice_row1c,
+                text="🎭 Nhịp theo dấu câu (! nhanh · … chậm — Edge)",
+                variable=auto_emo_var, font=("Arial", 12)).pack(side="left",
+                                                                padx=(12, 0))
 
 
 # Row 2: API Key (ẩn khi dùng Edge TTS)
@@ -3022,16 +3027,50 @@ GLOSSARY = {}            # term → cách đọc
 _GLOSSARY_RX = [None]    # regex gộp biên dịch sẵn (None = từ điển rỗng)
 _GLOSSARY_LMAP = [{}]    # lookup lower(term) → cách đọc (cho sub không phân biệt hoa thường)
 
+# 📖 Từ điển RIÊNG THEO BỘ truyện: overlay tạm thời đè lên GLOSSARY toàn cục
+# (glossary_series.json trong thư mục bộ — như series_cast.json). Set/clear qua
+# _series_glossary_set; định nghĩa của bộ THẮNG định nghĩa chung khi trùng term.
+_GLOSSARY_SERIES = [{}]
+
+
+def _series_glossary_set(root):
+    """Nạp glossary_series.json của bộ truyện làm overlay (root=None/'' = gỡ).
+    Trả về số mục đã nạp."""
+    extra = {}
+    if root:
+        try:
+            p = os.path.join(root, "glossary_series.json")
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                if isinstance(d, dict):
+                    extra = {str(k).strip(): str(v)
+                             for k, v in d.items() if str(k).strip()}
+        except Exception as e:
+            log(f"📖 ⚠ Không đọc được glossary_series.json: {e}")
+    if extra == _GLOSSARY_SERIES[0]:
+        return len(extra)
+    _GLOSSARY_SERIES[0] = extra
+    _glossary_compile()
+    if extra:
+        log(f"📖 Từ điển riêng bộ truyện: {len(extra)} mục "
+            "(đè lên từ điển chung khi trùng).")
+    return len(extra)
+
+
 def _glossary_compile():
-    """Biên dịch GLOSSARY thành 1 regex duy nhất: term dài ưu tiên khớp trước,
-    không phân biệt hoa thường, chỉ khớp nguyên từ khi term bắt đầu/kết thúc
-    bằng chữ-số (tên có ký hiệu như "C++" vẫn khớp đúng)."""
-    _GLOSSARY_LMAP[0] = {k.lower(): v for k, v in GLOSSARY.items()}
-    if not GLOSSARY:
+    """Biên dịch GLOSSARY (+ overlay theo bộ truyện) thành 1 regex duy nhất:
+    term dài ưu tiên khớp trước, không phân biệt hoa thường, chỉ khớp nguyên
+    từ khi term bắt đầu/kết thúc bằng chữ-số ("C++" vẫn khớp đúng). Term của
+    bộ truyện (_GLOSSARY_SERIES) đè term chung khi trùng."""
+    merged = dict(GLOSSARY)
+    merged.update(_GLOSSARY_SERIES[0])
+    _GLOSSARY_LMAP[0] = {k.lower(): v for k, v in merged.items()}
+    if not merged:
         _GLOSSARY_RX[0] = None
         return
     parts = []
-    for term in sorted(GLOSSARY, key=len, reverse=True):
+    for term in sorted(merged, key=len, reverse=True):
         p = re.escape(term)
         if term[0].isalnum() or term[0] == "_":
             p = r"(?<!\w)" + p
@@ -3318,6 +3357,14 @@ _SPEAKABLE_RE = re.compile(r"[^\W_]", re.UNICODE)
 # sample-rate) vào đúng vị trí khi ghép. Chỉ pipeline Doc/PDF — dòng sfx trong
 # SRT chỉ bị bỏ qua (timeline không chèn).
 _SFX_RE = re.compile(r"^\s*\[sfx\s*:\s*([^\]\n]+?)\s*\]\s*$", re.I)
+# 🌧 [sfxbg:tên] — hiệu ứng NỀN (ambience): từ vị trí tag, file loop DƯỚI giọng
+# đọc cho tới [sfxbg:off] (hoặc hết audio). Khác [sfx:] (chèn GIỮA các câu).
+# Chỉ pipeline Doc/PDF Merge Audio; chuỗi 🚀 truyện chữ (merge theo chương)
+# chưa nối — tag trong đó chỉ bị bỏ qua im lặng.
+_SFXBG_RE = re.compile(r"^\s*\[sfxbg\s*:\s*([^\]\n]+?)\s*\]\s*$", re.I)
+_SFXBG_OFF = ("off", "tắt", "tat", "stop", "het", "hết")
+_SFXBG_VOL = 0.15
+_SFXBG_MAX = 8          # trần số đoạn ambience / lần merge (an toàn filter)
 _SFX_EXTS = (".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac")
 
 
@@ -3434,7 +3481,7 @@ def _is_speakable(text):
     mọi flow TTS phải bỏ qua (merge_pdf_audio sẽ chèn file thật)."""
     if not text:
         return False
-    if _SFX_RE.match(text):
+    if _SFX_RE.match(text) or _SFXBG_RE.match(text):
         return False
     return bool(_SPEAKABLE_RE.search(text))
 
@@ -9240,6 +9287,11 @@ def _novel_download_sync(url, out_dir, merge, rng, delay=0.4):
                 return ("", "", 0, 0, 0)
     root = os.path.join(out_dir, title)
     os.makedirs(root, exist_ok=True)
+    try:   # 🔗 lưu URL nguồn — nút "🔁 Tải lại chương lỗi" cần nó để tải bù
+        with open(os.path.join(root, "nguon.txt"), "w", encoding="utf-8") as _nf:
+            _nf.write(url.strip() + "\n")
+    except Exception:
+        pass
 
     def _have(churl):
         p = os.path.join(root, _novel_chap_fname(churl))
@@ -9334,20 +9386,101 @@ def _novel_download_sync(url, out_dir, merge, rng, delay=0.4):
                     fout.write("\n")
             log_color(f"🧩 Đã gộp {len(files)} chương → "
                       f"{os.path.basename(full)}", "#7cf")
+    # 🕳 Soát lỗ hổng bộ chương sau mỗi lần tải (bộ 1000 chương khó soi tay)
+    if not _MANGA_STOP[0]:
+        _novel_report_gaps(root)
     return (root, full, done, total, fresh)
 
 
-def _novel_worker(url, out_dir, merge, rng, delay):
-    """Wrapper nút ⬇ Tải truyện chữ (download-only)."""
+def _novel_scan_gaps(root):
+    """(list số chương THIẾU, list file chương NGẮN bất thường <300 byte) từ
+    chuong_*.txt trong root. Số chương = phần NGUYÊN của tên file zero-pad
+    (chương lẻ chuong_00010_5.txt tính vào 10); bản dịch _vi không tính."""
+    nums = set()
+    tiny = []
     try:
-        root, _full, done, total, _fresh = _novel_download_sync(
-            url, out_dir, merge, rng, delay)
-        if root and not _MANGA_STOP[0]:
-            log_color(f"✅ Hoàn tất! {done}/{total} chương. Lưu tại: {root}", "#6f6")
+        for fn in os.listdir(root):
+            m = re.match(r"^chuong_(\d+)(?:_\d+)?\.txt$", fn)
+            if not m:
+                continue
+            nums.add(int(m.group(1)))
+            try:
+                if os.path.getsize(os.path.join(root, fn)) < 300:
+                    tiny.append(fn)
+            except Exception:
+                pass
+    except Exception:
+        return [], []
+    if not nums:
+        return [], sorted(tiny)
+    missing = [n for n in range(min(nums), max(nums) + 1) if n not in nums]
+    return missing, sorted(tiny)
+
+
+def _novel_report_gaps(root):
+    """Log ⚠ khi bộ chương có lỗ hổng số thứ tự / chương rỗng bất thường."""
+    try:
+        miss, tiny = _novel_scan_gaps(root)
+        if miss:
+            _pv = ", ".join(str(n) for n in miss[:20])
+            _more = "" if len(miss) <= 20 else f" …(+{len(miss) - 20})"
+            log_color(f"🕳 ⚠ Bộ truyện THIẾU {len(miss)} chương (lỗ hổng số "
+                      f"thứ tự): {_pv}{_more} — chạy lại tải để bù, hoặc "
+                      "chương đó không tồn tại trên site.", "#f96")
+        if tiny:
+            _pv = ", ".join(tiny[:10])
+            log_color(f"🕳 ⚠ {len(tiny)} chương NGẮN bất thường (<300 byte — "
+                      f"có thể tải lỗi/trang trắng): {_pv}"
+                      + ("" if len(tiny) <= 10 else " …"), "#f96")
+        if not miss and not tiny:
+            log("🕳 ✅ Bộ chương liền mạch, không thiếu số nào.")
+    except Exception:
+        pass
+
+
+def _novel_parse_urls(raw):
+    """Ô URL nhận NHIỀU bộ: cách nhau ';' / khoảng trắng — mỗi URL 1 bộ,
+    giữ thứ tự, bỏ trùng."""
+    out = []
+    for u in re.split(r"[;\s]+", (raw or "").strip()):
+        u = u.strip()
+        if u and "http" in u and u not in out:
+            out.append(u)
+    return out
+
+
+def _novel_worker(urls, out_dir, merge, rng, delay):
+    """Wrapper nút ⬇ Tải truyện chữ (download-only) — nhận NHIỀU URL,
+    tải tuần tự từng bộ (mỗi bộ vào thư mục riêng theo tên truyện)."""
+    try:
+        results = []
+        n = len(urls)
+        for k, url in enumerate(urls, 1):
+            if _MANGA_STOP[0]:
+                break
+            if n > 1:
+                log_color(f"⬇ ━━ Bộ {k}/{n}: {url} ━━", "#4aa3df")
+            try:
+                root, _full, done, total, _fresh = _novel_download_sync(
+                    url, out_dir, merge, rng, delay)
+                results.append((root, done, total))
+            except Exception as e:
+                log(f"❌ Lỗi bộ này: {e} — chạy tiếp bộ sau.")
+                results.append(("", 0, 0))
+        okc = [r for r in results if r[0]]
+        if okc and not _MANGA_STOP[0]:
+            if n > 1:
+                log_color(f"✅ Hoàn tất {len(okc)}/{n} bộ:", "#6f6")
+                for root, done, total in okc:
+                    log(f"   • {os.path.basename(root)}: {done}/{total} chương")
+            else:
+                root, done, total = okc[0]
+                log_color(f"✅ Hoàn tất! {done}/{total} chương. Lưu tại: {root}",
+                          "#6f6")
             log("   → Bấm '🔊 Đọc TTS' để nạp vào Tài liệu → Audio, hoặc "
                 "'🚀 Tải → Đọc → Audiobook' để chạy cả chuỗi lần sau.")
             try:
-                _reveal_output(root)
+                _reveal_output(okc[-1][0])
             except Exception:
                 pass
             app.after(0, show_fireworks)
@@ -9390,9 +9523,9 @@ def _novel_start():
             or _NOVEL_RUNNING[0]:
         log("⚠ Đang có tác vụ truyện chạy, đợi xong hoặc bấm Dừng.")
         return
-    url = novel_url_var.get().strip()
-    if not url or "http" not in url:
-        log("❌ Nhập URL bộ truyện chữ (hoặc URL 1 chương).")
+    urls = _novel_parse_urls(novel_url_var.get())
+    if not urls:
+        log("❌ Nhập URL bộ truyện chữ (nhiều bộ: cách nhau ';' hoặc khoảng trắng).")
         return
     out_dir = novel_out_var.get().strip()
     if not out_dir:
@@ -9400,10 +9533,12 @@ def _novel_start():
         novel_out_var.set(out_dir)
     rng = novel_chap_var.get().strip()
     merge = bool(novel_merge_var.get())
+    if len(urls) > 1:
+        log(f"⬇ {len(urls)} bộ truyện — tải tuần tự từng bộ.")
     _MANGA_STOP[0] = False
     _NOVEL_RUNNING[0] = True
     _novel_set_running(True)
-    threading.Thread(target=_novel_worker, args=(url, out_dir, merge, rng, 0.4),
+    threading.Thread(target=_novel_worker, args=(urls, out_dir, merge, rng, 0.4),
                      daemon=True).start()
 
 
@@ -9466,7 +9601,8 @@ _nv_r1 = _sec_row(_sec_novel)
 ctk.CTkLabel(_nv_r1, text="URL truyện:", font=("Arial", 12), width=90,
              anchor="w").pack(side="left", padx=(4, 4))
 ctk.CTkEntry(_nv_r1, textvariable=novel_url_var,
-             placeholder_text="https://truyenfull.vision/ten-truyen  (hoặc URL 1 chương)"
+             placeholder_text="https://truyenfull.vision/ten-truyen  (nhiều bộ: "
+                              "cách nhau ';' — tải/chạy tuần tự từng bộ)"
              ).pack(side="left", expand=True, fill="x", padx=4, pady=4)
 
 _nv_r2 = _sec_row(_sec_novel)
@@ -9811,8 +9947,22 @@ def _novel_tts_chapters_sync(root, make_m4b, gap_ms=300, bgm="", bgm_vol=0.12,
         return (0, 0, 0)
     chap_dir = os.path.join(root, "audio_chap")
     os.makedirs(chap_dir, exist_ok=True)
+    # 📖 từ điển phát âm RIÊNG của bộ (glossary_series.json trong thư mục bộ)
+    # — áp cho toàn pha TTS; caller (_novel_chain_worker / 📡 watch) gỡ ở finally
+    _series_glossary_set(root)
     total = len(chap_txts)
     new_done = 0
+    # 🎵 Nhạc nền là THƯ MỤC → xoay vòng bài theo chương, TRỘN LÚC ĐÓNG chương
+    # (chương đóng 1 lần duy nhất → re-run rẻ; đổi thư mục nhạc sau này chỉ
+    # ảnh hưởng chương MỚI — chương cũ đã bake giữ nguyên). Lưu ý: nhạc bake
+    # theo chương sẽ bị 🎚 tăng tốc cùng giọng (chấp nhận — trade-off của bake).
+    bgm_tracks = _bgm_dir_tracks(bgm) if (bgm and os.path.isdir(bgm)) else []
+    if bgm and os.path.isdir(bgm):
+        if bgm_tracks:
+            log(f"🚀 🎵 Nhạc nền theo chương: {len(bgm_tracks)} bài xoay vòng "
+                "(trộn lúc đóng từng chương).")
+        else:
+            log("🚀 ⚠ Thư mục nhạc nền không có file audio — bỏ qua nhạc nền.")
     for k, fn in enumerate(chap_txts, 1):
         if stop_requested or _MANGA_STOP[0]:
             break
@@ -9864,6 +10014,9 @@ def _novel_tts_chapters_sync(root, make_m4b, gap_ms=300, bgm="", bgm_vol=0.12,
         if _novel_concat_mp3s(part_files, chap_mp3, gap_ms):
             new_done += 1
             log(f"🚀 ✔ {stem}.mp3")
+            if bgm_tracks:   # 🎵 bài k-1 mod n cho chương thứ k (ổn định qua resume)
+                _mix_bgm_into(chap_mp3, bgm_tracks[(k - 1) % len(bgm_tracks)],
+                              bgm_vol, "🚀 🎵")
             _prod_add("chapters", 1)
             _prod_add("audio_sec", _probe_duration_sec(chap_mp3) or 0)
             try:
@@ -9901,7 +10054,8 @@ def _novel_tts_chapters_sync(root, make_m4b, gap_ms=300, bgm="", bgm_vol=0.12,
         _speedup_into(out_mp3, speed, "🚀 🎚")
     if loudnorm:
         _loudnorm_into(out_mp3, "🚀 🔊")
-    if bgm:
+    # 🎵 nhạc nền: THƯ MỤC đã bake theo chương ở trên — chỉ mix cả file khi là 1 bài
+    if bgm and not os.path.isdir(bgm):
         _mix_bgm_into(out_mp3, bgm, bgm_vol, "🚀 🎵")
     _intro_shift = _add_jingles(out_mp3, intro, outro)
     if make_m4b:
@@ -10046,18 +10200,21 @@ def _confirm_on_main(title, text, timeout=600):
     return res["ok"]
 
 
-def _novel_chain_worker(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
-                        intro, outro, loudnorm, shutdown_when_done,
-                        do_translate=False, cover="", speed=1.0):
+def _novel_chain_one(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
+                     intro, outro, loudnorm, do_translate=False, cover="",
+                     speed=1.0):
+    """Chuỗi 🚀 cho MỘT bộ truyện (tải → dịch → TTS theo chương → audiobook).
+    → True nếu chạy hết; False = dừng/hủy (caller quyết định có chạy bộ sau).
+    Lỗi bất ngờ → log + False (worker coi như bộ lỗi, chạy bộ sau)."""
     try:
         log_color("━━━ 🚀 TRUYỆN CHỮ → AUDIOBOOK (theo chương) ━━━", "#36c5ff")
         root, _full, done, total, _fresh = _novel_download_sync(
             url, out_dir, True, rng, 0.4)
         if not root or _MANGA_STOP[0]:
-            return
+            return False
         if done == 0:
             log("🚀 ❌ Không tải được chương nào — dừng chuỗi.")
-            return
+            return False
         if done < total:
             log(f"🚀 ⚠ {total - done} chương tải lỗi — sẽ đọc phần đã có; "
                 "chạy lại chuỗi sau để tải bù + đọc bổ sung.")
@@ -10091,7 +10248,7 @@ def _novel_chain_worker(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
                     "Nghe thử trước bằng Quick TTS nếu chưa chắc. Tiếp tục?"):
                 log("🚀 Đã hủy — chỉnh giọng ở tab Giọng nói rồi chạy lại "
                     "(phần đã tải vẫn còn, không phải tải lại).")
-                return
+                return False
         # ①b 🌐 Dịch theo chương (resume) — pha TTS sẽ đọc bản _vi.
         # ≥5 chương chưa dịch → DỊCH THỬ 1 CHƯƠNG rồi cho xem chất lượng
         # trước khi đốt API/thời gian cho cả bộ (NLLB vs LLM lệch nhau xa).
@@ -10107,7 +10264,7 @@ def _novel_chain_worker(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
             if _n_missing >= 5:
                 _novel_translate_chapters_sync(root, limit=1)
                 if _MANGA_STOP[0] or TRANSLATE_STOP:
-                    return
+                    return False
                 _first_vi = next(
                     (os.path.join(root, f) for f in sorted(os.listdir(root))
                      if f.startswith("chuong_") and f.endswith("_vi.txt")), "")
@@ -10130,20 +10287,55 @@ def _novel_chain_worker(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
                         pass
                     log("🚀 Đã hủy sau bản dịch thử — đổi engine/model ở trang "
                         "Dịch rồi chạy lại.")
-                    return
+                    return False
             _novel_translate_chapters_sync(root)
             if _MANGA_STOP[0] or TRANSLATE_STOP:
-                return
+                return False
         app.after(0, lambda: set_mode("pdf"))
         _novel_tts_chapters_sync(root, make_m4b, gap_ms, bgm, bgm_vol,
                                  intro, outro, loudnorm, vi=do_translate,
                                  cover=cover, speed=speed)
+        return not (_MANGA_STOP[0] or stop_requested)
+    except Exception:
+        raise   # worker log "Lỗi bộ này" + chạy tiếp bộ sau (False = dừng cả hàng)
+
+
+def _novel_chain_worker(urls, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
+                        intro, outro, loudnorm, shutdown_when_done,
+                        do_translate=False, cover="", speed=1.0):
+    """Chuỗi 🚀 cho 1+ bộ truyện: chạy _novel_chain_one tuần tự từng bộ.
+    Bộ bị DỪNG/HỦY → ngưng cả hàng (dừng/hủy thường là vấn đề cấu hình chung);
+    bộ lỗi exception → log rồi chạy bộ sau. 🌙 tắt máy chỉ khi chạy hết."""
+    try:
+        n = len(urls)
+        all_ok = True
+        for k, url in enumerate(urls, 1):
+            if _MANGA_STOP[0] or stop_requested:
+                all_ok = False
+                break
+            if n > 1:
+                log_color(f"🚀 ━━ Bộ {k}/{n}: {url} ━━", "#36c5ff")
+            try:
+                ok = _novel_chain_one(url, out_dir, rng, make_m4b, gap_ms,
+                                      bgm, bgm_vol, intro, outro, loudnorm,
+                                      do_translate=do_translate, cover=cover,
+                                      speed=speed)
+            except Exception as e:
+                log(f"🚀 ❌ Lỗi bộ này: {e} — chạy tiếp bộ sau.")
+                continue
+            if not ok:
+                all_ok = False
+                if n > 1:
+                    log("🚀 ⏹ Bộ này bị dừng/hủy — ngưng các bộ còn lại.")
+                break
         # 🌙 chỉ tắt máy khi chuỗi chạy hết mà KHÔNG bị người dùng dừng
-        if shutdown_when_done and not (_MANGA_STOP[0] or stop_requested):
+        if shutdown_when_done and all_ok \
+                and not (_MANGA_STOP[0] or stop_requested):
             _shutdown_pc()
     except Exception as e:
         log(f"🚀 ❌ Lỗi chuỗi truyện chữ → audiobook: {e}")
     finally:
+        _series_glossary_set(None)   # gỡ từ điển riêng của bộ cuối cùng
         _NOVEL_RUNNING[0] = False
         app.after(0, lambda: _novel_set_running(False))
         app.after(0, lambda: update_progress(0, 1))
@@ -10157,9 +10349,9 @@ def _novel_chain_start():
     if _autodub_busy():
         log("⚠ Đang có job TTS/lồng tiếng khác chạy — đợi xong đã.")
         return
-    url = novel_url_var.get().strip()
-    if not url or "http" not in url:
-        log("❌ Nhập URL bộ truyện chữ (hoặc URL 1 chương).")
+    urls = _novel_parse_urls(novel_url_var.get())
+    if not urls:
+        log("❌ Nhập URL bộ truyện chữ (nhiều bộ: cách nhau ';' hoặc khoảng trắng).")
         return
     out_dir = novel_out_var.get().strip()
     if not out_dir:
@@ -10198,8 +10390,10 @@ def _novel_chain_start():
     _MANGA_STOP[0] = False
     _NOVEL_RUNNING[0] = True
     _novel_set_running(True)
+    if len(urls) > 1:
+        log(f"🚀 {len(urls)} bộ truyện — chạy chuỗi tuần tự từng bộ.")
     threading.Thread(target=_novel_chain_worker,
-                     args=(url, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
+                     args=(urls, out_dir, rng, make_m4b, gap_ms, bgm, bgm_vol,
                            intro, outro, loudnorm, shutdown_when_done,
                            do_translate, cover, speed),
                      daemon=True).start()
@@ -10441,6 +10635,7 @@ def open_novel_watch_dialog():
                           "tải & đọc.", "#6f6")
                 _finish_shutdown()
             finally:
+                _series_glossary_set(None)   # gỡ từ điển riêng theo bộ
                 _NOVEL_WATCH_RUNNING[0] = False
                 _NOVEL_RUNNING[0] = False
                 app.after(0, lambda: _novel_set_running(False))
@@ -10486,6 +10681,231 @@ ctk.CTkButton(_nv_r6, text="📁", width=40,
                       filetypes=[("Ảnh", "*.jpg *.jpeg *.png"),
                                  ("All files", "*.*")]))
               ).pack(side="left", padx=4)
+
+# ── 🔁/🎧/🌐 hàng tiện ích bộ truyện (hàm định nghĩa phía dưới → lambda) ─────
+_nv_r7 = _sec_row(_sec_novel)
+btn_novel_retry = ctk.CTkButton(
+    _nv_r7, text="🔁 Tải lại chương lỗi", height=34,
+    command=lambda: _novel_retry_bad())
+btn_novel_retry.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_novel_listen = ctk.CTkButton(
+    _nv_r7, text="🎧 Nghe theo chương", height=34,
+    command=lambda: open_chapter_listen_dialog())
+btn_novel_listen.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+btn_novel_player = ctk.CTkButton(
+    _nv_r7, text="🌐 Trang nghe cả bộ (HTML)", height=34,
+    command=lambda: export_html_player_book())
+btn_novel_player.pack(side="left", expand=True, fill="x", padx=4, pady=4)
+
+
+def _novel_retry_bad():
+    """🔁 Khép vòng 🕳 soát chương: xóa các chương NGẮN bất thường rồi tải bù
+    (resume tự lấp lỗ hổng + file vừa xóa). URL nguồn đọc từ nguon.txt trong
+    thư mục bộ (ghi tự động từ bản này); bộ cũ chưa có → lấy từ ô URL."""
+    if _MANGA_RUNNING[0] or _MANGA_CONV_RUNNING[0] or _MANGA_TR_RUNNING[0] \
+            or _NOVEL_RUNNING[0]:
+        log("⚠ Đang có tác vụ truyện chạy, đợi xong hoặc bấm Dừng.")
+        return
+    root = filedialog.askdirectory(
+        title="Chọn thư mục BỘ TRUYỆN (chứa chuong_*.txt)",
+        initialdir=novel_out_var.get().strip() or None)
+    if not root:
+        return
+    miss, tiny = _novel_scan_gaps(root)
+    if not miss and not tiny:
+        log("🔁 ✅ Bộ chương liền mạch, không có chương lỗi — không cần tải lại.")
+        return
+    url = ""
+    try:
+        _np = os.path.join(root, "nguon.txt")
+        if os.path.isfile(_np):
+            url = _read_text_smart(_np).strip().splitlines()[0].strip()
+    except Exception:
+        url = ""
+    if not url or "http" not in url:
+        _us = _novel_parse_urls(novel_url_var.get())
+        url = _us[0] if _us else ""
+    if not url:
+        log("🔁 ❌ Không biết URL nguồn (bộ tải bằng bản cũ chưa có nguon.txt) "
+            "— dán URL bộ này vào ô URL truyện rồi bấm lại.")
+        return
+    if not msg.askyesno(
+            "🔁 Tải lại chương lỗi",
+            f"Bộ: {os.path.basename(root)}\n"
+            f"• Thiếu (lỗ hổng số thứ tự): {len(miss)} chương\n"
+            f"• Ngắn bất thường (<300 byte): {len(tiny)} file — sẽ XÓA để tải lại\n\n"
+            f"Tải bù từ:\n{url} ?"):
+        return
+    for fn in tiny:
+        try:
+            os.remove(os.path.join(root, fn))
+        except Exception:
+            pass
+    if tiny:
+        log(f"🔁 Đã xóa {len(tiny)} file chương lỗi — bắt đầu tải bù...")
+    _MANGA_STOP[0] = False
+    _NOVEL_RUNNING[0] = True
+    _novel_set_running(True)
+    threading.Thread(
+        target=_novel_worker,
+        args=([url], os.path.dirname(root.rstrip("\\/")) or root,
+              bool(novel_merge_var.get()), "", 0.4),
+        daemon=True).start()
+
+
+def _novel_resolve_audio_dir(root):
+    """Thư mục chứa mp3 chương: chọn thẳng audio_chap cũng được, chọn thư mục
+    bộ truyện thì tự vào audio_chap."""
+    if os.path.isdir(os.path.join(root, "audio_chap")):
+        return os.path.join(root, "audio_chap")
+    return root
+
+
+def open_chapter_listen_dialog():
+    """🎧 Nghe lại audiobook THEO CHƯƠNG — khỏi mở Explorer mò audio_chap.
+    ▶ phát qua MCI thread (dùng chung _play_audio_file/_qt_preview_close)."""
+    root = filedialog.askdirectory(
+        title="Chọn thư mục bộ truyện (hoặc thẳng audio_chap)",
+        initialdir=novel_out_var.get().strip() or None)
+    if not root:
+        return
+    d = _novel_resolve_audio_dir(root)
+    try:
+        files = sorted(fn for fn in os.listdir(d)
+                       if fn.startswith("chuong_") and fn.endswith(".mp3"))
+        if not files:
+            files = sorted(fn for fn in os.listdir(d)
+                           if fn.lower().endswith(".mp3"))
+    except Exception as e:
+        log(f"🎧 ❌ Không đọc được thư mục: {e}")
+        return
+    if not files:
+        log("🎧 ❌ Không có file mp3 chương nào (chạy 🚀 để tạo audio_chap trước).")
+        return
+    win = ctk.CTkToplevel(app)
+    win.title(f"🎧 Nghe theo chương — {os.path.basename(root)}")
+    win.geometry("560x520")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+    top = ctk.CTkFrame(win, fg_color="transparent")
+    top.pack(fill="x", padx=12, pady=(10, 4))
+    ctk.CTkLabel(top, text=f"{len(files)} chương", font=("Arial", 12)
+                 ).pack(side="left")
+    ctk.CTkButton(top, text="⏹ Dừng nghe", width=110,
+                  command=lambda: _qt_preview_close()).pack(side="right")
+    body = ctk.CTkScrollableFrame(win)
+    body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+    cur = {"lbl": None}
+
+    def _play(path, lbl):
+        if cur["lbl"] is not None:
+            try:
+                cur["lbl"].configure(text_color="#cfd6e4")
+            except Exception:
+                pass
+        cur["lbl"] = lbl
+        try:
+            lbl.configure(text_color="#7cf")
+        except Exception:
+            pass
+        _play_audio_file(path)
+
+    for fn in files:
+        r = ctk.CTkFrame(body, fg_color="transparent")
+        r.pack(fill="x", pady=1)
+        # tựa chương từ file txt cùng stem (nếu chọn thư mục bộ truyện)
+        _title = fn
+        try:
+            _txt = os.path.join(root, os.path.splitext(fn)[0] + ".txt")
+            if os.path.isfile(_txt):
+                _title = _novel_chap_title_of(_txt)
+        except Exception:
+            pass
+        lbl = ctk.CTkLabel(r, text=_title[:70], font=("Arial", 12),
+                           anchor="w", text_color="#cfd6e4")
+        lbl.pack(side="left", expand=True, fill="x", padx=(2, 4))
+        ctk.CTkButton(r, text="▶", width=34,
+                      command=lambda p=os.path.join(d, fn), l=lbl: _play(p, l)
+                      ).pack(side="left", padx=2)
+
+
+def export_html_player_book():
+    """🌐 Trang nghe CẢ BỘ: player_book.html trong audio_chap — danh sách
+    chương bên trái, hết chương tự chuyển chương sau (JS thuần, offline).
+    Chia sẻ = gửi cả thư mục (html + các mp3)."""
+    root = filedialog.askdirectory(
+        title="Chọn thư mục bộ truyện (hoặc thẳng audio_chap)",
+        initialdir=novel_out_var.get().strip() or None)
+    if not root:
+        return
+    d = _novel_resolve_audio_dir(root)
+    try:
+        files = sorted(fn for fn in os.listdir(d)
+                       if fn.startswith("chuong_") and fn.endswith(".mp3"))
+        if not files:
+            files = sorted(fn for fn in os.listdir(d)
+                           if fn.lower().endswith(".mp3"))
+    except Exception as e:
+        log(f"🌐 ❌ Không đọc được thư mục: {e}")
+        return
+    if not files:
+        log("🌐 ❌ Không có mp3 chương nào trong thư mục.")
+        return
+    items = []
+    for fn in files:
+        _title = os.path.splitext(fn)[0]
+        try:
+            _txt = os.path.join(root, os.path.splitext(fn)[0] + ".txt")
+            if os.path.isfile(_txt):
+                _title = _novel_chap_title_of(_txt)
+        except Exception:
+            pass
+        items.append([fn, _title[:90]])
+    book = os.path.basename(root.rstrip("\\/")) or "audiobook"
+    items_json = json.dumps(items, ensure_ascii=False).replace("</", "<\\/")
+    html_doc = f"""<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{book}</title>
+<style>
+body{{background:#141a26;color:#cfd6e4;font-family:'Segoe UI',Arial,sans-serif;
+     margin:0}}
+header{{position:sticky;top:0;background:#1b2333;padding:12px 16px;
+       box-shadow:0 2px 8px #0008}}
+h1{{font-size:16px;margin:0 0 8px}}
+audio{{width:100%}}
+#ls{{max-width:860px;margin:0 auto;padding:12px 16px 40vh}}
+.ch{{padding:7px 10px;margin:2px 0;border-radius:8px;cursor:pointer}}
+.ch:hover{{background:#232e45}}
+.ch.on{{background:#31406b;color:#fff}}
+</style></head><body>
+<header><h1>🎧 {book}</h1>
+<audio id="au" controls preload="metadata"></audio></header>
+<div id="ls"></div>
+<script>
+const chs={items_json};
+const au=document.getElementById('au'),ls=document.getElementById('ls');
+let cur=-1;
+function play(i){{if(i<0||i>=chs.length)return;
+  if(cur>=0)document.getElementById('h'+cur).classList.remove('on');
+  cur=i;const el=document.getElementById('h'+i);el.classList.add('on');
+  el.scrollIntoView({{block:'center',behavior:'smooth'}});
+  au.src=chs[i][0];au.play();}}
+chs.forEach((c,i)=>{{const d=document.createElement('div');
+  d.className='ch';d.id='h'+i;d.textContent=(i+1)+'. '+c[1];
+  d.onclick=()=>play(i);ls.appendChild(d);}});
+au.addEventListener('ended',()=>play(cur+1));
+</script></body></html>"""
+    out = os.path.join(d, "player_book.html")
+    try:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(html_doc)
+        log(f"🌐 ✅ Trang nghe cả bộ: {out} ({len(items)} chương — hết chương "
+            "tự chuyển chương sau).")
+        _reveal_output(out)
+    except Exception as e:
+        log(f"🌐 ❌ Không ghi được: {e}")
+
 
 ctk.CTkLabel(
     _sec_novel,
@@ -12161,28 +12581,33 @@ def _notify_if_background(body="✅ Hoàn tất!"):
         pass
 
 
-def _notify_webhook():
-    """📨 POST thông báo hoàn tất tới webhook (Discord/Telegram/tự dựng) nếu
+def _notify_webhook(custom=None):
+    """📨 POST thông báo tới webhook (Discord/Telegram/tự dựng) nếu
     NOTIFY_WEBHOOK_URL được cấu hình — batch đêm/watch folder khỏi ngồi canh.
-    JSON gửi cả "content" (Discord) lẫn "text" (Telegram sendMessage — dán URL
-    kèm ?chat_id=...). Chạy thread riêng, mọi lỗi nuốt — không được chặn app."""
+    custom=None → message "hoàn tất" mặc định (show_fireworks); truyền chuỗi
+    → gửi nguyên văn (⏱ chống treo dùng). JSON gửi cả "content" (Discord) lẫn
+    "text" (Telegram sendMessage — dán URL kèm ?chat_id=...). Chạy thread
+    riêng, mọi lỗi nuốt — không được chặn app."""
     url = (globals().get("NOTIFY_WEBHOOK_URL") or "").strip()
     if not url:
         return
 
-    parts = ["✅ SRT TTS Studio: hoàn tất!"]
-    try:
-        rep = _LAST_MERGE_REPORT
-        if rep.get("lines"):
-            parts.append(f"{rep['lines']}/{rep.get('total', '?')} dòng merge")
-    except Exception:
-        pass
-    try:
-        if FAIL_COUNT:
-            parts.append(f"{FAIL_COUNT} FAIL")
-    except Exception:
-        pass
-    msg_text = " — ".join(parts)
+    if custom:
+        msg_text = str(custom)
+    else:
+        parts = ["✅ SRT TTS Studio: hoàn tất!"]
+        try:
+            rep = _LAST_MERGE_REPORT
+            if rep.get("lines"):
+                parts.append(f"{rep['lines']}/{rep.get('total', '?')} dòng merge")
+        except Exception:
+            pass
+        try:
+            if FAIL_COUNT:
+                parts.append(f"{FAIL_COUNT} FAIL")
+        except Exception:
+            pass
+        msg_text = " — ".join(parts)
 
     def _post():
         try:
@@ -13446,7 +13871,50 @@ def _read_text_smart(path):
                 return raw.decode(enc)
             except Exception:
                 pass
-    for enc in ("utf-8", "cp1258", "latin-1"):
+    try:
+        return raw.decode("utf-8")
+    except Exception:
+        pass
+    # UTF-8 hỏng → thử bảng mã CJK phổ biến của raw truyện Trung/Nhật/Hàn
+    # TRƯỚC khi rơi về bảng 1-byte: cp1258/latin-1 decode được MỌI byte nên
+    # file GBK rơi thẳng vào đó sẽ thành mojibake mà TTS đọc thành rác.
+    # Chọn bản decode ra nhiều ký tự CJK THẬT nhất (điểm trừ nặng cho
+    # private-use/replacement — dấu hiệu decode sai bảng).
+    def _cjk_score(s):
+        # kana/hangul nhân 3: tiếng Nhật/Hàn THẬT đầy kana/hangul, còn GBK
+        # decode nhầm bytes Shift-JIS chỉ ra hanzi rác không kana → bản đúng
+        # thắng. Half-width kana (FF61-FF9F) là dấu hiệu decode sai → phạt.
+        cjk = kana = hang = bad = half = 0
+        for c in s[:4000]:
+            o = ord(c)
+            if 0x3040 <= o <= 0x30FF:
+                kana += 1
+            elif 0xAC00 <= o <= 0xD7AF:
+                hang += 1
+            elif 0x3000 <= o <= 0x9FFF or 0xFF01 <= o <= 0xFF60:
+                cjk += 1
+            elif 0xFF61 <= o <= 0xFF9F:
+                half += 1
+            elif o == 0xFFFD or 0xE000 <= o <= 0xF8FF:
+                bad += 1
+        # hangul ×2 (không ×3): cp949 decode nhầm bytes Shift-JIS ra toàn
+        # hangul rác — ×2 đủ cho tiếng Hàn thật thắng GBK-rác nhưng vẫn thua
+        # kana×3 của bản Shift-JIS đúng (đã probe đủ 4 chiều 2026-07-10)
+        return cjk + kana * 3 + hang * 2 - bad * 10 - half * 3
+    best_s, best_sc = "", -1
+    # bảng "khó tính" (hay FAIL trên bytes lạ) thử trước; điểm BẰNG nhau giữ
+    # bản trước (strict >) — gbk decode được gần như mọi byte nên đứng cuối
+    for enc in ("shift_jis", "cp949", "big5", "gbk"):
+        try:
+            s = raw.decode(enc)
+        except Exception:
+            continue
+        sc = _cjk_score(s)
+        if sc > best_sc:
+            best_s, best_sc = s, sc
+    if best_sc >= 20:      # đủ CJK thật → chắc chắn hơn hẳn bảng 1-byte
+        return best_s
+    for enc in ("cp1258", "latin-1"):
         try:
             return raw.decode(enc)
         except Exception:
@@ -14484,6 +14952,14 @@ def _eta_format(sec):
         return f"còn ~{sec // 60}p{sec % 60:02d}s"
     return f"còn ~{sec}s"
 
+# ⏱ CHỐNG TREO: mốc lần cuối tiến độ NHÍCH (main thread, ghi trong _update).
+# _watchdog_tick (định nghĩa cạnh autosave cuối file) so mốc này với đồng hồ
+# khi đang ở mode chạy — đứng im quá _WATCHDOG_STALL_S thì cảnh báo/webhook
+# (+ tự Dừng nếu bật checkbox).
+_WATCHDOG = {"t": 0.0, "v": -1.0, "warned": False, "mode": ""}
+_WATCHDOG_STALL_S = 600      # 10 phút không nhích = coi như treo
+
+
 def update_progress(current, total):
 
     if total <= 0:
@@ -14492,6 +14968,11 @@ def update_progress(current, total):
     value = max(0.0, min(1.0, current / total))
 
     def _update():
+        # ⏱ watchdog: chỉ tính là "sống" khi giá trị THAY ĐỔI thật
+        if abs(value - _WATCHDOG["v"]) > 0.0005:
+            _WATCHDOG["v"] = value
+            _WATCHDOG["t"] = time.monotonic()
+            _WATCHDOG["warned"] = False
         # Đang hoạt động → hủy lịch ẩn cũ (nếu có) và hiện thanh
         if _progress_hide_id[0] is not None:
             try:
@@ -16067,7 +16548,7 @@ def _split_text_chunks(text, max_chars=250):
     Dòng riêng `[sfx:tên]` được tách thành CHUNK RIÊNG (không dính vào đoạn
     văn xung quanh) để merge chèn được file hiệu ứng đúng vị trí."""
     import re
-    _parts = re.split(r"(?mi)^[ \t]*(\[sfx[ \t]*:[ \t]*[^\]\n]+?\])[ \t]*$",
+    _parts = re.split(r"(?mi)^[ \t]*(\[sfx(?:bg)?[ \t]*:[ \t]*[^\]\n]+?\])[ \t]*$",
                       text or "")
     if len(_parts) > 1:
         chunks = []
@@ -16075,8 +16556,8 @@ def _split_text_chunks(text, max_chars=250):
             _ps = (_p or "").strip()
             if not _ps:
                 continue
-            if _SFX_RE.match(_ps):
-                chunks.append(_SFX_RE.match(_ps).group(0).strip())
+            if _SFX_RE.match(_ps) or _SFXBG_RE.match(_ps):
+                chunks.append(_ps)
             else:
                 chunks.extend(_split_text_chunks(_p, max_chars))
         return chunks
@@ -19123,10 +19604,34 @@ def _yt_ts(sec):
     return f"{sec // 60:02d}:{sec % 60:02d}"
 
 
+_BGM_EXTS = (".mp3", ".wav", ".m4a", ".flac", ".ogg", ".opus", ".aac")
+
+
+def _bgm_dir_tracks(path):
+    """Ô nhạc nền là THƯ MỤC → list file nhạc bên trong (sort tên). [] nếu
+    không phải thư mục / rỗng."""
+    try:
+        if path and os.path.isdir(path):
+            return sorted(os.path.join(path, f) for f in os.listdir(path)
+                          if f.lower().endswith(_BGM_EXTS))
+    except Exception:
+        pass
+    return []
+
+
 def _mix_bgm_into(audio_path, bgm_path, vol=0.12, log_prefix="🎵"):
     """Trộn nhạc nền vào audio_path (THAY TẠI CHỖ): bgm loop vô hạn, volume
     thấp, fade-out 2s cuối, amix duration=first → cắt đúng lúc giọng đọc hết
-    (cùng filter đã verify của merge_ffmpeg). Lỗi → giữ nguyên file gốc."""
+    (cùng filter đã verify của merge_ffmpeg). Lỗi → giữ nguyên file gốc.
+    bgm_path là THƯ MỤC → lấy bài đầu tiên (xoay vòng theo chương chỉ có ở
+    chuỗi 🚀 truyện chữ — nơi từng chương là 1 file riêng)."""
+    if bgm_path and os.path.isdir(bgm_path):
+        _tr = _bgm_dir_tracks(bgm_path)
+        if not _tr:
+            return False
+        bgm_path = _tr[0]
+        log(f"{log_prefix} Nhạc nền là thư mục — dùng bài đầu: "
+            f"{os.path.basename(bgm_path)}")
     if not bgm_path or not os.path.isfile(bgm_path):
         return False
     dur = _probe_duration_sec(audio_path) or 0.0
@@ -19155,6 +19660,56 @@ def _mix_bgm_into(audio_path, bgm_path, vol=0.12, log_prefix="🎵"):
     except Exception:
         pass
     log(f"{log_prefix} ⚠ Trộn nhạc nền lỗi — giữ bản không nhạc.")
+    return False
+
+
+def _mix_ambience(audio_path, ranges, vol=0.15, log_prefix="🌧"):
+    """🌧 Trộn các đoạn ambience [sfxbg:] vào audio_path (THAY TẠI CHỖ).
+    ranges = [(start_s, end_s, sfx_file)] — mỗi đoạn: file loop vô hạn, cắt
+    đúng độ dài đoạn, fade-in 1s / fade-out 1.5s, delay tới start rồi amix
+    với giọng đọc (duration=first → không đổi tổng thời lượng).
+    Lỗi → giữ nguyên file gốc."""
+    ranges = [(s, e, f) for s, e, f in ranges
+              if f and os.path.isfile(f) and e - s > 1.0][:_SFXBG_MAX]
+    if not ranges:
+        return False
+    tmp = audio_path + ".amb.mp3"
+    try:
+        cmd = [FFMPEG, "-y", "-v", "error", "-i", audio_path]
+        for _s, _e, f in ranges:
+            cmd += ["-stream_loop", "-1", "-i", f]
+        chains = []
+        labels = ""
+        v = min(max(vol, 0.01), 1.0)
+        for k, (s, e, _f) in enumerate(ranges):
+            d = e - s
+            chains.append(
+                f"[{k + 1}:a]atrim=0:{d:.3f},volume={v},"
+                f"afade=t=in:d=1,"
+                f"afade=t=out:st={max(0.0, d - 1.5):.3f}:d=1.5,"
+                f"adelay={int(s * 1000)}:all=1[b{k}]")
+            labels += f"[b{k}]"
+        fc = (";".join(chains)
+              + f";[0:a]{labels}amix=inputs={len(ranges) + 1}:"
+                "duration=first:normalize=0")
+        r = subprocess.run(
+            cmd + ["-filter_complex", fc, "-c:a", "libmp3lame",
+                   "-b:a", "128k", tmp],
+            capture_output=True, timeout=21600, creationflags=CREATE_NO_WINDOW)
+        if r.returncode == 0 and os.path.isfile(tmp) \
+                and os.path.getsize(tmp) > 1000:
+            os.replace(tmp, audio_path)
+            log(f"{log_prefix} Đã trộn {len(ranges)} đoạn hiệu ứng nền "
+                "([sfxbg:…]).")
+            return True
+        log(f"{log_prefix} ⚠ Trộn hiệu ứng nền lỗi "
+            f"({(r.stderr or b'').decode('utf-8', 'replace')[:150]}) — giữ bản gốc.")
+    except Exception as e:
+        log(f"{log_prefix} ⚠ Trộn hiệu ứng nền lỗi: {e} — giữ bản gốc.")
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
     return False
 
 
@@ -19477,6 +20032,22 @@ def merge_pdf_audio():
         else:
             log(f"[PDF] ⚠ [sfx:{_m.group(1)}] — không thấy file trong thư mục "
                 f"sfx\\ (cạnh settings.json hoặc exe) → bỏ qua hiệu ứng này.")
+    # 🌧 [sfxbg:tên] — sự kiện bật/tắt ambience theo vị trí chunk (main thread)
+    sfxbg_events = []
+    for _i, _c in enumerate(chunks_snap):
+        _m = _SFXBG_RE.match(_c or "")
+        if not _m:
+            continue
+        _name = _m.group(1).strip()
+        if _name.lower() in _SFXBG_OFF:
+            sfxbg_events.append((_i, ""))
+            continue
+        _p = _find_sfx_file(_name)
+        if _p:
+            sfxbg_events.append((_i, _p))
+        else:
+            log(f"[PDF] ⚠ [sfxbg:{_name}] — không thấy file trong thư mục "
+                "sfx\\ → bỏ qua đoạn nền này.")
 
     import time as _time
     ts = int(_time.time())
@@ -19550,6 +20121,43 @@ def merge_pdf_audio():
             added += 1
         if added:
             app.after(0, lambda n=added: log(f"[PDF] 🔊 Chèn {n} hiệu ứng [sfx:…]"))
+
+    def _apply_sfxbg(use_gap):
+        """🌧 Đổi sự kiện [sfxbg:] (theo chunk index) thành các đoạn THỜI GIAN
+        trên file final (đi cùng danh sách files/file_idxs như _build_m4b —
+        sfx chèn thêm đã nằm trong list nên mốc đúng) rồi _mix_ambience.
+        Chạy TRƯỚC 🎚 speed để mọi hậu kỳ sau nhất quán."""
+        if not sfxbg_events:
+            return
+        try:
+            ev = sorted(sfxbg_events)
+            times = []      # (giây, file|"")
+            j = 0
+            t = 0.0
+            for pos, (fp, ci) in enumerate(zip(files, file_idxs)):
+                while j < len(ev) and ev[j][0] <= ci:
+                    times.append((t, ev[j][1]))
+                    j += 1
+                t += _probe_duration_sec(fp) or 0.0
+                if use_gap and pos < len(files) - 1:
+                    t += gap_ms / 1000.0
+            while j < len(ev):
+                times.append((t, ev[j][1]))
+                j += 1
+            ranges = []
+            open_s, open_f = None, ""
+            for s, f in times:
+                if open_s is not None:
+                    ranges.append((open_s, s, open_f))
+                    open_s, open_f = None, ""
+                if f:
+                    open_s, open_f = s, f
+            if open_s is not None:
+                ranges.append((open_s, t, open_f))
+            if ranges:
+                _mix_ambience(output_path, ranges, _SFXBG_VOL, "[PDF] 🌧")
+        except Exception as e:
+            app.after(0, lambda e=e: log(f"[PDF] 🌧 ⚠ Lỗi ambience: {e} — bỏ qua."))
 
     def _build_m4b(use_gap, intro_shift=0.0, m4b_speed=1.0):
         """📚 Xuất thêm .m4b có CHAPTER MARKERS từ heading 'Chương N…' trong
@@ -19640,8 +20248,9 @@ def merge_pdf_audio():
                 update_progress(100, 100)
                 app.after(0, lambda: log(f"[PDF] Merge OK → {out_name}"))
                 _prod_add("audio_sec", _probe_duration_sec(output_path) or 0)
-                # Thứ tự: 🎚 tốc độ (đổi thời lượng — làm TRƯỚC mọi mix) →
-                # loudnorm giọng → bgm (mức tương đối ổn định) → jingle
+                # Thứ tự: 🌧 ambience (mốc tính trên file CHƯA tăng tốc) →
+                # 🎚 tốc độ (đổi thời lượng) → loudnorm giọng → bgm → jingle
+                _apply_sfxbg(use_gap)
                 if abs(speed - 1.0) >= 0.02:
                     _speedup_into(output_path, speed, "[PDF] 🎚")
                 if do_loudnorm:
@@ -20209,6 +20818,21 @@ def _emo_parse(text):
     return None, text
 
 
+def _auto_emo_of(text):
+    """🎭 Cảm xúc TỰ ĐỘNG theo dấu câu (heuristic, không cần LLM) — bản
+    'nghèo' của 🎭 AI emotion: câu kết '!' đọc nhanh hơn chút, câu bỏ lửng
+    '...' đọc chậm lại. Cố ý CHỈ dùng nhanh/chậm (delta nhẹ, an toàn);
+    tag tường minh [vui]/[giận]… luôn thắng (chỉ gọi khi không có tag)."""
+    t = (text or "").rstrip().rstrip("\"'”’)")
+    if not t:
+        return None
+    if t.endswith(("...", "…")):
+        return "chậm" if "chậm" in _EMO_PRESETS else None
+    if t.endswith("!"):
+        return "nhanh" if "nhanh" in _EMO_PRESETS else None
+    return None
+
+
 def _edge_rate_emo(emo):
     """rate Edge = rate user ± delta cảm xúc, kẹp [-90, 200]%."""
     base = int(_edge_rate()[:-1])
@@ -20278,6 +20902,12 @@ def _trim_edge_silence(filepath):
 
 async def save_tts(text, filename):
     _emo, text = _emo_parse(text)   # 🎭 tag cảm xúc — bắt TRƯỚC glossary strip
+    if _emo is None:
+        try:   # 🎭 tự động theo dấu câu (checkbox) — tag tường minh luôn thắng
+            if auto_emo_var.get():
+                _emo = _auto_emo_of(text)
+        except Exception:
+            pass
     text = _apply_glossary(text)  # tiền xử lý TTS: từ điển phát âm + đọc số kiểu Việt
     # 🌐 Code-switching: câu ngoại ngữ trong tài liệu Việt → voice Edge tương
     # ứng (quyết định là hàm thuần của text + VOICE → deterministic, an toàn
@@ -21414,6 +22044,11 @@ def _tts_cache_key(text):
     try:
         if code_switch_var.get():
             base += "|cs1"
+    except Exception:
+        pass
+    try:   # 🎭 nhịp theo dấu câu cũng đổi audio ngầm → tách key như cs1
+        if auto_emo_var.get():
+            base += "|ae1"
     except Exception:
         pass
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
@@ -26184,6 +26819,18 @@ def merge_ffmpeg():
     out_name, codec_args = _MERGE_FORMATS.get(
         merge_format_var.get(), _MERGE_FORMATS["mp3"])
 
+    # 🗂 Giữ bản final cũ: regen vài dòng rồi merge lại vẫn so được với bản trước
+    try:
+        if merge_keepold_var.get():
+            _oldp = os.path.join(OUTPUT_DIR, out_name)
+            if os.path.isfile(_oldp):
+                _stem, _ext = os.path.splitext(_oldp)
+                _bak = _stem + time.strftime("_%Y%m%d_%H%M%S") + _ext
+                os.rename(_oldp, _bak)
+                log(f"🗂 Giữ bản final cũ → {os.path.basename(_bak)}")
+    except Exception as _ke:
+        log(f"⚠ Không đổi tên được final cũ ({_ke}) — sẽ bị ghi đè.")
+
     # 🎵 Nhạc nền loop dưới giọng đọc (đường dẫn rỗng/không tồn tại = tắt)
     bgm_path = ""
     bgm_vol = 0.12
@@ -30494,6 +31141,11 @@ _merge_opt_row3.pack(side="top", fill="x", padx=4, pady=(0, 4))
 merge_linevol_var = ctk.BooleanVar(value=False)
 ctk.CTkCheckBox(_merge_opt_row3, text="Cân âm lượng các dòng (đều giọng khi phân vai)",
                 variable=merge_linevol_var, font=("Arial", 12)).pack(side="left", padx=(2, 0))
+# 🗂 Merge lại không ghi đè bản trước — final cũ đổi tên final_YYYYmmdd_HHMMSS
+merge_keepold_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(_merge_opt_row3, text="Giữ bản final cũ",
+                variable=merge_keepold_var, font=("Arial", 12)).pack(
+    side="left", padx=(12, 0))
 
 # 🎵 Nhạc nền/ambience loop nhẹ dưới giọng đọc (truyện audio đỡ "khô").
 # Để trống = tắt. Nhạc tự lặp tới hết giọng đọc rồi fade-out 2s.
@@ -30621,6 +31273,104 @@ btn_html_player = ctk.CTkButton(_g1_create, text="🌐 Trang nghe (HTML)",
                                 command=export_html_player,
                                 height=36, font=("Arial", 13))
 btn_html_player.pack(side="top", fill="x", padx=4, pady=4)
+
+
+# ── 🎴 Xuất bộ thẻ Anki — học ngoại ngữ từ SRT + audio từng dòng ─────────────
+# Nguyên liệu có sẵn: subtitles_cache (SRT — bản song ngữ thì dòng 1 = gốc,
+# phần sau = dịch) + line_NNNN.mp3 trong OUTPUT_DIR. Xuất anki_deck\deck.txt
+# (TSV: mặt trước có [sound:...], mặt sau = nghĩa) + media\ (mp3 đổi tên
+# duy nhất srtts_<hash>_NNNN.mp3 — collection.media của Anki là 1 thùng chung,
+# tên phải không đụng nhau) + HƯỚNG DẪN import. Lock _ANKI_RUNNING.
+_ANKI_RUNNING = [False]
+
+
+def export_anki_deck():
+    if _ANKI_RUNNING[0]:
+        log("🎴 Đang xuất — đợi xong đã.")
+        return
+    if not subtitles_cache or not SRT_FILE:
+        log("🎴 ❌ Load SRT trước (bộ thẻ = câu trong SRT + audio từng dòng).")
+        return
+    if not OUTPUT_DIR or not os.path.isdir(OUTPUT_DIR):
+        log("🎴 ❌ Chưa có thư mục Output chứa line_NNNN.mp3 (chạy TTS trước).")
+        return
+    snap = [clean_text(s.content) for s in subtitles_cache]
+    items = []   # (idx, front, back, mp3_path|'')
+    for i, t in enumerate(snap):
+        if not t.strip():
+            continue
+        if "\n" in t:   # SRT song ngữ: dòng 1 = gốc, phần sau = dịch
+            front, back = t.split("\n", 1)
+        else:
+            front, back = t, ""
+        mp3 = os.path.join(OUTPUT_DIR, f"line_{i:04d}.mp3")
+        items.append((i, front.strip(), back.strip().replace("\n", "<br>"),
+                      mp3 if os.path.isfile(mp3) else ""))
+    if not items:
+        log("🎴 ❌ SRT không có dòng nào có nội dung.")
+        return
+    n_audio = sum(1 for it in items if it[3])
+    out_dir = os.path.join(OUTPUT_DIR, "anki_deck")
+    _ANKI_RUNNING[0] = True
+    log(f"🎴 Xuất {len(items)} thẻ ({n_audio} thẻ có audio) → {out_dir} ...")
+
+    def _worker():
+        try:
+            import hashlib as _hl
+            media_dir = os.path.join(out_dir, "media")
+            os.makedirs(media_dir, exist_ok=True)
+            tag = _hl.sha1((SRT_FILE or "x").encode("utf-8",
+                                                    "ignore")).hexdigest()[:8]
+            lines = []
+            for i, front, back, mp3 in items:
+                snd = ""
+                if mp3:
+                    mname = f"srtts_{tag}_{i:04d}.mp3"
+                    try:
+                        shutil.copy2(mp3, os.path.join(media_dir, mname))
+                        snd = f" [sound:{mname}]"
+                    except Exception:
+                        snd = ""
+                f = front.replace("\t", " ")
+                b = back.replace("\t", " ")
+                lines.append(f"{f}{snd}\t{b}")
+            with open(os.path.join(out_dir, "deck.txt"), "w",
+                      encoding="utf-8") as fo:
+                fo.write("#separator:tab\n#html:true\n")
+                fo.write("\n".join(lines) + "\n")
+            with open(os.path.join(out_dir, "HUONG_DAN_IMPORT.txt"), "w",
+                      encoding="utf-8") as fo:
+                fo.write(
+                    "🎴 IMPORT BỘ THẺ VÀO ANKI\n"
+                    "1) Copy TOÀN BỘ file trong thư mục media\\ vào thư mục "
+                    "collection.media của Anki\n"
+                    "   (Anki → Tools → Check Media sẽ hiện đường dẫn; thường là\n"
+                    "   %APPDATA%\\Anki2\\<Tên hồ sơ>\\collection.media)\n"
+                    "2) Anki → File → Import → chọn deck.txt\n"
+                    "   • Field separator: Tab   • Allow HTML: bật\n"
+                    "   • Field 1 = mặt trước (câu + audio), Field 2 = mặt sau "
+                    "(nghĩa — trống nếu SRT không song ngữ)\n"
+                    "3) Học thôi. (SRT dịch SONG NGỮ ở trang Dịch sẽ cho thẻ "
+                    "2 mặt đầy đủ.)\n")
+            log(f"🎴 ✅ {len(lines)} thẻ ({n_audio} audio) → deck.txt + media\\ "
+                "— đọc HUONG_DAN_IMPORT.txt để nhập vào Anki.")
+            app.after(0, show_fireworks)
+            try:
+                _reveal_output(os.path.join(out_dir, "deck.txt"))
+            except Exception:
+                pass
+        except Exception as e:
+            log(f"🎴 ❌ Lỗi xuất Anki: {e}")
+        finally:
+            _ANKI_RUNNING[0] = False
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+btn_anki = ctk.CTkButton(_g1_create, text="🎴 Xuất thẻ Anki (học tiếng)",
+                         command=export_anki_deck,
+                         height=36, font=("Arial", 13))
+btn_anki.pack(side="top", fill="x", padx=4, pady=4)
 
 btn_open_se = ctk.CTkButton(_g1_io, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="top", fill="x", padx=4, pady=4)
@@ -30953,6 +31703,12 @@ btn_ytdlp_update = ctk.CTkButton(_g6, text="⬆ Cập nhật yt-dlp",
                                  command=update_ytdlp,
                                  height=36, width=150, font=("Arial", 13))
 btn_ytdlp_update.pack(side="left", padx=4, pady=4)
+
+# ⏱ Chống treo: cảnh báo + webhook luôn bật; checkbox này thêm hành động TỰ DỪNG
+watchdog_stop_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(_g6, text="⏱ Tự Dừng khi treo 10'",
+                variable=watchdog_stop_var, font=("Arial", 12),
+                width=170).pack(side="left", padx=(8, 4))
 
 # Hàng 2 trang Hệ thống: quản lý gói cấu hình
 # (các hàm được định nghĩa PHÍA DƯỚI, cạnh khối ui_prefs → lambda late-binding)
@@ -31333,6 +32089,88 @@ btn_cleanup = ctk.CTkButton(_g6b, text="🧹 Dọn dẹp", width=110,
                             command=open_cleanup_dialog,
                             height=36, font=("Arial", 13))
 btn_cleanup.pack(side="left", padx=4, pady=4)
+
+
+# ── 🩺 Hỏi AI vì sao lỗi — chẩn đoán log bằng LLM dịch-provider ──────────────
+# Gửi ~40 dòng log gần nhất (đường dẫn home được ẩn) cho LLM → chẩn đoán
+# tiếng Việt (nguyên nhân + cách sửa) hiện trong dialog. User không rành kỹ
+# thuật tự cứu được mình thay vì gửi 🐞 Gói hỗ trợ rồi chờ.
+_ASKAI_RUNNING = [False]
+
+_ASKAI_SYS = (
+    "Bạn là kỹ thuật viên hỗ trợ của phần mềm Windows 'SRT TTS Studio' — app "
+    "chuyển phụ đề/tài liệu thành audio bằng TTS (Edge TTS online + các engine "
+    "local VoxCPM/VieNeu/F5-TTS/OmniVoice chạy qua các venv riêng như "
+    "voxcpm_env/rvc_env đặt cạnh app), dịch bằng LLM API, dựng video bằng "
+    "ffmpeg, tải video bằng yt-dlp. Dưới đây là các dòng log gần nhất của "
+    "app. Hãy chẩn đoán NGẮN GỌN bằng tiếng Việt cho người KHÔNG rành kỹ "
+    "thuật:\n1) Nguyên nhân khả dĩ nhất (1-2 câu)\n2) Cách sửa từng bước "
+    "(tối đa 5 bước, cụ thể nút nào/trang nào trong app nếu đoán được)\n"
+    "3) Nếu log không có lỗi rõ ràng thì nói thẳng là chưa thấy lỗi.\n"
+    "Không bịa tính năng không chắc có; không markdown cầu kỳ.")
+
+
+def ask_ai_about_error():
+    if _ASKAI_RUNNING[0]:
+        log("🩺 Đang hỏi AI — đợi chút.")
+        return
+    if (TRANSLATE_PROVIDER or "") == "Offline":
+        log("🩺 ❌ Provider Offline không chẩn đoán được — chọn Claude/Gemini/"
+            "OpenAI/Groq/DeepSeek ở trang Dịch.")
+        return
+    try:
+        provider, api_key, model = _translate_active_key()
+    except Exception as e:
+        log(f"🩺 ❌ {e}")
+        return
+    lines = list(_DB_LOG_RING)[-40:]
+    if not lines:
+        log("🩺 Chưa có dòng log nào trong phiên này.")
+        return
+    home = os.path.expanduser("~")
+    tail = "\n".join(l.replace(home, "~") for l in lines)
+
+    win = ctk.CTkToplevel(app)
+    win.title("🩺 Hỏi AI vì sao lỗi")
+    win.geometry("640x460")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+    ctk.CTkLabel(win, text=f"Gửi {len(lines)} dòng log gần nhất cho {provider} "
+                           "để chẩn đoán (đường dẫn cá nhân đã ẩn):",
+                 font=("Arial", 12)).pack(pady=(10, 4), padx=12, anchor="w")
+    box = ctk.CTkTextbox(win, wrap="word", font=("Arial", 13))
+    box.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+    box.insert("1.0", "⏳ Đang hỏi AI...")
+    box.configure(state="disabled")
+
+    def _show(text):
+        try:
+            box.configure(state="normal")
+            box.delete("1.0", "end")
+            box.insert("1.0", text)
+            box.configure(state="disabled")
+        except Exception:
+            pass
+
+    def _worker():
+        try:
+            ans = _llm_call(provider, api_key, model, _ASKAI_SYS,
+                            f"LOG GẦN NHẤT:\n{tail}")
+            app.after(0, lambda: _show(ans.strip() or "(AI không trả lời)"))
+        except Exception as e:
+            app.after(0, lambda e=e: _show(f"❌ Không hỏi được AI: {e}"))
+        finally:
+            _ASKAI_RUNNING[0] = False
+
+    _ASKAI_RUNNING[0] = True
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+btn_askai = ctk.CTkButton(_g6b, text="🩺 Hỏi AI lỗi", width=110,
+                          command=ask_ai_about_error,
+                          height=36, font=("Arial", 13),
+                          fg_color="#6b4fa0", hover_color="#8B5CF6")
+btn_askai.pack(side="left", padx=4, pady=4)
 
 btn_media_edit = ctk.CTkButton(_g5_studio, text="🎬 Edit Studio", command=open_edit_studio, height=36, font=("Arial", 13))
 btn_media_edit.pack(side="left", expand=True, fill="x", padx=4, pady=4)
@@ -32635,9 +33473,11 @@ def _ui_prefs_register():
         "vi_num": vi_num_var, "auto_retry_fail": auto_retry_fail_var,
         "auto_stt_verify": auto_stt_verify_var,
         "trim_silence": trim_silence_var, "teencode": teencode_var,
-        "code_switch": code_switch_var,
+        "code_switch": code_switch_var, "auto_emo": auto_emo_var,
+        "watchdog_stop": watchdog_stop_var,
         "merge_center": merge_center_var, "merge_format": merge_format_var,
         "merge_loudnorm": merge_loudnorm_var, "merge_linevol": merge_linevol_var,
+        "merge_keepold": merge_keepold_var,
         "merge_bgm": merge_bgm_var, "merge_bgm_vol": merge_bgm_vol_var,
         "quick_tts_telex": quick_tts_telex_var,
         "stt_model": stt_model_var, "stt_lang": stt_lang_var,
@@ -34259,6 +35099,134 @@ def _session_autosave_tick():
 
 
 app.after(60000, _session_autosave_tick)
+
+
+# ── ⏱ CHỐNG TREO — canh tiến độ đứng im khi đang chạy job ────────────────────
+# ffmpeg/helper đơ là kẻ giết batch đêm: progress đứng yên > _WATCHDOG_STALL_S
+# trong lúc _CURRENT_MODE là mode chạy → cảnh báo logbox + webhook (1 lần cho
+# mỗi đợt treo); tick 30s trên main thread. Checkbox "tự Dừng" (watchdog_stop_var,
+# trang Hệ thống) → gọi _g_stop() để watch/queue chuyển việc kế thay vì đứng
+# hình tới sáng. Đổi mode = reset mốc (model local load lâu lúc đầu batch chỉ
+# cảnh báo, vô hại).
+def _watchdog_tick():
+    try:
+        if _CURRENT_MODE != _WATCHDOG["mode"]:
+            _WATCHDOG["mode"] = _CURRENT_MODE
+            _WATCHDOG["t"] = time.monotonic()
+            _WATCHDOG["warned"] = False
+        if _CURRENT_MODE in _RUNNING_MODES and _WATCHDOG["t"] > 0:
+            stall = time.monotonic() - _WATCHDOG["t"]
+            if stall > _WATCHDOG_STALL_S and not _WATCHDOG["warned"]:
+                _WATCHDOG["warned"] = True
+                mins = int(stall // 60)
+                log_color(f"⏱ ⚠ CHỐNG TREO: tiến độ đứng im ~{mins} phút "
+                          f"(mode {_CURRENT_MODE}) — tiến trình có thể đã treo "
+                          "(ffmpeg/helper đơ, mạng nghẽn).", "#f96")
+                _notify_webhook(f"⏱ SRT TTS Studio: tiến độ đứng im ~{mins} "
+                                f"phút (mode {_CURRENT_MODE}) — kiểm tra máy!")
+                try:
+                    if watchdog_stop_var.get():
+                        log("⏱ Tự bấm Dừng theo checkbox Chống treo — "
+                            "job kế tiếp (watch/queue) sẽ được chạy.")
+                        _g_stop()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    try:
+        app.after(30000, _watchdog_tick)
+    except Exception:
+        pass
+
+
+app.after(30000, _watchdog_tick)
+
+
+# ── 🆕 "Có gì mới" — hiện CHANGELOG phần đầu sau khi cập nhật bản mới ────────
+# CHANGELOG.md được bundle vào exe (datas trong 4 spec) / nằm cạnh script khi
+# dev. Lấy phần đầu (tới heading release thứ 2), so sha1 với marker
+# whatsnew_seen.txt trong _CONFIG_DIR — khác = bản mới → dialog 1 lần.
+def _whatsnew_head():
+    """(text phần đầu changelog, sha1) — ("", "") nếu không tìm thấy file."""
+    cands = []
+    mp = getattr(sys, "_MEIPASS", "")
+    if mp:
+        cands.append(os.path.join(mp, "CHANGELOG.md"))
+    try:
+        for r in _install_dirs():
+            cands.append(os.path.join(r, "CHANGELOG.md"))
+    except Exception:
+        pass
+    cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "CHANGELOG.md"))
+    for c in cands:
+        try:
+            if not os.path.isfile(c):
+                continue
+            raw = _read_text_smart(c)
+            out = []
+            n_rel = 0
+            for ln in raw.splitlines():
+                if ln.startswith("## "):
+                    n_rel += 1
+                    if n_rel >= 2:
+                        break
+                out.append(ln)
+            head = "\n".join(out).strip()[:8000]
+            if head:
+                return head, hashlib.sha1(
+                    head.encode("utf-8", "ignore")).hexdigest()
+        except Exception:
+            continue
+    return "", ""
+
+
+def _whatsnew_check():
+    try:
+        if app.state() == "withdrawn":     # còn ở splash/login → thử lại sau
+            app.after(10000, _whatsnew_check)
+            return
+    except Exception:
+        return
+    try:
+        head, h = _whatsnew_head()
+        if not head:
+            return
+        marker = os.path.join(_CONFIG_DIR, "whatsnew_seen.txt")
+        seen = ""
+        try:
+            if os.path.isfile(marker):
+                seen = _read_text_smart(marker).strip()
+        except Exception:
+            seen = ""
+        if seen == h:
+            return
+        win = ctk.CTkToplevel(app)
+        win.title("🆕 Có gì mới trong bản này")
+        win.geometry("640x480")
+        win.transient(app); win.lift(); win.attributes("-topmost", True)
+        win.after(300, lambda: win.attributes("-topmost", False))
+        box = ctk.CTkTextbox(win, wrap="word", font=("Arial", 13))
+        box.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        box.insert("1.0", head)
+        box.configure(state="disabled")
+
+        def _seen():
+            try:
+                with open(marker, "w", encoding="utf-8") as f:
+                    f.write(h)
+            except Exception:
+                pass
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _seen)
+        ctk.CTkButton(win, text="✅ Đã đọc", command=_seen, height=38,
+                      font=("Arial", 13, "bold")).pack(fill="x", padx=12,
+                                                       pady=(0, 12))
+    except Exception:
+        pass
+
+
+app.after(12000, _whatsnew_check)
 
 app.mainloop()
 
