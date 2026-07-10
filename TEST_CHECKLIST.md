@@ -87,6 +87,7 @@
 - [ ] Load 1 SRT → thẻ Trạng thái phiên cập nhật **Số dòng** + **Đã tạo (file audio) = N / M**; thẻ **Sẵn sàng chạy?** hiện tóm tắt Khám SRT
 - [ ] Thẻ **Lối tắt nhanh**: bấm mỗi nút → nhảy đúng trang tương ứng; **📂 Mở Output** mở đúng thư mục
 - [ ] Đang chạy TTS → thẻ **Tiến trình job** hiện %/ETA + nút ⏸/▶/⏹ bật; thẻ **Thời gian chạy** đếm elapsed; xong job → 2 thẻ này về trạng thái nghỉ
+- [ ] Thẻ Tiến trình job → dòng **RAM / VRAM** hiện `RAM x% (a/b GB)` cập nhật mỗi 2s; máy có GPU NVIDIA thêm `VRAM a/b GB · GPU x%` (trễ vài giây lần đầu); máy không có GPU chỉ hiện RAM, không lỗi
 - [ ] Thẻ **Bật/tắt nhanh**: gạt 1 switch (vd "Cắt lặng") → sang trang Giọng thấy checkbox tương ứng **đổi theo** (dùng chung biến)
 - [ ] Thẻ **Đổi giọng nhanh**: chọn 1 Hồ sơ giọng → áp dụng ngay (log `✅ Đã áp dụng hồ sơ`), dropdown trang Giọng đồng bộ
 - [ ] Thẻ **Nghe thử nhanh**: gõ text → 🎧 Nghe thử phát đúng giọng; ⏹ Dừng dừng được
@@ -400,6 +401,21 @@
 - [ ] **🔊 [sfx:tên]**: tạo thư mục `sfx\` cạnh settings.json, bỏ `mưa.mp3` vào → TXT có dòng riêng `[sfx:mưa]` → Load Word/TXT → tag thành chunk riêng, TTS log ⏭ bỏ qua (không FAIL) → Merge Audio → log `🔊 Chèn 1 hiệu ứng`, nghe đúng vị trí; tên không có trong sfx\ → chỉ ⚠, merge vẫn chạy
 - [ ] **🏷 Logo** (ô mới card Audio → Video): chọn PNG → 🎬 Tạo Video → logo góc phải trên (thử cả khi bật 🌊 sóng); wizard 🎬 có "Gắn phụ đề cứng" → video dubbed cũng có logo; mux KHÔNG burn → không logo (vẫn -c:v copy nhanh)
 - [ ] **🎼 LRC**: ô Phụ đề chọn file `.lrc` + bật 🎤 Karaoke → video lyric chữ chạy theo mốc thời gian trong file lời; file .lrc không có mốc → ⚠ bỏ qua phụ đề, video vẫn ra
+
+## AO. Đợt 2026-07-09 (3): 📋 clipboard + 🎵 tách audio + 📻 SFX + 📖 EPUB + 🎬 intro/outro + 📂 watch doc
+- [ ] **📋 Dán & đọc** (trang Text → Audio): copy 1 đoạn text bất kỳ → bấm → text hiện trong ô + đọc luôn; clipboard rỗng/không phải text → log nhẹ, không crash
+- [ ] **🎵 Tách audio** (trang Tách Nội Dung): chọn 1 video → MP3 ra cạnh video + fireworks; chọn NHIỀU video → tách loạt; đổi Ra: WAV/M4A hoạt động; video không có tiếng → log ❌ rõ; ⏹ giữa chừng → dừng + xóa file dở
+- [ ] **📻 SFX** (nút cạnh hàng Merge Audio): mở dialog → thấy file trong sfx\ với ▶ nghe + 📋 copy tag; thư mục chưa tồn tại → tự tạo + hướng dẫn; 🔄 Quét lại sau khi bỏ thêm file
+- [ ] **📖 Xuất EPUB** (card Tải truyện chữ): chọn thư mục truyện đã tải → ra `<tên>.epub` mở được bằng app đọc EPUB (mục lục đủ chương); thư mục có cả bản gốc + `_vi` → hỏi chọn; thư mục không có chuong_*.txt → log ❌
+- [ ] **🎬 Intro/Outro video** (2 ô mới card Audio → Video): chọn clip intro/outro → 🎬 Tạo Video → video ra có clip đầu/cuối, thời lượng = tổng; wizard 🎬 dub xong cũng được nối; clip khác kích thước/không tiếng vẫn OK; video chính codec lạ → ⚠ giữ nguyên
+- [ ] **📂 Watch .txt/.epub**: bật watch, thả file .txt vào → log `📖 → audiobook` → TTS + merge tự chạy → `<tên>_audiobook\pdf_output_*.mp3`; thả lại lần 2 → bị bỏ qua (đã có output); file `chuong_*.txt`/`sach_ocr.txt`/`*_full.txt` trong thư mục KHÔNG bị tự ăn
+
+## AP. Đợt 2026-07-09 (4): 🎚 Tốc độ đọc audiobook hậu kỳ
+- [ ] Ô "🎚 Tốc độ ×" (hàng Merge Audio) đặt `1.25` → Merge Audio → log `🎚 Đã tăng tốc đọc ×1.25`, file final ngắn lại đúng tỷ lệ, giọng KHÔNG bị chipmunk (cao độ giữ nguyên)
+- [ ] Bật kèm "Xuất .m4b có chương" → mốc chương trong .m4b khớp audio đã tăng tốc (tua đến chương 2 nghe đúng đầu chương)
+- [ ] Chuỗi 🚀 truyện chữ với tốc độ 1.2 → `<tên>_audiobook.mp3` đã tăng tốc + m4b mốc đúng; 📡 watch auto-TTS ăn theo
+- [ ] Để `1.0`/rỗng/nhập bậy → không đổi gì (không re-encode thừa); nhập `9` → tự kẹp về 3.0
+- [ ] Thứ tự hậu kỳ: tăng tốc chạy TRƯỚC nhạc nền/nhạc hiệu — bgm và intro/outro KHÔNG bị tăng tốc
 
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK

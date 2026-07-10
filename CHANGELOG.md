@@ -6,6 +6,32 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **📊 RAM/VRAM live trên Bảng điều khiển** — thẻ Tiến trình job có dòng "RAM / VRAM" mới,
+  cập nhật mỗi 2s: % RAM hệ thống (psutil, fallback ctypes) + VRAM/GPU util qua nvidia-smi
+  (đo trên thread nền, không chặn UI; máy không có GPU NVIDIA chỉ hiện RAM) — bắt sớm các
+  vụ tràn RAM/VRAM (lip-sync, local TTS) ngay khi job đang chạy.
+- **🎚 Tốc độ đọc audiobook (hậu kỳ)** — ô "🎚 Tốc độ ×" mới trên hàng Merge Audio (trang Tài
+  liệu, mặc định 1.0): áp `atempo` lên file final SAU khi merge (giữ nguyên cao độ giọng) —
+  các engine local (VoxCPM/VieNeu/F5/OmniVoice) vốn không chỉnh được tốc độ giờ cũng ra
+  audiobook 1.1–1.25× được. Áp cho cả Merge Audio tài liệu lẫn chuỗi 🚀 truyện chữ + 📡 watch;
+  mốc chương `.m4b` và mục lục YouTube tự chia lại theo hệ số nên tua chương vẫn đúng.
+- **📋 Dán & đọc** — nút mới trên trang Text → Audio: dán thẳng nội dung clipboard vào ô văn
+  bản và đọc luôn — copy text ở bất kỳ đâu (web/Word/chat) là 1 nút nghe được.
+- **🎵 Tách audio khỏi video** — card mới trang Tách Nội Dung: chọn 1 hoặc nhiều video → xuất
+  file MP3/WAV/M4A cạnh video (tách loạt được, có nút ⏹ riêng).
+- **📻 Thư viện SFX** — nút mới cạnh hàng Merge Audio (trang Tài liệu): liệt kê các file trong
+  thư mục `sfx\` với ▶ nghe thử và 📋 copy sẵn tag `[sfx:tên]`; kèm nút mở thư mục (tự tạo
+  lần đầu) — khỏi phải nhớ tên file khi soạn tài liệu.
+- **📖 Xuất EPUB** — nút mới trên card Tải truyện chữ: đóng gói các `chuong_*.txt` đã tải
+  (hoặc bản dịch `_vi` — có cả hai thì hỏi chọn) thành sách điện tử `.epub` có mục lục chương,
+  đọc trên điện thoại/máy đọc sách. Thuần stdlib, không thêm thư viện.
+- **🎬 Intro/Outro video** — 2 ô mới trên card Audio → Video: nối clip hiệu kênh vào đầu/cuối
+  video thành phẩm (tự scale khớp khung, clip không có tiếng tự chèn track lặng); video từ
+  wizard 🎬 Lồng tiếng cũng được nối chung 2 ô này. Video chính không phải h264+aac thì bỏ
+  qua an toàn.
+- **📂 Watch folder nhận .txt/.epub** — thả file truyện/tài liệu vào thư mục theo dõi → tự đọc
+  TTS + Merge thành audiobook trong `<tên>_audiobook\` (theo tùy chọn m4b/nghỉ/nhạc nền hiện
+  tại); marker hoàn tất = file output tồn tại, sống sót restart như SRT/video.
 - **📄 PDF scan → OCR → Đọc** — card 📷 Ảnh scan sách nhận thêm FILE PDF scan (mỗi trang là
   ảnh): nút 📄 mới tách ảnh từng trang bằng pypdf rồi đi qua đúng đường OCR → `sach_ocr.txt`
   → Đọc (TTS). PDF chữ vẫn dùng Load PDF thường.
