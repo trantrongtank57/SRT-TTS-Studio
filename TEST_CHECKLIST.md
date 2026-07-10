@@ -417,6 +417,21 @@
 - [ ] Để `1.0`/rỗng/nhập bậy → không đổi gì (không re-encode thừa); nhập `9` → tự kẹp về 3.0
 - [ ] Thứ tự hậu kỳ: tăng tốc chạy TRƯỚC nhạc nền/nhạc hiệu — bgm và intro/outro KHÔNG bị tăng tốc
 
+## AQ. Đợt 2026-07-10: 🩹 Sửa lỗi OCR bằng AI
+- [ ] Card 📷 → **🩹 Sửa lỗi OCR (AI)** (cần API key dịch cloud; Offline → từ chối có hướng dẫn) → chọn `sach_ocr.txt` → dialog xác nhận hiện số cụm + số ký tự → chạy → ra `<tên>_fixed.txt` + log `✅ sửa N/M cụm`
+- [ ] Xong hỏi "Nạp bản đã sửa vào Đọc (TTS) luôn?" → Yes → chunks nạp + set_mode pdf; heading "Chương N" còn nguyên → Merge với .m4b vẫn ra mục lục
+- [ ] ⏹ của card giữa chừng → dừng, file `_fixed.txt` vẫn ghi (phần chưa sửa giữ gốc); trong lúc chạy nút 📷 OCR và 🩹 bị khóa
+- [ ] Rút mạng/API lỗi → log `⚠ Lỗi API — giữ nguyên N cụm`, chạy tiếp không crash, output không mất đoạn nào
+
+## AR. Đợt 2026-07-10 (2): 🎭 RVC file + 🧹 luật lọc + 🎞 nền động + 🖱 kéo-thả + 🌐 player + 💾 autosave
+- [ ] **🎭 Đổi giọng (RVC)** (trang Text → Audio): cấu hình model .pth ở panel RVC → chọn 1 mp3 vài phút → 🎭 Đổi giọng → log từng đoạn → `<tên>_rvc.mp3` giọng mới; chưa chọn model → lỗi hướng dẫn của preflight RVC; ⏹ → dừng sau đoạn đang chạy
+- [ ] **🧹 Luật lọc text**: thêm luật `\[TN:[^\]]*\] =>` → 🧪 Thử thấy [TN] biến mất → Lưu → Quick TTS đọc câu có [TN: ...] → không đọc phần chú thích; luật regex hỏng → bị bỏ + báo dòng lỗi; luật nằm trong 📦 gói cấu hình
+- [ ] **🎞 Nền video**: ô Nền chọn 1 clip ngắn → 🎬 Tạo Video → nền loop suốt video, audio là audio chính (không dính tiếng của clip nền)
+- [ ] **🖼 Slideshow**: 📂 chọn thư mục 3 ảnh + audio là file .m4b có chương (hoặc mp3 cạnh youtube_description.txt) → video đổi ảnh đúng mốc chương; audio không mốc → chia đều; thư mục rỗng → ⚠ fallback ảnh tĩnh
+- [ ] **🖱 Kéo-thả**: thả .txt → nạp Đọc (TTS) + nhảy trang Tài liệu; thả 2 file mp3 → điền ô Audio → Video; thả video → wizard 🎬 mở với video điền sẵn; thả .lrc → ô Phụ đề
+- [ ] **🌐 Trang nghe**: sau Merge SRT → bấm → chọn final.mp3 + final_synced.srt → `player.html` mở bằng browser: phát audio, câu tự sáng + cuộn, click câu tua đúng
+- [ ] **💾 Autosave**: load SRT + chọn output → đợi >1 phút → kill app bằng Task Manager → mở lại → gợi ý ↩ Khôi phục phiên vẫn đúng file
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

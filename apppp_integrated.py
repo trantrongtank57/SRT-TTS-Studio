@@ -3051,6 +3051,157 @@ def _glossary_save():
     except Exception as e:
         log(f"[Từ điển] ❌ Không ghi được {_GLOSSARY_FILE}: {e}")
 
+
+# ── 🧹 Luật lọc text (regex) — XÓA/THAY rác trước TTS ────────────────────────
+# Từ điển phát âm chỉ đổi CÁCH ĐỌC; luật lọc thì XÓA/THAY nội dung rác mà TTS
+# đang đọc thành tiếng: ghi chú người dịch [TN: ...], footer "Đọc tiếp tại...",
+# watermark nhóm dịch... Mỗi luật: `pattern => thay_thế` (regex, thay_thế rỗng
+# = xóa; biên dịch với re.M nên ^$ khớp từng dòng; (?i) trong pattern nếu cần
+# không phân biệt hoa thường). Áp trong _apply_glossary NGAY SAU khử ký tự OCR,
+# TRƯỚC từ điển — chỉ ảnh hưởng text đưa vào TTS, không đụng file gốc/bản dịch.
+# File riêng text_rules.json cạnh settings.json (như glossary.json).
+_TEXT_RULES_FILE = os.path.join(
+    os.path.dirname(_SETTINGS_FILE) or ".", "text_rules.json")
+TEXT_RULES = []          # list [pattern_str, repl_str] (nguyên văn để soạn lại)
+_TEXT_RULES_RX = [[]]    # list (compiled_regex, repl) — pattern hỏng bị bỏ
+
+_TEXT_RULES_EXAMPLE = """\
+# 🧹 LUẬT LỌC TEXT — mỗi dòng:  pattern_regex => thay_thế   (# = ghi chú)
+# thay_thế để TRỐNG = xóa khớp. ^$ khớp theo TỪNG DÒNG. (?i) = không phân biệt hoa thường.
+# Ví dụ (bỏ dấu # đầu dòng để dùng):
+#\\[TN:[^\\]]*\\] =>
+#\\[ND:[^\\]]*\\] =>
+#(?i)^.*đọc (truyện |tiếp )?tại.*$ =>
+#(?i)^.*(converted?|edit(ed)?) by.*$ =>
+"""
+
+
+def _text_rules_compile():
+    out = []
+    for pat, repl in TEXT_RULES:
+        try:
+            out.append((re.compile(pat, re.M), repl))
+        except re.error as e:
+            log(f"[Luật lọc] ⚠ Pattern hỏng, bỏ qua: {pat}  ({e})")
+    _TEXT_RULES_RX[0] = out
+
+
+def _text_rules_load():
+    global TEXT_RULES
+    try:
+        if os.path.isfile(_TEXT_RULES_FILE):
+            with open(_TEXT_RULES_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, list):
+                TEXT_RULES = [[str(p), str(r)] for p, r in d
+                              if str(p).strip()]
+    except Exception as e:
+        log(f"[Luật lọc] ⚠ Không đọc được {_TEXT_RULES_FILE}: {e}")
+    _text_rules_compile()
+
+
+def _text_rules_save():
+    try:
+        with open(_TEXT_RULES_FILE, "w", encoding="utf-8") as f:
+            json.dump(TEXT_RULES, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        log(f"[Luật lọc] ❌ Không ghi được {_TEXT_RULES_FILE}: {e}")
+
+
+def _apply_text_rules(text):
+    """Áp các luật lọc đã biên dịch — lỗi 1 luật không chặn TTS."""
+    for rx, repl in _TEXT_RULES_RX[0]:
+        try:
+            text = rx.sub(repl, text)
+        except Exception:
+            pass
+    return text
+
+
+_text_rules_load()
+
+
+def open_text_rules_dialog():
+    """🧹 Soạn luật lọc: textbox mỗi dòng `pattern => thay_thế`, có nút thử
+    trên 1 câu mẫu trước khi lưu."""
+    win = ctk.CTkToplevel(app)
+    win.title("🧹 Luật lọc text (regex) — xóa/thay rác trước khi TTS đọc")
+    win.geometry("680x520")
+    win.transient(app); win.lift(); win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
+    ctk.CTkLabel(win, text="Mỗi dòng: pattern_regex => thay_thế  (trống = xóa; "
+                           "# = ghi chú; ^$ khớp từng dòng; (?i) = bỏ hoa/thường)\n"
+                           "Chỉ ảnh hưởng text đưa vào TTS — file SRT/bản dịch "
+                           "giữ nguyên. Chạy TRƯỚC Từ điển phát âm.",
+                 font=("Arial", 11), justify="left").pack(pady=(10, 4), padx=12,
+                                                          anchor="w")
+    box = ctk.CTkTextbox(win, wrap="none", font=("Consolas", 12))
+    box.pack(fill="both", expand=True, padx=12, pady=4)
+    if TEXT_RULES:
+        box.insert("1.0", "\n".join(f"{p} => {r}" for p, r in TEXT_RULES))
+    else:
+        box.insert("1.0", _TEXT_RULES_EXAMPLE)
+
+    def _parse_box():
+        rules = []
+        bad = []
+        for ln in box.get("1.0", "end").splitlines():
+            s = ln.strip()
+            if not s or s.startswith("#"):
+                continue
+            if "=>" not in s:
+                bad.append(ln)
+                continue
+            pat, _, repl = s.partition("=>")
+            pat = pat.strip()
+            repl = repl.strip()
+            if not pat:
+                continue
+            try:
+                re.compile(pat, re.M)
+            except re.error as e:
+                bad.append(f"{ln}   ← {e}")
+                continue
+            rules.append([pat, repl])
+        return rules, bad
+
+    test_var = ctk.StringVar(
+        value="Anh nói. [TN: chú thích người dịch] Đọc tiếp tại abc.com")
+    row_t = ctk.CTkFrame(win, fg_color="transparent")
+    row_t.pack(fill="x", padx=12, pady=(4, 0))
+    ctk.CTkEntry(row_t, textvariable=test_var).pack(side="left", expand=True,
+                                                    fill="x", padx=(0, 6))
+
+    def _try_rules():
+        rules, bad = _parse_box()
+        txt = test_var.get()
+        for pat, repl in rules:
+            try:
+                txt = re.sub(pat, repl, txt, flags=re.M)
+            except Exception:
+                pass
+        log(f"[Luật lọc] 🧪 Thử {len(rules)} luật → “{txt.strip()}”"
+            + (f"  (⚠ {len(bad)} dòng lỗi)" if bad else ""))
+        for b in bad[:5]:
+            log(f"[Luật lọc]   ⚠ {b}")
+    ctk.CTkButton(row_t, text="🧪 Thử", width=80,
+                  command=_try_rules).pack(side="left")
+
+    def _save():
+        global TEXT_RULES
+        rules, bad = _parse_box()
+        TEXT_RULES = rules
+        _text_rules_compile()
+        _text_rules_save()
+        log(f"[Luật lọc] 💾 Đã lưu {len(rules)} luật"
+            + (f" — ⚠ {len(bad)} dòng lỗi bị bỏ:" if bad else "."))
+        for b in bad[:5]:
+            log(f"[Luật lọc]   ⚠ {b}")
+        win.destroy()
+    ctk.CTkButton(win, text="💾 Lưu luật lọc", command=_save, height=38,
+                  font=("Arial", 13, "bold")).pack(fill="x", padx=12,
+                                                   pady=(8, 12))
+
 # ── Đọc số kiểu Việt (tiền tệ / ngày tháng / giờ) ────────────────────────────
 # TTS đọc "1.500.000đ" / "20/11/2024" / "19h30" rất tệ — chuyển thành chữ
 # trước khi sinh audio. Pattern chọn lọc (cần đuôi đ/đồng, đủ dd/mm/yyyy,
@@ -3353,6 +3504,9 @@ def _apply_glossary(text):
     vì tag không còn)."""
     _, text = _emo_parse(text)
     text = _clean_ocr_text(text)
+    # 🧹 luật lọc regex của user (xóa/thay rác) — TRƯỚC từ điển phát âm
+    if text and _TEXT_RULES_RX[0]:
+        text = _apply_text_rules(text)
     rx = _GLOSSARY_RX[0]
     if rx is not None and text:
         lmap = _GLOSSARY_LMAP[0]
@@ -3534,6 +3688,10 @@ ctk.CTkButton(
 ctk.CTkButton(
     voice_profile_row, text="📖 Từ điển phát âm", width=150,
     command=open_glossary_dialog,
+).pack(side="left", padx=(6, 0))
+ctk.CTkButton(
+    voice_profile_row, text="🧹 Luật lọc text", width=130,
+    command=open_text_rules_dialog,
 ).pack(side="left", padx=(6, 0))
 ctk.CTkButton(
     voice_profile_row, text="🔬 So giọng", width=100,
@@ -6781,13 +6939,19 @@ ctk.CTkEntry(_g_a2v1, textvariable=a2v_audio_var,
 ctk.CTkButton(_g_a2v1, text="Browse", width=70,
               command=lambda: _a2v_browse(a2v_audio_var, "audio")).pack(side="left", padx=(0, 4))
 _g_a2v2 = _sec_row(_sec_a2v)
-ctk.CTkLabel(_g_a2v2, text="Ảnh nền:", font=("Arial", 12), width=60,
+ctk.CTkLabel(_g_a2v2, text="Nền:", font=("Arial", 12), width=60,
              anchor="w").pack(side="left", padx=(4, 2))
 ctk.CTkEntry(_g_a2v2, textvariable=a2v_img_var,
-             placeholder_text="(tùy chọn — để trống = nền màu tối)").pack(
+             placeholder_text="(tùy chọn — ảnh · video loop · THƯ MỤC ảnh = "
+                              "slideshow theo chương; trống = nền tối)").pack(
     side="left", expand=True, fill="x", padx=(0, 4))
 ctk.CTkButton(_g_a2v2, text="Browse", width=70,
-              command=lambda: _a2v_browse(a2v_img_var, "image")).pack(side="left", padx=(0, 4))
+              command=lambda: _a2v_browse(a2v_img_var, "bg")).pack(side="left", padx=(0, 4))
+ctk.CTkButton(_g_a2v2, text="📂", width=36,
+              command=lambda: (lambda d: a2v_img_var.set(d) if d else None)(
+                  filedialog.askdirectory(
+                      title="Chọn THƯ MỤC ảnh (slideshow đổi ảnh theo chương)"))
+              ).pack(side="left", padx=(0, 4))
 _g_a2v3 = _sec_row(_sec_a2v)
 ctk.CTkLabel(_g_a2v3, text="Phụ đề:", font=("Arial", 12), width=60,
              anchor="w").pack(side="left", padx=(4, 2))
@@ -10969,11 +11133,15 @@ def _scanbook_set_running(on):
         btn_scanbook_stop.configure(state="normal" if on else "disabled")
     except Exception:
         pass
+    try:
+        btn_scanbook_fix.configure(state="disabled" if on else "normal")
+    except Exception:
+        pass
 
 
 def _scanbook_start():
-    if _SCANBOOK_RUNNING[0]:
-        log("📷 Đang chạy — đợi xong hoặc bấm ⏹.")
+    if _SCANBOOK_RUNNING[0] or _SCANFIX_RUNNING[0]:
+        log("📷 Card đang bận — đợi xong hoặc bấm ⏹.")
         return
     src = scanbook_dir_var.get().strip().strip('"')
     pdf_path = ""
@@ -11018,6 +11186,153 @@ def _scanbook_stop():
             except Exception:
                 pass
         log("📷 ⏹ Đang dừng...")
+    if _SCANFIX_RUNNING[0]:
+        _SCANFIX_STOP[0] = True
+        log("🩹 ⏹ Đang dừng sửa OCR (phần đã sửa vẫn được lưu)...")
+
+
+# ── 🩹 Sửa lỗi OCR bằng AI — biên tập sach_ocr.txt trước khi đốt giờ TTS ─────
+# Text OCR chắc chắn dính lỗi nhận dạng (sai dấu, từ dính/tách, dấu câu vỡ).
+# Gửi từng cụm qua LLM dịch-provider với prompt "chỉ sửa lỗi OCR, giữ nguyên
+# nội dung" — đúng pattern 🪄 SRT AI transform ([[n]] + _parse_marked, lỗi API
+# giữ nguyên gốc, không bao giờ mất nội dung). Dùng chung ⏹ của card 📷.
+_SCANFIX_RUNNING = [False]
+_SCANFIX_STOP = [False]
+_SCANFIX_BATCH = 8        # cụm ~800 ký tự / lần gửi → ~6.400 ký tự / call
+
+
+def _scanbook_ai_fix():
+    if _SCANFIX_RUNNING[0] or _SCANBOOK_RUNNING[0]:
+        log("🩹 Card 📷 đang bận — đợi xong hoặc bấm ⏹.")
+        return
+    if (TRANSLATE_PROVIDER or "") == "Offline":
+        log("🩹 ❌ Provider Offline không biên tập được — chọn Claude/Gemini/"
+            "OpenAI/Groq/DeepSeek ở trang Dịch.")
+        return
+    try:
+        provider, api_key, model = _translate_active_key()
+    except Exception as e:
+        log(f"🩹 ❌ {e}")
+        return
+    # Mặc định trỏ sẵn vào sach_ocr.txt của nguồn đang chọn
+    _src = scanbook_dir_var.get().strip().strip('"')
+    if _src.lower().endswith(".pdf"):
+        _src = os.path.dirname(_src)
+    init_dir = _src if os.path.isdir(_src) else None
+    path = filedialog.askopenfilename(
+        title="Chọn file text OCR cần sửa (vd sach_ocr.txt)",
+        initialdir=init_dir, initialfile="sach_ocr.txt",
+        filetypes=[("Text", "*.txt"), ("All files", "*.*")])
+    if not path:
+        return
+    try:
+        text = _read_text_smart(path)
+    except Exception as e:
+        log(f"🩹 ❌ Không đọc được file: {e}")
+        return
+    # Cụm ~800 ký tự giữ ranh giới câu/đoạn — heading "Chương N" là đoạn
+    # riêng nên sống sót nguyên vẹn (m4b vẫn bắt được mục lục sau này)
+    chunks = _split_text_chunks(text, max_chars=800)
+    if not chunks:
+        log("🩹 ❌ File rỗng.")
+        return
+    n_chars = sum(len(c) for c in chunks)
+    out_path = os.path.splitext(path)[0] + "_fixed.txt"
+    if not msg.askyesno(
+            "🩹 Sửa lỗi OCR bằng AI",
+            f"Gửi {len(chunks)} cụm ({n_chars:,} ký tự) qua {provider} để sửa "
+            f"lỗi OCR?\n(Provider trả phí sẽ tính tiền theo ký tự.)\n\n"
+            f"Kết quả: {os.path.basename(out_path)}"):
+        return
+    _SCANFIX_STOP[0] = False
+    _SCANFIX_RUNNING[0] = True
+    _scanbook_set_running(True)
+    log(f"🩹 Sửa lỗi OCR: {len(chunks)} cụm / {n_chars:,} ký tự bằng {provider}...")
+
+    def _worker():
+        system = (
+            "Bạn là biên tập viên sửa LỖI OCR (nhận dạng chữ từ ảnh scan). Với "
+            "mỗi đoạn được đánh dấu [[n]]: chỉ sửa lỗi nhận dạng — ký tự sai, "
+            "dấu tiếng Việt sai, từ bị dính/tách nhầm, dấu câu vỡ, gạch nối "
+            "cuối dòng, số/chữ lẫn lộn (0↔O, 1↔l). GIỮ NGUYÊN nội dung, văn "
+            "phong và ngôn ngữ gốc; KHÔNG tóm tắt, KHÔNG thêm bớt câu, KHÔNG "
+            "bình luận. Đoạn không có lỗi thì trả về NGUYÊN VĂN. Chỉ trả về "
+            "các đoạn dạng: [[n]] nội-dung.")
+        fixed = {}
+        n_fail = 0
+        done = 0
+        stopped = False
+        try:
+            for bs in range(0, len(chunks), _SCANFIX_BATCH):
+                if _SCANFIX_STOP[0]:
+                    stopped = True
+                    break
+                batch = list(range(bs, min(bs + _SCANFIX_BATCH, len(chunks))))
+                user = "\n\n".join(f"[[{k + 1}]] {chunks[i]}"
+                                   for k, i in enumerate(batch))
+                raw = None
+                for _try in range(2):
+                    try:
+                        raw = _llm_call(provider, api_key, model, system, user)
+                        break
+                    except Exception as e:
+                        if _try == 0:
+                            time.sleep(2)
+                        else:
+                            n_fail += len(batch)
+                            log(f"🩹 ⚠ Lỗi API — giữ nguyên {len(batch)} cụm: {e}")
+                if raw:
+                    parsed = _parse_marked(raw, len(batch))
+                    for k, i in enumerate(batch):
+                        new = (parsed.get(k) or "").strip()
+                        # nhận bản sửa chỉ khi không rỗng và độ dài không lệch
+                        # quá 30% (chặn LLM tóm tắt/chém thêm)
+                        if new and new != chunks[i] \
+                                and abs(len(new) - len(chunks[i])) \
+                                <= max(40, int(len(chunks[i]) * 0.3)):
+                            fixed[i] = new
+                done += len(batch)
+                update_progress(done, len(chunks))
+            # Ghi file (kể cả khi dừng giữa chừng — phần chưa sửa giữ gốc)
+            out_chunks = [fixed.get(i, chunks[i]) for i in range(len(chunks))]
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("\n\n".join(out_chunks))
+            log(f"🩹 {'⏹ Dừng — đã' if stopped else '✅'} sửa "
+                f"{len(fixed)}/{len(chunks)} cụm"
+                + (f" ({n_fail} cụm lỗi API giữ gốc)" if n_fail else "")
+                + f" → {os.path.basename(out_path)}")
+            try:
+                _reveal_output(out_path)
+            except Exception:
+                pass
+            if not stopped:
+                def _ask_load():
+                    if msg.askyesno("🩹 Sửa lỗi OCR",
+                                    "Nạp bản đã sửa vào Đọc (TTS) luôn?"):
+                        global PDF_FILE, PDF_CHUNKS, current_index
+                        tts_chunks = _split_text_chunks(
+                            "\n\n".join(out_chunks))
+                        PDF_FILE = out_path
+                        PDF_CHUNKS = tts_chunks
+                        current_index = 0
+                        subtitle_list.configure(state="normal")
+                        subtitle_list.delete("1.0", "end")
+                        for i, c in enumerate(tts_chunks):
+                            subtitle_list.insert("end", f"[{i}] {c}\n\n")
+                        subtitle_list.configure(state="disabled")
+                        set_mode("pdf")
+                        log(f"🩹 Đã nạp {len(tts_chunks)} đoạn — Chọn Output "
+                            "rồi bấm 'Đọc (TTS)'.")
+                app.after(0, _ask_load)
+                app.after(0, show_fireworks)
+        except Exception as e:
+            log(f"🩹 ❌ Lỗi: {e}")
+        finally:
+            _SCANFIX_RUNNING[0] = False
+            app.after(0, lambda: _scanbook_set_running(False))
+            app.after(0, lambda: update_progress(0, 1))
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 scanbook_dir_var = ctk.StringVar()
@@ -11068,6 +11383,12 @@ btn_scanbook_run = ctk.CTkButton(_sb_r2, text="📷 OCR & nạp Đọc (TTS)",
                                  font=("Arial", 13, "bold"),
                                  command=lambda: _scanbook_start())
 btn_scanbook_run.pack(side="left", expand=True, fill="x", padx=4, pady=6)
+btn_scanbook_fix = ctk.CTkButton(_sb_r2, text="🩹 Sửa lỗi OCR (AI)",
+                                 height=38, width=160,
+                                 fg_color="#6b4fa0", hover_color="#8B5CF6",
+                                 font=("Arial", 13, "bold"),
+                                 command=lambda: _scanbook_ai_fix())
+btn_scanbook_fix.pack(side="left", padx=4, pady=6)
 btn_scanbook_stop = ctk.CTkButton(_sb_r2, text="⏹ Dừng", height=38, width=110,
                                   fg_color="#7a3b3b", hover_color="#9a4b4b",
                                   state="disabled",
@@ -11080,8 +11401,9 @@ ctk.CTkLabel(
          "model ~100 MB/ngôn ngữ). Ảnh xếp theo TÊN FILE (đặt 001.jpg, 002.jpg…); "
          "thư mục chứa nhiều thư mục con = mỗi thư mục 1 chương → .m4b có mục lục. "
          "📄 = chọn PDF SCAN (mỗi trang là ảnh — PDF chữ thì dùng Load PDF thường). "
-         "Text OCR lưu ra sach_ocr.txt cạnh nguồn để dò lỗi. Hợp sách chụp "
-         "1 cột, chữ in rõ; chữ viết tay/2 cột kết quả sẽ kém.",
+         "Text OCR lưu ra sach_ocr.txt cạnh nguồn để dò lỗi; 🩹 gửi text đó qua AI "
+         "(provider trang Dịch, tính phí theo ký tự) sửa lỗi nhận dạng rồi nạp lại. "
+         "Hợp sách chụp 1 cột, chữ in rõ; chữ viết tay/2 cột kết quả sẽ kém.",
     font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
     wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
 
@@ -11589,6 +11911,178 @@ ctk.CTkButton(
     _qt_out, text="📂 Mở Output", command=_quick_tts_open_output,
     height=40, font=("Arial", 13),
 ).pack(side="top", fill="x", padx=4, pady=3)
+
+# ════════════════════════════════════════════════════════════════════════════
+# 🎭 ĐỔI GIỌNG FILE AUDIO CÓ SẴN (RVC) — không cần TTS lại, không tốn API
+# RVC convert được audio bất kỳ: final.mp3 / audiobook 10 tiếng → giọng model
+# .pth đang cấu hình ở panel RVC (tab Giọng nói; pitch/algo/index dùng chung).
+# File dài được CHIA ĐOẠN 10 phút (ffmpeg segment) → convert từng đoạn (chặn
+# RAM/timeout của rvc_env) → concat -c copy lại. Translate-button pattern:
+# khóa _RVCFILE_RUNNING, ⏹ dừng sau đoạn đang chạy, KHÔNG vào set_mode.
+# ════════════════════════════════════════════════════════════════════════════
+_RVCFILE_RUNNING = [False]
+_RVCFILE_STOP = [False]
+_RVCFILE_SEG_S = 600      # độ dài mỗi đoạn (giây)
+
+_sec_rvcfile = _make_section(
+    "🎭 Đổi giọng file audio (RVC)",
+    "Convert giọng file audio CÓ SẴN (final/audiobook) sang giọng model RVC — "
+    "không TTS lại, không tốn API",
+    "#a05c7b", ws="textaudio")
+rvcfile_var = ctk.StringVar(value="")
+_g_rvf1 = _sec_row(_sec_rvcfile)
+ctk.CTkLabel(_g_rvf1, text="Audio:", font=("Arial", 12), width=60,
+             anchor="w").pack(side="left", padx=(4, 2))
+ctk.CTkEntry(_g_rvf1, textvariable=rvcfile_var,
+             placeholder_text="Chọn 1 hoặc nhiều file audio (ngăn bằng ';')"
+             ).pack(side="left", expand=True, fill="x", padx=(0, 4))
+
+
+def _rvcfile_browse():
+    ps = filedialog.askopenfilenames(
+        title="Chọn file audio cần đổi giọng",
+        initialdir=OUTPUT_DIR if os.path.isdir(OUTPUT_DIR or "") else None,
+        filetypes=[("Audio", "*.mp3 *.wav *.m4a *.flac *.ogg *.opus"),
+                   ("All files", "*.*")])
+    if ps:
+        rvcfile_var.set("; ".join(ps))
+
+
+ctk.CTkButton(_g_rvf1, text="Browse", width=70,
+              command=_rvcfile_browse).pack(side="left", padx=(0, 4))
+_g_rvf2 = _sec_row(_sec_rvcfile)
+btn_rvcfile_run = ctk.CTkButton(_g_rvf2, text="🎭 Đổi giọng", height=38,
+                                fg_color="#a05c7b", hover_color="#b8718f",
+                                font=("Arial", 13, "bold"),
+                                command=lambda: _rvcfile_start())
+btn_rvcfile_run.pack(side="left", expand=True, fill="x", padx=4, pady=6)
+btn_rvcfile_stop = ctk.CTkButton(_g_rvf2, text="⏹ Dừng", height=38, width=110,
+                                 fg_color="#7a3b3b", hover_color="#9a4b4b",
+                                 state="disabled",
+                                 command=lambda: _rvcfile_stop())
+btn_rvcfile_stop.pack(side="left", padx=4, pady=6)
+ctk.CTkLabel(
+    _sec_rvcfile,
+    text="ℹ Dùng model .pth + pitch/algo/index đang cấu hình ở panel RVC "
+         "(tab Giọng nói — tick 'RVC Voice Clone' để mở panel, chọn model, "
+         "xong tắt tick lại cũng được). Kết quả: <tên>_rvc.mp3 cạnh file gốc. "
+         "File dài tự chia đoạn 10 phút để convert — ⏹ có tác dụng sau đoạn "
+         "đang chạy. Cần rvc_env + GPU (CPU rất chậm).",
+    font=("Arial", 10), text_color="#8a93ad", anchor="w", justify="left",
+    wraplength=720).pack(fill="x", padx=8, pady=(2, 4))
+
+
+def _rvcfile_set_running(on):
+    try:
+        btn_rvcfile_run.configure(state="disabled" if on else "normal")
+        btn_rvcfile_stop.configure(state="normal" if on else "disabled")
+    except Exception:
+        pass
+
+
+def _rvcfile_stop():
+    if _RVCFILE_RUNNING[0]:
+        _RVCFILE_STOP[0] = True
+        log("🎭 ⏹ Sẽ dừng sau đoạn đang convert...")
+
+
+def _rvcfile_start():
+    if _RVCFILE_RUNNING[0]:
+        log("🎭 Đang chạy — đợi xong hoặc bấm ⏹.")
+        return
+    files = [f.strip() for f in rvcfile_var.get().split(";") if f.strip()]
+    if not files or any(not os.path.isfile(f) for f in files):
+        log("🎭 ❌ Chưa chọn file audio hợp lệ (nhiều file ngăn bằng ';').")
+        return
+    if not _check_rvc_preflight():   # model/.pth + rvc_env + helper (log sẵn)
+        return
+    ffmpeg_ok, ffmpeg_path, guide = _check_ffmpeg_exists()
+    if not ffmpeg_ok:
+        for l in guide.splitlines():
+            log(l)
+        return
+    _RVCFILE_STOP[0] = False
+    _RVCFILE_RUNNING[0] = True
+    _rvcfile_set_running(True)
+    log(f"🎭 Đổi giọng {len(files)} file bằng model "
+        f"{os.path.basename(rvc_model_var.get().strip())} "
+        f"(chia đoạn {_RVCFILE_SEG_S // 60} phút)...")
+
+    def _one(src):
+        """Convert 1 file → <tên>_rvc.mp3. True nếu OK."""
+        import tempfile
+        out = os.path.splitext(src)[0] + "_rvc.mp3"
+        td = tempfile.mkdtemp(prefix="rvcf_")
+        try:
+            # Chia đoạn đều (re-encode mp3 chuẩn hoá stream cho concat cuối)
+            r = subprocess.run(
+                [ffmpeg_path, "-y", "-v", "error", "-i", src, "-vn",
+                 "-f", "segment", "-segment_time", str(_RVCFILE_SEG_S),
+                 "-c:a", "libmp3lame", "-b:a", "192k",
+                 os.path.join(td, "seg_%04d.mp3")],
+                capture_output=True, timeout=3600,
+                creationflags=CREATE_NO_WINDOW)
+            segs = sorted(os.path.join(td, fn) for fn in os.listdir(td)
+                          if fn.startswith("seg_") and fn.endswith(".mp3"))
+            if r.returncode != 0 or not segs:
+                log("🎭 ❌ Không chia được file audio.")
+                return False
+            for k, seg in enumerate(segs, 1):
+                if _RVCFILE_STOP[0]:
+                    log("🎭 ⏹ Đã dừng.")
+                    return False
+                log(f"🎭   đoạn {k}/{len(segs)}...")
+                _apply_rvc_sync(seg, timeout_s=3600)   # convert TẠI CHỖ
+                update_progress(k, len(segs))
+            # Nối lại
+            lst = os.path.join(td, "cc.txt")
+            with open(lst, "w", encoding="utf-8") as lf:
+                for s in segs:
+                    lf.write(f"file '{s.replace(chr(92), '/')}'\n")
+            r = subprocess.run(
+                [ffmpeg_path, "-y", "-v", "error", "-f", "concat", "-safe",
+                 "0", "-i", lst, "-c", "copy", out],
+                capture_output=True, timeout=3600,
+                creationflags=CREATE_NO_WINDOW)
+            if r.returncode != 0 or not os.path.isfile(out):
+                log("🎭 ❌ Nối các đoạn lỗi.")
+                return False
+            mb = os.path.getsize(out) / 2**20
+            log(f"🎭 ✅ {os.path.basename(out)} ({mb:.1f} MB)")
+            return True
+        except Exception as e:
+            log(f"🎭 ❌ {os.path.basename(src)}: {e}")
+            return False
+        finally:
+            try:
+                import shutil as _sh
+                _sh.rmtree(td, ignore_errors=True)
+            except Exception:
+                pass
+
+    def _worker():
+        try:
+            okc = 0
+            last = ""
+            for src in files:
+                if _RVCFILE_STOP[0]:
+                    break
+                if _one(src):
+                    okc += 1
+                    last = os.path.splitext(src)[0] + "_rvc.mp3"
+            if okc and not _RVCFILE_STOP[0]:
+                update_progress(1, 1)
+                app.after(0, show_fireworks)
+                try:
+                    _reveal_output(last)
+                except Exception:
+                    pass
+        finally:
+            _RVCFILE_RUNNING[0] = False
+            app.after(0, lambda: _rvcfile_set_running(False))
+            app.after(0, lambda: update_progress(0, 1))
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 # =========================
@@ -17056,6 +17550,13 @@ def _a2v_browse(var, kind):
             title="Chọn clip video (intro/outro)",
             filetypes=[("Video", "*.mp4 *.mkv *.mov *.webm *.avi"),
                        ("All files", "*.*")])
+    elif kind == "bg":
+        p = filedialog.askopenfilename(
+            title="Chọn ảnh nền hoặc video nền (loop)",
+            filetypes=[("Ảnh / Video",
+                        "*.jpg *.jpeg *.png *.bmp *.webp "
+                        "*.mp4 *.mkv *.mov *.webm *.avi"),
+                       ("All files", "*.*")])
     else:
         p = filedialog.askopenfilename(
             title="Chọn phụ đề (SRT) hoặc lời bài hát (LRC)",
@@ -17171,6 +17672,112 @@ def _re_word_len(word):
     return word.strip(".,!?;:\"'()[]…-—")
 
 
+# ── 🖼 Nền động cho Audio→Video ──────────────────────────────────────────────
+# Ô "Ảnh nền" nhận thêm: file VIDEO (loop làm nền — mưa rơi/lò sưởi) hoặc
+# THƯ MỤC ảnh (slideshow đổi ảnh theo MỐC CHƯƠNG của audio: chapter nhúng
+# trong m4b, hoặc youtube_description.txt cạnh file; không có mốc → chia đều).
+_A2V_VID_EXTS = (".mp4", ".mkv", ".mov", ".webm", ".avi", ".ts", ".flv")
+
+
+def _audio_chapter_marks(path):
+    """[(giây, tên)] mốc chương của file audio: chapters nhúng (m4b) qua
+    ffprobe → fallback youtube_description.txt cạnh file (định dạng
+    'MM:SS Tên' / 'H:MM:SS Tên' do app tự sinh). [] nếu không có."""
+    try:
+        ok, fp = _check_ffprobe_exists()
+        if ok:
+            r = subprocess.run(
+                [fp, "-v", "quiet", "-print_format", "json",
+                 "-show_chapters", path],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=30,
+                creationflags=CREATE_NO_WINDOW)
+            marks = []
+            for c in (json.loads(r.stdout or "{}").get("chapters") or []):
+                try:
+                    marks.append((float(c.get("start_time", 0)),
+                                  (c.get("tags") or {}).get("title", "")))
+                except Exception:
+                    pass
+            if marks:
+                return marks
+    except Exception:
+        pass
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(path)),
+                         "youtube_description.txt")
+        if os.path.isfile(p):
+            marks = []
+            for ln in _read_text_smart(p).splitlines():
+                m = re.match(r"^(?:(\d+):)?(\d{1,2}):(\d{2})\s+(.+)$",
+                             ln.strip())
+                if m:
+                    t = (int(m.group(1) or 0) * 3600
+                         + int(m.group(2)) * 60 + int(m.group(3)))
+                    marks.append((float(t), m.group(4)))
+            if len(marks) >= 2:
+                return marks
+    except Exception:
+        pass
+    return []
+
+
+def _a2v_slideshow_build(img_dir, aud, dur, w, h):
+    """Dựng nguồn slideshow: pre-scale ảnh về WxH (PIL, cover-fit + pad đen —
+    concat demuxer cần mọi frame cùng kích thước) + file ffconcat với duration
+    theo mốc chương. → (list_path, tmp_dir, n_đoạn, có_mốc_chương). Raise nếu
+    không dựng được (caller fallback ảnh tĩnh)."""
+    imgs = _manga_imgs_from_dir(img_dir)
+    if not imgs:
+        raise RuntimeError("thư mục không có ảnh")
+    from PIL import Image
+    marks = _audio_chapter_marks(aud)
+    if marks:
+        times = sorted({max(0.0, float(t)) for t, _n in marks})
+        if not times or times[0] > 0.01:
+            times.insert(0, 0.0)
+    else:
+        n = len(imgs)
+        step = max(1.0, (dur or 60.0) / n)
+        times = [k * step for k in range(n)]
+    # đệm cuối vượt quá audio — -shortest sẽ cắt đúng tại audio
+    bounds = times + [max(dur or 0.0, times[-1] + 1.0) + 5.0]
+    import tempfile
+    td = tempfile.mkdtemp(prefix="a2v_ss_")
+    scaled = {}
+
+    def _scale(srcp):
+        if srcp in scaled:
+            return scaled[srcp]
+        im = Image.open(srcp)
+        im.load()
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        iw, ih = im.size
+        sc = min(w / iw, h / ih)
+        nw, nh = max(1, int(iw * sc)), max(1, int(ih * sc))
+        canvas = Image.new("RGB", (w, h), (0, 0, 0))
+        canvas.paste(im.resize((nw, nh)), ((w - nw) // 2, (h - nh) // 2))
+        outp = os.path.join(td, f"im_{len(scaled):03d}.png")
+        canvas.save(outp)
+        scaled[srcp] = outp
+        return outp
+
+    lines = []
+    last_p = ""
+    for k in range(len(times)):
+        p = _scale(imgs[k % len(imgs)]).replace("\\", "/")
+        d = max(0.5, bounds[k + 1] - bounds[k])
+        lines.append(f"file '{p}'\nduration {d:.3f}")
+        last_p = p
+    # concat demuxer: lặp lại entry cuối để duration cuối có hiệu lực
+    lines.append(f"file '{last_p}'")
+    lst = os.path.join(td, "ss.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        f.write("ffconcat version 1.0\n" + "\n".join(lines) + "\n")
+    return lst, td, len(times), bool(marks)
+
+
 def start_audio_to_video():
     if _A2V_RUNNING[0]:
         log("[Audio→Video] Đang chạy — đợi xong đã.")
@@ -17182,9 +17789,12 @@ def start_audio_to_video():
             "(nhiều file ngăn bằng ';').")
         return
     img = a2v_img_var.get().strip()
-    if img and not os.path.isfile(img):
-        log("[Audio→Video] ❌ Không thấy file ảnh nền.")
+    if img and not (os.path.isfile(img) or os.path.isdir(img)):
+        log("[Audio→Video] ❌ Không thấy file/thư mục ảnh nền.")
         return
+    bg_is_video = bool(img) and img.lower().endswith(_A2V_VID_EXTS)
+    bg_is_slideshow = bool(img) and os.path.isdir(img)
+    ss_tmps = []   # thư mục temp slideshow — dọn ở cuối _run
     srt_p = a2v_srt_var.get().strip()
     if srt_p and not os.path.isfile(srt_p):
         log("[Audio→Video] ❌ Không thấy file phụ đề.")
@@ -17215,6 +17825,22 @@ def start_audio_to_video():
         """Dựng 1 video. Trả về (ok, out_path)."""
         out_path = os.path.splitext(aud)[0] + "_video.mp4"
         dur = _probe_duration_sec(aud)
+        # 🖼 Thư mục ảnh → slideshow theo mốc chương (lỗi → ảnh đầu làm nền tĩnh)
+        ss_list = ""
+        img_use = img
+        if bg_is_slideshow:
+            try:
+                ss_list, _sstd, _nseg, _bymark = _a2v_slideshow_build(
+                    img, aud, dur or 0.0, _w, _h)
+                ss_tmps.append(_sstd)
+                log(f"[Audio→Video] 🖼 Slideshow {_nseg} đoạn "
+                    + ("theo mốc chương" if _bymark
+                       else "(không thấy mốc chương — chia đều)"))
+            except Exception as _se:
+                log(f"[Audio→Video] ⚠ Không dựng được slideshow ({_se}) — "
+                    "dùng ảnh đầu tiên làm nền tĩnh.")
+                _il = _manga_imgs_from_dir(img)
+                img_use = _il[0] if _il else ""
         # 🎼 Lời bài hát .lrc → SRT (mốc thời gian có sẵn trong file lời)
         if srt_use and srt_use.lower().endswith(".lrc"):
             try:
@@ -17233,13 +17859,18 @@ def start_audio_to_video():
                 _kara = True
         log(f"[Audio→Video] {os.path.basename(aud)} ({_fmt_dur(dur)}) "
             f"→ {os.path.basename(out_path)} [{_w}x{_h}]"
-            + (" | ảnh nền" if img else " | nền màu tối")
+            + (" | 🖼 slideshow" if ss_list else
+               (" | 🎞 nền video loop" if bg_is_video else
+                (" | ảnh nền" if img_use else " | nền màu tối")))
             + (" | 🌊 sóng nhạc" if use_wave else "")
             + (" | 🏷 logo" if logo else "")
             + (" | 🎤 karaoke" if _kara else (" | burn phụ đề" if srt_use else "")))
-        # scale/pad về khung đã chọn, chẵn pixel (libx264 kỵ kích thước lẻ)
+        # scale/pad về khung đã chọn, chẵn pixel (libx264 kỵ kích thước lẻ).
+        # Slideshow: nguồn concat chỉ có vài frame → ép fps=15 để tái sinh
+        # frame đều (phụ đề/karaoke/sóng cần frame liên tục mới vẽ được).
         base_vf = (f"scale={_w}:{_h}:force_original_aspect_ratio=decrease,"
-                   f"pad={_w}:{_h}:(ow-iw)/2:(oh-ih)/2:color=black")
+                   f"pad={_w}:{_h}:(ow-iw)/2:(oh-ih)/2:color=black"
+                   + (",fps=15" if ss_list else ""))
         sub_vf = f",subtitles={_ff_sub_filterpath(sub_target)}" if sub_target else ""
         if use_wave or logo:
             # Sóng/logo cần nhiều stream → -filter_complex (không dùng chung
@@ -17263,18 +17894,26 @@ def start_audio_to_video():
             vid_args = ["-filter_complex", fc,
                         "-map", "[vout]", "-map", "1:a"]
         else:
-            vid_args = ["-vf", base_vf + sub_vf]
+            # -map tường minh: nền video loop có cả track audio riêng —
+            # không map thì ffmpeg có thể tự chọn audio của NỀN thay vì audio chính
+            vid_args = ["-vf", base_vf + sub_vf, "-map", "0:v", "-map", "1:a"]
         if globals().get("DETECTED_GPU"):
             vcodec = ["-c:v", "h264_nvenc", "-preset", "p5",
                       "-rc", "vbr", "-cq", "26", "-b:v", "0"]
         else:
             # tune stillimage chỉ khi khung hình thật sự tĩnh
             vcodec = (["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
-                      if use_wave else
+                      if (use_wave or bg_is_video or ss_list) else
                       ["-c:v", "libx264", "-tune", "stillimage",
                        "-preset", "veryfast", "-crf", "23"])
-        if img:
-            src = ["-loop", "1", "-framerate", "15", "-i", img]
+        if ss_list:
+            # 🖼 slideshow: nguồn = danh sách ảnh (đã pre-scale) + duration
+            src = ["-f", "concat", "-safe", "0", "-i", ss_list]
+        elif img_use and bg_is_video:
+            # 🎞 video nền: loop vô hạn — -shortest cắt đúng độ dài audio
+            src = ["-stream_loop", "-1", "-i", img_use]
+        elif img_use:
+            src = ["-loop", "1", "-framerate", "15", "-i", img_use]
         else:
             src = ["-f", "lavfi", "-i", f"color=c=0x141a26:s={_w}x{_h}:r=15"]
         # 🏷 logo là input 2 (sau nền + audio)
@@ -17352,6 +17991,12 @@ def start_audio_to_video():
         except Exception as e:
             log(f"[Audio→Video] ❌ {e}")
         finally:
+            for _t in ss_tmps:   # dọn temp slideshow (ảnh pre-scale + list)
+                try:
+                    import shutil as _sh
+                    _sh.rmtree(_t, ignore_errors=True)
+                except Exception:
+                    pass
             _A2V_PROC[0] = None
             _A2V_RUNNING[0] = False
 
@@ -17914,11 +18559,12 @@ def _epub_extract_text(path):
     return "\n\n".join(parts)
 
 
-def load_doc_tts():
+def load_doc_tts(path=None):
     """Nạp file Word (.docx) / EPUB / TXT vào pipeline PDF_CHUNKS để Đọc (TTS)
-    — dùng chung toàn bộ chức năng với Đọc PDF (TTS)."""
+    — dùng chung toàn bộ chức năng với Đọc PDF (TTS). path=None → mở dialog
+    (nút Load Word/TXT); path được truyền từ kéo-thả 🖱."""
     global PDF_FILE
-    selected = filedialog.askopenfilename(
+    selected = path or filedialog.askopenfilename(
         title="Chọn file Word (.docx) / EPUB / TXT để đọc (TTS)",
         filetypes=[("Word / EPUB / Text", "*.docx *.epub *.txt"),
                    ("Word", "*.docx"), ("EPUB (ebook)", "*.epub"),
@@ -20426,7 +21072,9 @@ def _check_rvc_preflight():
     return False
 
 
-def _apply_rvc_sync(filename):
+def _apply_rvc_sync(filename, timeout_s=180):
+    """Convert giọng file audio TẠI CHỖ bằng RVC. timeout_s mặc định 180 cho
+    file 1 dòng TTS; file dài (card 🎭 Đổi giọng) truyền timeout lớn hơn."""
     model_path = rvc_model_var.get().strip()
     index_path = rvc_index_var.get().strip()
 
@@ -20509,7 +21157,8 @@ def _apply_rvc_sync(filename):
     if device == 'cpu':
         cmd += ['--cpu']
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+    result = subprocess.run(cmd, capture_output=True, text=True,
+                            timeout=timeout_s,
                             creationflags=CREATE_NO_WINDOW)
     if result.returncode != 0:
         err = (result.stderr or result.stdout or "unknown error")
@@ -24950,8 +25599,9 @@ def _watch_toggle():
         log("[Watch] ⏹ Đã tắt theo dõi thư mục.")
 
 
-def open_autodub_dialog():
-    """Wizard 1 nút: chọn video → chuỗi STT → Dịch → TTS → Merge → Mux tự chạy."""
+def open_autodub_dialog(preset_videos=None):
+    """Wizard 1 nút: chọn video → chuỗi STT → Dịch → TTS → Merge → Mux tự chạy.
+    preset_videos = list video điền sẵn (từ kéo-thả 🖱)."""
     win = ctk.CTkToplevel(app)
     win.title("🎬 Lồng tiếng tự động")
     win.geometry("660x680")
@@ -25033,6 +25683,17 @@ def open_autodub_dialog():
                         + "; ".join(os.path.basename(x) for x in ps[:4])
                         + ("…" if len(ps) > 4 else ""))
     ctk.CTkButton(row1, text="Browse", width=80, command=_browse).pack(side="left")
+    # 🖱 video điền sẵn từ kéo-thả — cùng format với _browse để _start nhận đúng
+    if preset_videos:
+        _pv = [v for v in preset_videos if v and os.path.isfile(v)]
+        if _pv:
+            _picked["files"] = list(_pv)
+            if len(_pv) == 1:
+                v_video.set(_pv[0])
+            else:
+                v_video.set(f"({len(_pv)} video) "
+                            + "; ".join(os.path.basename(x) for x in _pv[:4])
+                            + ("…" if len(_pv) > 4 else ""))
 
     # Hồ sơ giọng: chọn ngay trong wizard, khỏi phải set trước ở tab Giọng nói
     _ADUB_KEEP = "(Giữ cấu hình giọng hiện tại)"
@@ -29654,6 +30315,104 @@ btn_split_final = ctk.CTkButton(_g1_create, text="✂ Chia final theo giờ (upl
                                 height=36, font=("Arial", 13))
 btn_split_final.pack(side="top", fill="x", padx=4, pady=4)
 
+
+# ── 🌐 Trang nghe HTML — audio + transcript tự sáng câu đang phát ─────────────
+# 1 file player.html cạnh audio (tham chiếu audio theo TÊN FILE tương đối —
+# gửi cho người khác thì gửi CẢ 2 FILE cùng thư mục): <audio> + danh sách câu
+# từ SRT nhúng thẳng JSON, JS thuần highlight câu theo currentTime, click câu
+# để tua. Ưu tiên final_synced.srt (timestamp khớp audio THẬT sau merge).
+def export_html_player():
+    init_dir = OUTPUT_DIR if os.path.isdir(OUTPUT_DIR or "") else None
+    aud = filedialog.askopenfilename(
+        title="Chọn file audio (final.mp3 sau Merge)",
+        initialdir=init_dir, initialfile="final.mp3",
+        filetypes=[("Audio", "*.mp3 *.wav *.m4a *.opus *.aac"),
+                   ("All files", "*.*")])
+    if not aud:
+        return
+    _sg = os.path.join(os.path.dirname(aud), "final_synced.srt")
+    srt_p = filedialog.askopenfilename(
+        title="Chọn SRT khớp audio (final_synced.srt)",
+        initialdir=os.path.dirname(aud),
+        initialfile=("final_synced.srt" if os.path.isfile(_sg) else ""),
+        filetypes=[("SRT", "*.srt"), ("All files", "*.*")])
+    if not srt_p:
+        return
+    try:
+        subs = [s for s in srt.parse(_read_text_smart(srt_p))
+                if (s.content or "").strip()]
+    except Exception as e:
+        log(f"🌐 ❌ Không đọc được SRT: {e}")
+        return
+    if not subs:
+        log("🌐 ❌ SRT rỗng.")
+        return
+    cues = [[round(s.start.total_seconds(), 3),
+             round(s.end.total_seconds(), 3),
+             clean_text(s.content)] for s in subs]
+    # </script> trong text sẽ bẻ gãy thẻ script → escape "</"
+    cues_json = json.dumps(cues, ensure_ascii=False).replace("</", "<\\/")
+    title = os.path.splitext(os.path.basename(aud))[0]
+    aud_name = os.path.basename(aud)
+    html_doc = f"""<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+body{{background:#141a26;color:#cfd6e4;font-family:'Segoe UI',Arial,sans-serif;
+     margin:0;padding:0}}
+header{{position:sticky;top:0;background:#1b2333;padding:12px 16px;
+       box-shadow:0 2px 8px #0008;z-index:9}}
+h1{{font-size:16px;margin:0 0 8px}}
+audio{{width:100%}}
+#tr{{max-width:860px;margin:0 auto;padding:14px 16px 60vh}}
+.cue{{padding:6px 10px;margin:2px 0;border-radius:8px;cursor:pointer;
+     line-height:1.5}}
+.cue:hover{{background:#232e45}}
+.cue.on{{background:#31406b;color:#fff}}
+.t{{color:#5f6b85;font-size:11px;margin-right:8px}}
+</style></head><body>
+<header><h1>🎧 {title}</h1>
+<audio id="au" controls preload="metadata" src="{aud_name}"></audio></header>
+<div id="tr"></div>
+<script>
+const cues={cues_json};
+const au=document.getElementById('au'),tr=document.getElementById('tr');
+function ts(s){{const m=Math.floor(s/60),ss=Math.floor(s%60);
+  return m+':'+String(ss).padStart(2,'0');}}
+cues.forEach((c,i)=>{{const d=document.createElement('div');
+  d.className='cue';d.id='c'+i;
+  d.innerHTML='<span class="t">'+ts(c[0])+'</span>'+
+    c[2].replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\\n/g,'<br>');
+  d.onclick=()=>{{au.currentTime=c[0]+0.01;au.play();}};
+  tr.appendChild(d);}});
+let cur=-1;
+au.addEventListener('timeupdate',()=>{{const t=au.currentTime;
+  let k=cues.findIndex(c=>t>=c[0]&&t<c[1]);
+  if(k===cur)return;
+  if(cur>=0)document.getElementById('c'+cur).classList.remove('on');
+  cur=k;
+  if(k>=0){{const el=document.getElementById('c'+k);el.classList.add('on');
+    el.scrollIntoView({{block:'center',behavior:'smooth'}});}}
+}});
+</script></body></html>"""
+    out = os.path.join(os.path.dirname(aud), "player.html")
+    try:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(html_doc)
+        log(f"🌐 ✅ Trang nghe: {out} ({len(cues)} câu)")
+        log("🌐    Gửi cho người khác: gửi CẢ player.html + "
+            f"{aud_name} (cùng thư mục).")
+        _reveal_output(out)
+    except Exception as e:
+        log(f"🌐 ❌ Không ghi được: {e}")
+
+
+btn_html_player = ctk.CTkButton(_g1_create, text="🌐 Trang nghe (HTML)",
+                                command=export_html_player,
+                                height=36, font=("Arial", 13))
+btn_html_player.pack(side="top", fill="x", padx=4, pady=4)
+
 btn_open_se = ctk.CTkButton(_g1_io, text="Open Subtitle Edit", command=open_subtitle_edit, height=36, font=("Arial", 13))
 btn_open_se.pack(side="top", fill="x", padx=4, pady=4)
 btn_open_se.bind("<Enter>", lambda e: btn_open_se.configure(fg_color="#8B5CF6"))
@@ -31864,7 +32623,7 @@ _install_tooltips()
 # KHÔNG gồm settings.json (API key + đường dẫn riêng máy) và session.json
 # (trạng thái phiên riêng máy).
 _CFG_BUNDLE_FILES = ("voice_profiles.json", "glossary.json", "ui_prefs.json",
-                     "tts_prices.json", "edge_voices.json")
+                     "tts_prices.json", "edge_voices.json", "text_rules.json")
 
 def export_config_bundle():
     import zipfile
@@ -33140,8 +33899,15 @@ app.after(50, show_splash_then_auth)
 # (builtins._srt_drop_proc) — bị GC là crash access-violation. Mọi lỗi cài
 # đặt → tính năng tắt im lặng, app chạy bình thường.
 
+_DROP_AUDIO_EXT = (".mp3", ".wav", ".m4a", ".flac", ".ogg", ".opus", ".aac")
+_DROP_VIDEO_EXT = (".mp4", ".mkv", ".mov", ".webm", ".avi", ".ts", ".flv")
+
+
 def _handle_dropped_files(paths):
-    """Nhận file thả/argv: phụ đề → load thẳng; loại khác → hướng dẫn."""
+    """Nhận file thả/argv, route theo loại (xét file ĐẦU; file cùng loại đi kèm):
+    phụ đề → load SRT · .txt/.epub/.docx → Doc-TTS · .lrc → ô Phụ đề Audio→Video
+    · audio → ô Audio của Audio→Video (nhiều file = loạt) · video → mở wizard
+    🎬 Lồng tiếng với video đã điền · còn lại → hướng dẫn."""
     global SRT_FILE
     p = (paths or [""])[0]
     ext = os.path.splitext(p)[1].lower()
@@ -33154,8 +33920,45 @@ def _handle_dropped_files(paths):
             log(f"🖱 Đã load: {os.path.basename(p)}")
         except Exception as e:
             log(f"🖱 ⚠ Không load được file: {e}")
+    elif ext in (".txt", ".epub", ".docx"):
+        try:
+            load_doc_tts(path=p)
+            show_workspace("doc")
+            log(f"🖱 Đã nạp tài liệu: {os.path.basename(p)} — Chọn Output "
+                "rồi bấm 'Đọc (TTS)'.")
+        except Exception as e:
+            log(f"🖱 ⚠ Không nạp được tài liệu: {e}")
+    elif ext == ".lrc":
+        try:
+            a2v_srt_var.set(p)
+            show_workspace("video")
+            log(f"🖱 Đã điền lời nhạc vào ô Phụ đề (Audio → Video): "
+                f"{os.path.basename(p)} — chọn Audio + tick 🎤 Karaoke.")
+        except Exception as e:
+            log(f"🖱 ⚠ {e}")
+    elif ext in _DROP_AUDIO_EXT:
+        try:
+            auds = [x for x in paths
+                    if os.path.splitext(x)[1].lower() in _DROP_AUDIO_EXT]
+            a2v_audio_var.set("; ".join(auds))
+            show_workspace("video")
+            log(f"🖱 Đã điền {len(auds)} audio vào Audio → Video — chọn "
+                "nền/tùy chọn rồi 🎬 Tạo Video. (Đổi giọng RVC thì dùng card "
+                "🎭 trang Text → Audio.)")
+        except Exception as e:
+            log(f"🖱 ⚠ {e}")
+    elif ext in _DROP_VIDEO_EXT:
+        try:
+            vids = [x for x in paths
+                    if os.path.splitext(x)[1].lower() in _DROP_VIDEO_EXT]
+            log(f"🖱 {len(vids)} video → mở wizard 🎬 Lồng tiếng tự động "
+                "(đã điền sẵn).")
+            open_autodub_dialog(preset_videos=vids)
+        except Exception as e:
+            log(f"🖱 ⚠ {e}")
     elif ext:
-        log(f"🖱 Kéo-thả hiện hỗ trợ phụ đề (.srt/.ass/.vtt) — "
+        log(f"🖱 Kéo-thả hỗ trợ: phụ đề (.srt/.ass/.vtt) · tài liệu "
+            f"(.txt/.epub/.docx) · lời nhạc (.lrc) · audio · video — "
             f"file {ext} dùng nút Load ở trang tương ứng.")
 
 
@@ -33217,6 +34020,27 @@ def _open_argv_file():
 
 app.after(1200, _install_drop_target)
 app.after(2600, _open_argv_file)
+
+
+# ── 💾 Autosave phiên mỗi 60s ────────────────────────────────────────────────
+# _session_save() vốn chỉ chạy ở vài mốc (load SRT / chọn output / start TTS)
+# — app/máy sập giữa batch đêm là session.json cũ mèm. Tick định kỳ (main
+# thread qua app.after) lưu thêm khi đang có việc → mở lại app là "↩ Khôi
+# phục" đưa về đúng file + output + giọng. Mọi lỗi nuốt — autosave không bao
+# giờ được phép làm phiền.
+def _session_autosave_tick():
+    try:
+        if SRT_FILE or OUTPUT_DIR:
+            _session_save()
+    except Exception:
+        pass
+    try:
+        app.after(60000, _session_autosave_tick)
+    except Exception:
+        pass
+
+
+app.after(60000, _session_autosave_tick)
 
 app.mainloop()
 

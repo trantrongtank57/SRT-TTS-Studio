@@ -6,6 +6,37 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **🎭 Đổi giọng file audio (RVC)** — card mới trang Text → Audio: convert giọng file audio
+  CÓ SẴN (final/audiobook, chọn nhiều file được) sang giọng model RVC đang cấu hình ở panel
+  RVC — không TTS lại, không tốn API. File dài tự chia đoạn 10 phút để convert (chặn
+  RAM/timeout) rồi nối lại → `<tên>_rvc.mp3`.
+- **🧹 Luật lọc text (regex)** — nút mới cạnh 📖 Từ điển phát âm: soạn các luật
+  `pattern => thay_thế` (regex, hỗ trợ ^$ theo dòng, (?i)) XÓA/THAY rác trước khi TTS đọc —
+  ghi chú người dịch `[TN: ...]`, footer "Đọc tiếp tại...", watermark nhóm dịch. Có nút 🧪
+  thử trên câu mẫu; luật hỏng bị bỏ qua có báo; lưu `text_rules.json` (có trong 📦 gói cấu
+  hình). Chỉ ảnh hưởng text đưa vào TTS — file gốc/bản dịch giữ nguyên.
+- **🎞 Nền video loop + 🖼 Slideshow theo chương (Audio → Video)** — ô Nền giờ nhận: ảnh
+  (như cũ), file VIDEO (loop làm nền động — mưa rơi/lò sưởi), hoặc THƯ MỤC ảnh → slideshow
+  tự đổi ảnh đúng MỐC CHƯƠNG của audio (đọc chapter nhúng trong .m4b hoặc
+  `youtube_description.txt` cạnh file; không có mốc thì chia đều). Ảnh được scale sẵn khớp
+  khung; kết hợp được với 🌊 sóng/🏷 logo/🎤 karaoke.
+- **🖱 Kéo-thả mở rộng** — thả vào cửa sổ app: `.txt/.epub/.docx` → nạp Đọc (TTS);
+  audio (nhiều file được) → điền Audio → Video; video (nhiều file được) → mở wizard 🎬 Lồng
+  tiếng đã điền sẵn; `.lrc` → ô Phụ đề Audio → Video. Phụ đề như cũ.
+- **🌐 Trang nghe (HTML)** — nút mới trang SRT: xuất `player.html` cạnh final.mp3 — trình
+  phát + toàn bộ transcript, câu đang phát tự sáng và cuộn theo, click câu để tua (đọc
+  `final_synced.srt`, JS thuần không cần mạng/server). Gửi cho người khác = gửi 2 file cùng
+  thư mục.
+- **💾 Tự lưu phiên mỗi 60 giây** — app/máy sập giữa batch đêm thì `session.json` vẫn mới;
+  mở lại app bấm ↩ Khôi phục là về đúng file + output + giọng đang dùng.
+- **🩹 Sửa lỗi OCR bằng AI** — nút mới trên card 📷 Ảnh scan sách: gửi text OCR (vd
+  `sach_ocr.txt`) qua AI dịch-provider (Claude/Gemini/OpenAI/Groq/DeepSeek) với chỉ dẫn
+  "chỉ sửa lỗi nhận dạng, giữ nguyên nội dung" — sai dấu, từ dính/tách, dấu câu vỡ, 0↔O
+  được dọn sạch trước khi đốt giờ TTS. Có xác nhận chi phí trước khi gửi; cụm lỗi API hoặc
+  bị AI trả về lệch độ dài quá 30% (dấu hiệu tóm tắt bậy) tự giữ nguyên gốc — không bao giờ
+  mất nội dung; heading "Chương N" giữ nguyên nên mục lục .m4b không ảnh hưởng. Kết quả ra
+  `<tên>_fixed.txt` + hỏi nạp thẳng vào Đọc (TTS). ⏹ của card dừng được giữa chừng (phần đã
+  sửa vẫn lưu).
 - **📊 RAM/VRAM live trên Bảng điều khiển** — thẻ Tiến trình job có dòng "RAM / VRAM" mới,
   cập nhật mỗi 2s: % RAM hệ thống (psutil, fallback ctypes) + VRAM/GPU util qua nvidia-smi
   (đo trên thread nền, không chặn UI; máy không có GPU NVIDIA chỉ hiện RAM) — bắt sớm các
