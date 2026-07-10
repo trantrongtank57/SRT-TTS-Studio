@@ -432,6 +432,14 @@
 - [ ] **🌐 Trang nghe**: sau Merge SRT → bấm → chọn final.mp3 + final_synced.srt → `player.html` mở bằng browser: phát audio, câu tự sáng + cuộn, click câu tua đúng
 - [ ] **💾 Autosave**: load SRT + chọn output → đợi >1 phút → kill app bằng Task Manager → mở lại → gợi ý ↩ Khôi phục phiên vẫn đúng file
 
+## AS. Đợt 2026-07-10 (3): 📁 Dịch cả thư mục + 🌐 câu ngoại ngữ đổi giọng
+- [ ] **📁 Dịch cả thư mục** (trang Dịch): thư mục có 3 file .txt/.docx → confirm hiện số file → dịch tuần tự, log `━ [k/n] ━` từng file, ra `_vi.*` từng file + fireworks cuối
+- [ ] Chạy lại lần 2 → log `♻ n/n file đã có bản dịch — skip` + "Tất cả ... đã được dịch"; file `*_vi.txt`/`youtube_description.txt` trong thư mục KHÔNG bị đem dịch
+- [ ] ⏹ Dừng giữa danh sách → dừng sau file đang dịch, log hướng dẫn chạy lại; 1 file lỗi (docx hỏng) → bỏ qua chạy tiếp
+- [ ] **🌐 Câu ngoại ngữ đổi giọng** (checkbox tab Giọng nói, Edge + giọng vi-*): TXT có 1 dòng nguyên câu tiếng Anh → TTS → log `🌐 Câu ngoại ngữ → en-US-...` và câu đó giọng Anh chuẩn; câu Việt chêm vài từ Anh → vẫn giọng Việt
+- [ ] Tắt checkbox → mọi câu đọc giọng Việt như cũ; bật/tắt xen kẽ trên cùng SRT → dòng trùng không dùng nhầm cache của chế độ kia (♻ chỉ hiện trong cùng chế độ)
+- [ ] Giọng đang chọn KHÔNG phải vi-* (vd en-US) → checkbox không có tác dụng (không đổi giọng lung tung)
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

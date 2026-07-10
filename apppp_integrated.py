@@ -1773,6 +1773,15 @@ teencode_var = ctk.BooleanVar(value=True)
 ctk.CTkCheckBox(voice_row1b, text="Đọc teencode (ko→không)",
                 variable=teencode_var, font=("Arial", 12)).pack(side="left", padx=(12, 0))
 
+# Row 1c: 🌐 code-switching — câu ngoại ngữ trong tài liệu Việt đổi giọng Edge
+voice_row1c = ctk.CTkFrame(voice_frame, fg_color="transparent")
+voice_row1c.pack(fill="x", padx=2, pady=(0, 2))
+code_switch_var = ctk.BooleanVar(value=False)
+ctk.CTkCheckBox(voice_row1c,
+                text="🌐 Câu ngoại ngữ tự đổi giọng phù hợp (chỉ Edge + giọng "
+                     "vi-*; cả câu là tiếng Anh/Trung/Nhật/Hàn/Nga/Thái mới đổi)",
+                variable=code_switch_var, font=("Arial", 12)).pack(side="left")
+
 
 # Row 2: API Key (ẩn khi dùng Edge TTS)
 voice_row2 = ctk.CTkFrame(voice_frame, fg_color="transparent")
@@ -13366,8 +13375,9 @@ def _translate_send_proc(cmd):
 
 
 def _set_translate_buttons(state):
-    """Bật/tắt cả 3 nút Dịch (SRT / PDF / Word-TXT) cùng lúc."""
-    for _bn in ("btn_translate_srt", "btn_translate_pdf", "btn_translate_doc"):
+    """Bật/tắt cả 4 nút Dịch (SRT / PDF / Word-TXT / 📁 thư mục) cùng lúc."""
+    for _bn in ("btn_translate_srt", "btn_translate_pdf", "btn_translate_doc",
+                "btn_translate_folder"):
         b = globals().get(_bn)
         if b is not None:
             try:
@@ -13700,6 +13710,39 @@ def translate_pdf():
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _translate_doc_one(path, context, bilingual, out_fmt):
+    """Lõi dịch 1 file Word/TXT (chạy trong WORKER thread, caller quản
+    nút/cờ). → (out_path | None, n_chunks). None = file rỗng/lỗi đọc."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".docx":
+        try:
+            from docx import Document
+        except Exception:
+            app.after(0, lambda: log("❌ Thiếu thư viện python-docx "
+                                     "(pip install python-docx)."))
+            return None, 0
+        chunks = [p.text for p in Document(path).paragraphs if p.text.strip()]
+    else:  # .txt và các file text khác
+        text = _read_text_smart(path)
+        chunks = [ln for ln in text.splitlines() if ln.strip()]
+    if not chunks:
+        app.after(0, lambda: log(f"❌ {os.path.basename(path)}: không có nội "
+                                 "dung text để dịch."))
+        return None, 0
+    app.after(0, lambda: log(f"📝 Dịch {os.path.basename(path)} "
+                             f"({len(chunks)} đoạn)..."))
+    translated = _translate_segments(
+        chunks, context,
+        progress_cb=_make_translate_progress_cb(),
+        log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
+    base = _translate_redirect(os.path.splitext(path)[0] + "_vi")
+    out_path = _write_translated_doc(base, chunks, translated, bilingual,
+                                     out_fmt,
+                                     log_cb=lambda m: app.after(
+                                         0, lambda mm=m: log(mm)))
+    return out_path, len(chunks)
+
+
 def translate_doc():
     """Dịch file Word (.docx) hoặc TXT sang tiếng Việt → <tên>_vi.{txt|pdf|docx}."""
     path = filedialog.askopenfilename(
@@ -13719,28 +13762,9 @@ def translate_doc():
         try:
             app.after(0, lambda: _set_translate_buttons("disabled"))
             app.after(0, lambda: _translate_set_controls(True))
-            ext = os.path.splitext(path)[1].lower()
-            if ext == ".docx":
-                try:
-                    from docx import Document
-                except Exception:
-                    app.after(0, lambda: log("❌ Thiếu thư viện python-docx (pip install python-docx)."))
-                    return
-                chunks = [p.text for p in Document(path).paragraphs if p.text.strip()]
-            else:  # .txt và các file text khác
-                text = _read_text_smart(path)
-                chunks = [ln for ln in text.splitlines() if ln.strip()]
-            if not chunks:
-                app.after(0, lambda: log("❌ File không có nội dung text để dịch."))
+            out_path, _n = _translate_doc_one(path, context, bilingual, out_fmt)
+            if not out_path:
                 return
-            app.after(0, lambda: log(f"📝 Dịch {os.path.basename(path)} ({len(chunks)} đoạn)..."))
-            translated = _translate_segments(
-                chunks, context,
-                progress_cb=_make_translate_progress_cb(),
-                log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
-            base = _translate_redirect(os.path.splitext(path)[0] + "_vi")
-            out_path = _write_translated_doc(base, chunks, translated, bilingual, out_fmt,
-                                             log_cb=lambda m: app.after(0, lambda mm=m: log(mm)))
             if TRANSLATE_STOP:
                 app.after(0, lambda: log(f"⏹ Đã dừng. Lưu phần đã dịch (phần còn lại giữ gốc): {out_path}"))
             else:
@@ -13750,6 +13774,101 @@ def translate_doc():
         except Exception as e:
             err = str(e)
             app.after(0, lambda: log(f"❌ Lỗi dịch Word/TXT: {err}"))
+        finally:
+            app.after(0, lambda: _set_translate_buttons("normal"))
+            app.after(0, lambda: _translate_set_controls(False))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def translate_doc_folder():
+    """📁 Dịch CẢ THƯ MỤC tài liệu: mọi .txt/.docx bên trong dịch tuần tự sang
+    tiếng Việt (thả 50 chương docx vào là đi ngủ). RESUME THEO FILE: đã có
+    output `_vi.*` (bất kỳ định dạng nào) → skip; Stop dừng giữa danh sách —
+    chạy lại chỉ dịch phần thiếu. Bỏ qua các file output/phụ của chính app
+    (*_vi.*, *_full.txt, youtube_description*, podcast_script*)."""
+    folder = filedialog.askdirectory(
+        title="Chọn thư mục chứa các file .txt/.docx cần dịch")
+    if not folder:
+        return
+    try:
+        names = sorted(os.listdir(folder))
+    except Exception as e:
+        log(f"❌ Không đọc được thư mục: {e}")
+        return
+    files = []
+    for fn in names:
+        low = fn.lower()
+        stem = os.path.splitext(fn)[0].lower()
+        if not low.endswith((".txt", ".docx")):
+            continue
+        if stem.endswith(("_vi", "_full")) or stem.startswith(
+                ("youtube_description", "podcast_script")):
+            continue
+        files.append(os.path.join(folder, fn))
+    if not files:
+        log("❌ Thư mục không có file .txt/.docx nào cần dịch.")
+        return
+    context = _translate_default_context()
+    bilingual = bool(translate_bilingual_var.get())
+    out_fmt = (translate_pdf_format_var.get() or "txt").strip().lower()
+    # Resume: output _vi tồn tại (txt/pdf/docx — kể cả khi đã đổi định dạng ra)
+    todo, have = [], 0
+    for p in files:
+        base = _translate_redirect(os.path.splitext(p)[0] + "_vi")
+        if any(os.path.isfile(base + e) for e in (".txt", ".pdf", ".docx")):
+            have += 1
+        else:
+            todo.append(p)
+    if have:
+        log(f"📁 ♻ {have}/{len(files)} file đã có bản dịch — skip.")
+    if not todo:
+        log("📁 ✅ Tất cả file trong thư mục đã được dịch.")
+        return
+    n_chars = 0
+    if not msg.askyesno(
+            "📁 Dịch cả thư mục",
+            f"Dịch {len(todo)} file (.txt/.docx) bằng "
+            f"{TRANSLATE_PROVIDER or 'Claude'}?\n"
+            "(Provider trả phí tính tiền theo ký tự; Stop dừng được giữa "
+            "danh sách, chạy lại sẽ dịch tiếp phần thiếu.)"):
+        return
+
+    def _worker():
+        global TRANSLATE_STOP, TRANSLATE_PAUSED
+        TRANSLATE_STOP = False
+        TRANSLATE_PAUSED = False
+        okc = 0
+        stopped = False
+        try:
+            app.after(0, lambda: _set_translate_buttons("disabled"))
+            app.after(0, lambda: _translate_set_controls(True))
+            for k, p in enumerate(todo, 1):
+                if TRANSLATE_STOP:
+                    stopped = True
+                    break
+                app.after(0, lambda k=k, p=p: log(
+                    f"📁 ━ [{k}/{len(todo)}] {os.path.basename(p)} ━"))
+                try:
+                    out_path, _n = _translate_doc_one(p, context, bilingual,
+                                                      out_fmt)
+                except Exception as e:
+                    app.after(0, lambda p=p, e=e: log(
+                        f"📁 ❌ {os.path.basename(p)}: {e} — bỏ qua, chạy tiếp."))
+                    continue
+                if out_path:
+                    okc += 1
+                if TRANSLATE_STOP:
+                    stopped = True
+                    break
+            _msg = (f"📁 {'⏹ Dừng —' if stopped else '✅'} đã dịch {okc}/"
+                    f"{len(todo)} file" + (f" (+{have} có sẵn)" if have else "")
+                    + (". Chạy lại để dịch tiếp phần thiếu." if stopped else "."))
+            app.after(0, lambda: log(_msg))
+            if okc and not stopped:
+                app.after(0, show_fireworks)
+        except Exception as e:
+            app.after(0, lambda e=e: log(f"📁 ❌ Lỗi dịch thư mục: {e}"))
         finally:
             app.after(0, lambda: _set_translate_buttons("normal"))
             app.after(0, lambda: _translate_set_controls(False))
@@ -15773,6 +15892,75 @@ def _voice_lang_hint():
         return "vi"
     m = re.match(r"([a-z]{2,3})-[A-Za-z]", VOICE or "")
     return m.group(1).lower() if m else ""
+
+
+# ── 🌐 Code-switching: câu NGOẠI NGỮ trong tài liệu Việt đổi giọng Edge ──────
+# Truyện Việt hay chêm nguyên câu thoại tiếng Anh/Trung/Nhật — giọng vi-VN
+# đọc "bồi" rất tệ. Bật checkbox → từng câu/chunk được dò ngôn ngữ; câu ngoại
+# ngữ RÕ RỆT (cả câu, không phải chêm vài từ) đọc bằng voice Edge tương ứng.
+# CHỈ Edge TTS + CHỈ khi giọng đang chọn là vi-* (đúng use-case; giọng khác
+# giữ nguyên để không phá cấu hình chủ đích). Câu Việt trộn vài từ Anh có dấu
+# tiếng Việt → vẫn tính là 'vi' → không đổi.
+_CS_VOICE_MAP = {
+    "latin": "en-US-ChristopherNeural",   # Latin không dấu Việt — coi là EN
+    "zh": "zh-CN-YunxiNeural",
+    "ja": "ja-JP-KeitaNeural",
+    "ko": "ko-KR-InJoonNeural",
+    "ru": "ru-RU-DmitryNeural",
+    "th": "th-TH-NiwatNeural",
+}
+
+
+def _detect_line_lang(text):
+    """Bản 1-CÂU của _detect_srt_lang (ngưỡng thấp hơn) → mã lang hoặc ''.
+    Câu Latin có ≥1 dấu tiếng Việt = 'vi' (câu Việt chêm từ Anh không bị đổi)."""
+    sample = (text or "")[:400]
+    han = kana = hangul = thai = cyr = lat = 0
+    for c in sample:
+        o = ord(c)
+        if 0x4E00 <= o <= 0x9FFF:
+            han += 1
+        elif 0x3040 <= o <= 0x30FF:
+            kana += 1
+        elif 0xAC00 <= o <= 0xD7AF:
+            hangul += 1
+        elif 0x0E00 <= o <= 0x0E7F:
+            thai += 1
+        elif 0x0400 <= o <= 0x04FF:
+            cyr += 1
+        elif o < 0x250 and c.isalpha():
+            lat += 1
+    total = han + kana + hangul + thai + cyr + lat
+    if total < 12:
+        return ""                 # câu quá ngắn — không đủ tin để đổi giọng
+    if kana > 2:
+        return "ja"
+    if hangul > 2:
+        return "ko"
+    if thai > 2:
+        return "th"
+    if han > max(4, total * 0.3):
+        return "zh"
+    if cyr > total * 0.5:
+        return "ru"
+    if lat > total * 0.7:
+        n_vn = sum(1 for c in sample if c in _VN_DIACRITICS)
+        return "vi" if n_vn >= 1 else "latin"
+    return ""
+
+
+def _code_switch_voice(text):
+    """Voice Edge thay thế cho 1 câu ngoại ngữ — '' = giữ giọng hiện tại.
+    Chỉ có tác dụng khi giọng đang chọn là vi-* (use-case truyện Việt)."""
+    try:
+        if not (VOICE or "").lower().startswith("vi-"):
+            return ""
+        det = _detect_line_lang(text)
+        if det in ("", "vi"):
+            return ""
+        return _CS_VOICE_MAP.get(det, "")
+    except Exception:
+        return ""
 
 
 def _warn_voice_lang_mismatch():
@@ -20091,12 +20279,25 @@ def _trim_edge_silence(filepath):
 async def save_tts(text, filename):
     _emo, text = _emo_parse(text)   # 🎭 tag cảm xúc — bắt TRƯỚC glossary strip
     text = _apply_glossary(text)  # tiền xử lý TTS: từ điển phát âm + đọc số kiểu Việt
+    # 🌐 Code-switching: câu ngoại ngữ trong tài liệu Việt → voice Edge tương
+    # ứng (quyết định là hàm thuần của text + VOICE → deterministic, an toàn
+    # với cache; cache key có cờ |cs1 nên bật/tắt không dùng nhầm audio cũ)
+    _cs_voice = ""
+    try:
+        if TTS_PROVIDER == "Edge TTS" and code_switch_var.get():
+            _cs_voice = _code_switch_voice(text)
+            if _cs_voice:
+                log(f"🌐 Câu ngoại ngữ → {_cs_voice}: “{text[:48]}…”"
+                    if len(text) > 48 else
+                    f"🌐 Câu ngoại ngữ → {_cs_voice}: “{text}”")
+    except Exception:
+        _cs_voice = ""
     for attempt in range(3):
         try:
             if TTS_PROVIDER == "Edge TTS":
                 communicate = edge_tts.Communicate(
                     text=text,
-                    voice=VOICE,
+                    voice=_cs_voice or VOICE,
                     rate=_edge_rate_emo(_emo),
                     pitch=_edge_pitch_emo(_emo)
                 )
@@ -21207,6 +21408,14 @@ _TTS_CACHE_DIR_CACHED = [None]    # None=chưa thử, ""=thử & thất bại, s
 def _tts_cache_key(text):
     base = "|".join((TTS_PROVIDER, VOICE, _edge_rate(), _edge_pitch(),
                      _apply_glossary(text)))
+    # 🌐 code-switching đổi voice NGẦM bên trong save_tts → key phải phân
+    # biệt để bật/tắt checkbox không dùng nhầm audio cache của chế độ kia
+    # (tắt = key y như cũ — cache cũ vẫn dùng lại được)
+    try:
+        if code_switch_var.get():
+            base += "|cs1"
+    except Exception:
+        pass
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
 
 def _tts_cache_dir():
@@ -31605,6 +31814,14 @@ btn_translate_pdf.pack(side="top", fill="x", padx=4, pady=4)
 btn_translate_doc = ctk.CTkButton(_g4_run, text="Dịch Word/TXT", command=translate_doc, height=36, font=("Arial", 13), fg_color="#2fa572", hover_color="#37b87f")
 btn_translate_doc.pack(side="top", fill="x", padx=4, pady=4)
 
+# 📁 Dịch tuần tự mọi .txt/.docx trong 1 thư mục (resume theo file — đã có
+# _vi.* thì skip); dùng chung Pause/Stop + provider với các nút Dịch khác
+btn_translate_folder = ctk.CTkButton(_g4_run, text="📁 Dịch cả thư mục",
+                                     command=translate_doc_folder, height=36,
+                                     font=("Arial", 13),
+                                     fg_color="#26766b", hover_color="#2f9184")
+btn_translate_folder.pack(side="top", fill="x", padx=4, pady=4)
+
 
 # ── 🔍 Back-translation QC: soát bản dịch bằng DỊCH NGƯỢC ────────────────────
 # Dịch bản Việt NGƯỢC về ngôn ngữ gốc rồi so từng dòng với câu gốc
@@ -32418,6 +32635,7 @@ def _ui_prefs_register():
         "vi_num": vi_num_var, "auto_retry_fail": auto_retry_fail_var,
         "auto_stt_verify": auto_stt_verify_var,
         "trim_silence": trim_silence_var, "teencode": teencode_var,
+        "code_switch": code_switch_var,
         "merge_center": merge_center_var, "merge_format": merge_format_var,
         "merge_loudnorm": merge_loudnorm_var, "merge_linevol": merge_linevol_var,
         "merge_bgm": merge_bgm_var, "merge_bgm_vol": merge_bgm_vol_var,

@@ -6,6 +6,16 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **📁 Dịch cả thư mục** — nút mới trang Dịch: chọn thư mục → dịch tuần tự mọi `.txt/.docx`
+  bên trong sang tiếng Việt ("thả 50 chương docx vào là đi ngủ"). Resume theo file (đã có
+  `_vi.*` thì skip, kể cả khi đã đổi định dạng ra); tự bỏ qua file phụ của app
+  (`*_vi`, `*_full`, youtube_description, podcast_script); lỗi 1 file chạy tiếp file sau;
+  Pause/Stop dùng chung với các nút Dịch; có xác nhận chi phí trước khi chạy.
+- **🌐 Câu ngoại ngữ tự đổi giọng (Edge)** — checkbox mới tab Giọng nói (mặc định tắt):
+  truyện Việt chêm nguyên câu thoại tiếng Anh/Trung/Nhật/Hàn/Nga/Thái → câu đó tự đọc bằng
+  voice Edge tương ứng thay vì giọng Việt đọc "bồi". Chỉ đổi khi CẢ CÂU là ngoại ngữ (câu
+  Việt chêm vài từ Anh giữ nguyên giọng), chỉ với Edge + giọng vi-*; cache dòng trùng tự
+  phân biệt chế độ bật/tắt nên không dùng nhầm audio cũ.
 - **🎭 Đổi giọng file audio (RVC)** — card mới trang Text → Audio: convert giọng file audio
   CÓ SẴN (final/audiobook, chọn nhiều file được) sang giọng model RVC đang cấu hình ở panel
   RVC — không TTS lại, không tốn API. File dài tự chia đoạn 10 phút để convert (chặn
