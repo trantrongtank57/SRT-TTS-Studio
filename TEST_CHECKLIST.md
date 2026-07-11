@@ -460,6 +460,50 @@
 - [ ] **🌧 [sfxbg:]**: TXT có `[sfxbg:mưa]` … `[sfxbg:off]` (dòng riêng, có mưa.mp3 trong sfx\) → Đọc + Merge → log `🌧 Đã trộn N đoạn` — đoạn giữa 2 tag có tiếng mưa dưới giọng, ngoài đoạn thì không; tổng thời lượng không đổi
 - [ ] **🆕 Có gì mới**: xóa `whatsnew_seen.txt` trong thư mục cấu hình → mở app → sau khi đăng nhập vài giây hiện dialog CHANGELOG phần đầu → bấm Đã đọc → mở lại app không hiện nữa
 
+## AV. Đợt 2026-07-10 (6): ☕ chống sleep + 🔇 im lặng đêm + 🔑 xoay key + 🪶 opus + 📚 mẫu ngữ cảnh
+- [ ] **☕ Chống sleep**: đặt Power Options sleep 1-2 phút → chạy 1 batch TTS dài → log `☕ Đang chạy job — giữ máy KHÔNG sleep` và máy KHÔNG ngủ khi job chạy; job xong ngồi im → máy ngủ lại bình thường
+- [ ] **🔇 Im lặng 23h–7h** (trang Hệ thống): tick + chỉnh giờ máy 23h30 → chạy xong 1 job → KHÔNG có tiếng pháo hoa/thành công (toast/webhook vẫn có); giờ ban ngày → tiếng như cũ
+- [ ] **🔑 Xoay key**: ⚙ Cài đặt dán 2 key Gemini cách nhau `;` (key 1 đã hết quota) → dịch → log `🔑 Key #1/2 ... chuyển sang key #2` và dịch chạy tiếp; key sai hẳn (401) → báo lỗi ngay không xoay
+- [ ] **🪶 +.opus nhẹ** (hàng Merge Audio): tick → Merge tài liệu → cạnh pdf_output có `.opus` nghe được, nhẹ hơn hẳn; chuỗi 🚀 → `<tên>_audiobook.opus` cũng ra
+- [ ] **📚 Mẫu ngữ cảnh**: gõ ngữ cảnh → 💾 đặt tên → chọn lại từ dropdown → ô tự điền; 🗑 xóa mẫu; mẫu nằm trong 📦 Xuất gói cấu hình
+
+## AW. Đợt 2026-07-11 (7): 💾 cache dịch + ⚡ dịch song song + 🗣 tag giọng + 📜 srt audiobook + 🪞 soát dịch
+- [ ] **💾 Cache dịch**: dịch 1 SRT ngắn 2 LẦN liên tiếp → lần 2 log `♻ N/N dòng lấy từ cache dịch` và xong tức thì (0 call API); đổi ô Ngữ cảnh → dịch lại thật (không dùng nhầm cache); `translate_cache.json` xuất hiện cạnh settings.json
+- [ ] **⚡ Dịch song song**: dịch SRT >80 dòng bằng provider cloud → log `⚡ Dịch song song 3 luồng` và nhanh hơn rõ; giữa chừng bấm ⏸ rồi ▶ → chạy tiếp; ⏹ → dừng, file ra vẫn đủ dòng (phần chưa dịch giữ gốc)
+- [ ] **🗣 Tag giọng**: có hồ sơ Edge tên `nam_tre` → SRT có dòng `[giọng:nam_tre] Chào!` → dòng đó đọc giọng hồ sơ, các dòng khác giọng UI; tag tên sai → log `🗣 [giọng:...] — không có hồ sơ...` (1 lần) và đọc giọng hiện tại; engine local (F5/VoxCPM) → tag bị bỏ, không đọc thành tiếng
+- [ ] **🗣 + cache TTS**: 2 dòng cùng text, 1 dòng có tag → ra 2 giọng KHÁC nhau (không dính cache chéo)
+- [ ] **📜 +.srt** (hàng Merge Audio): tick cùng "Nghỉ giữa đoạn 300ms" + 🎚 1.25 → Merge → `pdf_output_*.srt` mở bằng player cùng file audio → chữ khớp tiếng suốt file (kể cả sau đoạn [sfx:])
+- [ ] **🪞 Soát dịch cạnh gốc** (trang Dịch): chọn SRT gốc có `_vi.srt` cạnh → bảng 2 cột; sửa 2 dòng cột dịch → 💾 → file `_vi.srt` cập nhật + có `.bak`; nếu `_vi.srt` đang nạp trong app → hỏi xóa audio 2 dòng đó
+
+## AX. Đợt 2026-07-11 (7): ⏰ hẹn giờ + 🧨 webhook lỗi + 🔖 resume dịch + 🈶 glossary học + 🗂 soft-sub + 🎬 highlight + 🧮 ước phí dịch
+- [ ] **⏰ Hẹn giờ** (toolbar Bảng điều khiển): nạp SRT + Output → ⏰ đặt giờ 2 phút sau, hành động "▶ Đọc TTS" → đến giờ tự chạy (độ trễ ≤30s); đặt hẹn trong lúc đang chạy job khác → log "dời 5 phút"; ❌ Hủy hẹn hoạt động
+- [ ] **🧨 Webhook lỗi**: cấu hình webhook → chạy 1 batch có dòng FAIL (vd tắt mạng giữa chừng vài dòng) → Discord/Telegram nhận tin `🧨 ... N dòng FAIL`; batch sạch → chỉ tin ✅ như cũ
+- [ ] **🔖 Resume dịch**: dịch Word/TXT dài → ⏹ giữa chừng → dịch lại cùng file → log `♻ ... coi như RESUME` và chạy nhanh phần đầu
+- [ ] **🈶 Glossary học**: dịch SRT có tên nhân vật lặp nhiều (vd "Kael" ×5) → sau ✅ hiện hỏi "thêm N tên vào 📖?" → Yes → mở 📖 Từ điển thấy tên (cách đọc = chính nó); dịch lại lần 2 KHÔNG hỏi lại các tên đã thêm
+- [ ] **🗂 Soft-sub** (trang Video): video + 2 file `x_vi.srt`/`x_en.srt` → 🗂 Gắn → mở `_sub.mp4` bằng VLC → Subtitle → Sub Track có "Tiếng Việt"/"English" bật/tắt được; ra file trong vài giây (không re-encode)
+- [ ] **🎬 Highlight** (trang Video): nhập `1:00-1:30; 5:20-5:45` → ra `_highlight.mp4` ~55s xem mượt tại mối nối; mốc rác → báo lỗi định dạng; ⏹ giữa chừng dọn file tạm
+- [ ] **🧮 Ước phí dịch**: bấm dịch bất kỳ → log đầu có `N dòng/đoạn, ≈X ký tự, ~M lượt gọi API`
+
+## AY. Đợt 2026-07-11 (8): 🎯 chấm mẫu + 📊 A/B final + 📱 LAN + ↩ hoàn tác + 🔗✂ song ngữ + 🗣 xuất tag + 🔢 La Mã/đơn vị + 🧹 cache dịch
+- [ ] **🎯 Chấm mẫu**: chọn 1 file Audio mẫu tốt (10s giọng sạch) → 🎯 → điểm ≥85 ✅; chọn file nhạc dài 3 phút → điểm thấp + gợi ý "quá dài/cắt 8-15s"
+- [ ] **📊 A/B final**: bật 🗂 Giữ final cũ → merge 2 lần → 📊 So 2 bản → chọn A/B + mốc 0:30 → ▶ A rồi ▶ B nghe đúng cùng đoạn, hiện loudness; ⏹ dừng được
+- [ ] **📱 LAN**: tick "📱 Theo dõi qua LAN" → log ra URL → mở URL trên điện thoại cùng wifi (Firewall hỏi thì Allow Private) → thấy %, trạng thái, log; chạy batch thấy % nhảy theo (5s/lần); bỏ tick → trang chết
+- [ ] **↩ Hoàn tác**: 📝 Bảng phụ đề → chọn dòng đã 🔁 đọc lại → ↩ Bản cũ → ▶ nghe ra bản cũ → ↩ lần nữa → ▶ ra bản mới; dòng chưa từng đọc lại → báo "không có bản cũ"
+- [ ] **🔗 Gộp song ngữ** (trang Dịch): SRT gốc + `_vi.srt` cạnh nó → ra `_bilingual.srt` mỗi cue 2 dòng; **✂ Tách** file đó → `_line1/_line2.srt`, nạp `_line2` TTS đọc sạch 1 thứ tiếng
+- [ ] **🗣 Xuất tag**: 🎭 Phân vai đặt luật hồ sơ Edge → "🗣 Xuất tag [giọng:] vào SRT" → mở `_cast.srt` thấy tag đầu dòng đúng khoảng; chạy TTS thường → dòng tag ra đúng giọng hồ sơ; luật "(Giọng UI)" chỉ rate → log báo bỏ qua
+- [ ] **🔢 La Mã/đơn vị**: Quick TTS đọc "Chương IV: chạy 5km lúc 20°C, pin còn 50%" → nghe "chương bốn... năm ki-lô-mét... hai mươi độ xê... năm mươi phần trăm"; "Chương Mới" đọc bình thường
+- [ ] **🧹 Cache dịch**: 🧹 Dọn dẹp có nhóm "🌐 Cache bản dịch" hiện dung lượng; xóa xong dịch lại → dịch thật (không cache)
+
+## AZ. Đợt 2026-07-11 (8): 🛠 sửa mẫu + ⏰ watch + 📋 dán SRT + 🎧 song ngữ + 📁 folder STT + 🧾 log ffmpeg + 📈 sparkline + 💾 backup
+- [ ] **🛠 Sửa mẫu**: chọn Audio mẫu thu nhỏ/nhiều lặng → 🛠 → log "X/100 → Y/100" điểm tăng + ô tự điền `_fixed.wav`; file đã đẹp sẵn → báo "không tốt hơn — giữ file gốc"
+- [ ] **⏰ Watch hẹn giờ**: lưu 1 kênh trong 📡 Theo dõi kênh → ⏰ Hẹn giờ chọn "📡 Kiểm tra kênh YouTube" giờ +2 phút → đến giờ tự quét & dub video mới; tương tự với "📡 Kiểm tra bộ truyện chữ"; nút 🔍 trong 2 dialog vẫn chạy như cũ
+- [ ] **📋 Dán SRT**: copy nội dung 1 file .srt (Ctrl+A Ctrl+C trong Notepad) → "📋 Dán SRT từ clipboard" → nạp đúng số dòng; copy text thường → báo "không giống SRT"
+- [ ] **🎧 Song ngữ học tiếng**: từ `_bilingual.srt` → 🎧 Audio song ngữ → chọn hồ sơ Edge cho câu gốc + tick "đọc lại lần 2" → Đọc (TTS) + Merge (Nghỉ 1000ms) → mp3 nghe gốc-dịch-gốc từng cặp, câu gốc đúng giọng hồ sơ
+- [ ] **📁 Folder STT**: thư mục có 3 mp3 (1 file đã có `_stt.srt`) → 📁 Phiên âm cả thư mục → log ♻ 1/3 bỏ qua, 2 file mới có SRT+TXT cạnh audio; ⏹ Dừng thư mục giữa chừng → chạy lại tiếp đúng phần thiếu
+- [ ] **🧾 Log ffmpeg**: làm 1 job mux/nén lỗi (audio hỏng) → 📄 Mở log hôm nay thấy dòng `[FFMPEG-CMD] rc=... ::` chứa nguyên lệnh
+- [ ] **📈 Sparkline**: chạy ≥2 batch SRT → Dashboard → Chẩn đoán nâng cao → thẻ Lịch sử tốc độ có biểu đồ đường + chú thích màu theo engine; khởi động lại app vẫn còn (ui_prefs)
+- [ ] **💾 Backup tuần**: thoát app → `<config>\backup\` có `cfg_<stamp>.zip` chứa voice_profiles/glossary/ui_prefs...; thoát lại ngay → không thêm zip mới; 📥 Nhập gói cấu hình chọn zip này khôi phục được
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

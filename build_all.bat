@@ -187,6 +187,8 @@ mkdir cython_out
 :: the spec strips the source bytecode + ships only this .pyd.
 (
 echo from setuptools import setup
+echo from Cython.Compiler import Options
+echo Options.docstrings = False
 echo from Cython.Build import cythonize
 echo setup^(
 echo     ext_modules=cythonize^(

@@ -6,6 +6,120 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **🛠 Tự sửa audio mẫu** — nút 🛠 mới cạnh 🎯 trên 4 hàng Audio mẫu: 🎯 chỉ BÁO lỗi, nút này
+  SỬA những gì sửa được bằng ffmpeg (khuếch đại mẫu thu quá nhỏ, cắt lặng 2 đầu, chuẩn âm
+  lượng loudnorm, nâng sample rate <16k lên 24k, cắt lấy 15s đầu nếu quá dài) → `_fixed.wav`,
+  chấm lại điểm — điểm tăng mới điền vào ô (file gốc không bị đụng).
+- **⏰ Hẹn giờ thêm 2 hành động theo dõi** — dropdown ⏰ Hẹn giờ có thêm "📡 Kiểm tra kênh
+  YouTube (dub video mới)" và "📡 Kiểm tra bộ truyện chữ (tải chương mới)" — đêm 2h tự quét
+  kênh/bộ truyện đã lưu trong 2 dialog 📡 (phần kiểm tra được tách khỏi dialog thành hàm
+  gọi thẳng được).
+- **📋 Dán SRT từ clipboard** — nút mới trang SRT: copy nguyên nội dung SRT từ web/mail/chat
+  rồi bấm 1 nút — tự ghi file `clip_<stamp>.srt` vào thư mục cấu hình và nạp luôn, khỏi tự
+  tạo file. Nội dung không giống SRT (không có `-->`) thì từ chối có hướng dẫn.
+- **🎧 Audio song ngữ (học tiếng)** — nút mới cạnh 🔗 Gộp/✂ Tách (trang Dịch): từ SRT song
+  ngữ sinh chuỗi "câu gốc → câu dịch" (tùy chọn: giọng riêng cho câu gốc bằng hồ sơ Edge qua
+  tag [giọng:], thứ tự dịch-trước, đọc lại câu gốc lần 2) nạp vào pipeline Đọc tài liệu —
+  Merge với "Nghỉ giữa đoạn" ~800–1200ms là ra mp3 luyện nghe.
+- **📁 Phiên âm cả thư mục audio** — nút mới dưới hàng Video STT (trang Tách phụ đề): chọn 1
+  thư mục audio/video → chạy STT tuần tự từng file, SRT+TXT đặt cạnh từng file; resume theo
+  file (đã có `_stt.srt` thì bỏ qua); có ⏹ riêng — dành cho kho ghi âm/podcast.
+- **🧾 Ghi lệnh ffmpeg khi lỗi** — 4 job lớn (Merge SRT, Ghép Audio→Video, Nén video,
+  Audio→Video) khi ffmpeg lỗi giờ ghi NGUYÊN lệnh vào file log (`[FFMPEG-CMD]`) — gửi 🐞 Gói
+  hỗ trợ là debug được ngay, không phải dựng lại lệnh bằng tay.
+- **📈 Sparkline tốc độ trên Dashboard** — thẻ "Lịch sử tốc độ" (khu Chẩn đoán) vẽ thêm biểu
+  đồ mini: mỗi batch 1 điểm giây/dòng theo engine (thấp = nhanh) — nhìn phát biết máy đang
+  chậm dần (throttle nhiệt/chạy nền). Dữ liệu lưu qua phiên trong ui_prefs.
+- **💾 Tự sao lưu cấu hình hàng tuần** — mỗi lần thoát app, nếu bản backup gần nhất >7 ngày:
+  tự zip hồ sơ giọng/từ điển/ui_prefs... vào `<config>\backup\cfg_<stamp>.zip` (giữ 5 bản
+  mới nhất) — lỡ tay xóa hồ sơ giọng thì 📥 Nhập gói cấu hình chọn file này là xong.
+- **🎯 Chấm điểm audio mẫu** — nút 🎯 mới cạnh 🎙/🎬 trên 4 hàng Audio mẫu (VoxCPM/VieNeu/
+  F5-TTS/OmniVoice): đo file mẫu (thời lượng, âm lượng, clipping, khoảng lặng, sample rate)
+  → điểm /100 + gợi ý sửa cụ thể ("quá dài — cắt 8–15s", "nhiều lặng — cắt đoạn im"...) —
+  chặn ca "clone cả đêm bằng mẫu tệ" trước khi bấm chạy.
+- **📊 So 2 bản final (A/B)** — nút mới trang SRT: liệt kê các bản final trong Output (bật
+  "🗂 Giữ final cũ" là có nhiều bản), chọn A + B + mốc thời gian → nghe cùng 1 đoạn của 2
+  bản + xem loudness — "bản mới có hay hơn không" trả lời bằng tai trong 30 giây.
+- **📱 Theo dõi qua LAN** — checkbox mới trang Hệ thống: mở trang web mini (chỉ xem) hiện
+  tiến độ % + trạng thái + thống kê batch + FAIL + log gần đây, tự làm mới 5s — nằm giường
+  mở điện thoại (cùng wifi) xem batch đêm chạy tới đâu. Tắt app/bỏ tick là đóng cổng;
+  không lưu qua phiên.
+- **↩ Hoàn tác đọc lại** — nút mới trong 📝 Bảng phụ đề: TRÁO bản audio hiện tại ↔ bản
+  `.old.mp3` (backup tự động mỗi lần đọc lại) — nghe cả 2 bản rồi giữ bản ưng, bấm lần
+  nữa là đổi ngược.
+- **🔗 Gộp / ✂ Tách SRT song ngữ** — 2 nút mới trang Dịch: gộp SRT gốc + SRT dịch (từ 2
+  nguồn bất kỳ) thành 1 file `gốc\dịch` để học tiếng/soát/burn 2 dòng; và tách file song
+  ngữ thành 2 file đơn ngữ (file đơn mới TTS sạch được).
+- **🗣 Xuất tag [giọng:] từ luật phân vai** — nút mới trong dialog 🎭 Phân vai: bake luật
+  thành tag `[giọng:hồ_sơ]` đầu mỗi dòng → `<tên>_cast.srt` — SRT tự chứa casting (gửi máy
+  khác không mất), và chạy batch TTS thường (nhanh, có cache + 4 luồng) thay vì chạy lồng
+  tiếng phân vai chậm. Chỉ hồ sơ Edge (giới hạn của tag); luật chỉ-rate/pitch được báo bỏ qua.
+- **🔢 Đọc số La Mã + đơn vị đo** — "Chương IV" → "Chương 4" (hết đọc "i-vê"), "5km" →
+  "5 ki-lô-mét", "60km/h", "20°C" → "độ xê", "50%" → "phần trăm", kg/cm/mm/mg/ml — nằm
+  trong checkbox "Đọc số kiểu Việt" sẵn có; chỉ nhận La Mã VIẾT HOA sau chữ Chương/Phần/
+  Tập/... nên không đụng chữ thường.
+- **🧹 Dọn cache dịch** — 🧹 Dọn dẹp thêm nhóm "Cache bản dịch (translate_cache.json)".
+- **⏰ Hẹn giờ chạy đêm** — nút mới trên toolbar Bảng điều khiển: đặt giờ (vd 01:00) + hành
+  động (Đọc TTS / Đọc Doc / 🚀 chuỗi truyện) → đến giờ app tự chạy (đang bận thì dời 5 phút
+  thử lại). Kết hợp ☕ chống sleep sẵn có + 🌙 tắt máy = pipeline đêm trọn gói. App phải để
+  mở; tắt app = hủy hẹn (cố ý không lưu qua phiên).
+- **🧨 Webhook báo LỖI (không chỉ báo xong)** — webhook giờ bắn cả khi: batch xong nhưng có
+  dòng FAIL, chuỗi 🚀 truyện lỗi/chết giữa chừng, lồng tiếng tự động dừng/lỗi, dịch SRT lỗi
+  — đang ngủ biết ngay job chết lúc 2h sáng thay vì sáng dậy mới thấy trắng tay.
+- **🔖 Dịch tài liệu resume được** — nhờ 💾 cache dịch: dịch dở bị Dừng/crash thì chạy lại
+  cùng file, các câu đã dịch lấy từ cache (log `♻ ... coi như RESUME`), chỉ tốn API phần
+  còn thiếu.
+- **🈶 Từ điển tự học tên riêng từ bản dịch** — dịch SRT xong, app quét các tên riêng lặp
+  ≥3 lần được bản dịch giữ nguyên (chưa có trong từ điển) → hỏi 1 phát "thêm N tên vào 📖?"
+  — series dài giữ tên nhân vật nhất quán giữa các tập mà không phải tự soạn glossary.
+- **🗂 Gắn phụ đề mềm (nhiều ngôn ngữ)** — card mới trang Video: nhét 1+ file SRT vào video
+  thành các TRACK phụ đề bật/tắt được trong player (gốc + Việt + Anh trong 1 file) — không
+  re-encode (`-c copy`), ra gần như tức thì; nhãn ngôn ngữ tự đoán từ đuôi tên file
+  (`_vi`/`_en`...).
+- **🎬 Cắt highlight / teaser** — card mới trang Video: nhập các mốc `mm:ss-mm:ss` → cắt và
+  nối thành 1 clip ngắn từ video thành phẩm (không re-encode, mốc bám keyframe) — làm
+  teaser/Shorts trong chục giây.
+- **🧮 Ước khối lượng trước khi dịch** — mọi lần dịch giờ log trước "N dòng, ≈X ký tự,
+  ~M lượt gọi API" (đã trừ phần lấy từ cache) — bấm dịch bộ 500 chương biết trước tốn
+  bao nhiêu call.
+- **💾 Cache bản dịch (đĩa)** — câu đã dịch được nhớ lại theo (provider, model, ngôn ngữ
+  đích, ngữ cảnh, glossary): phim bộ/truyện dài lặp thoại y hệt ("Vâng", "Cảm ơn"...) khỏi
+  trả tiền API lần 2; dịch LẠI một file sau khi sửa vài dòng gần như miễn phí. Bền qua phiên
+  (`translate_cache.json` cạnh settings.json, trần 50k câu); dòng dịch hỏng không bị cache.
+- **⚡ Dịch song song 3 luồng (cloud)** — các batch 40 dòng giờ gọi API 3 luồng cùng lúc
+  (Claude/Gemini/OpenAI/Groq/DeepSeek): SRT 2000 dòng dịch nhanh gần gấp 3. Tạm dừng/Dừng
+  hẳn vẫn ăn; thứ tự dòng giữ nguyên; dùng chung xoay key 🔑. Offline giữ tuần tự như cũ.
+- **🗣 Tag đổi giọng theo dòng `[giọng:tên_hồ_sơ]`** — dòng SRT/đoạn văn bắt đầu bằng
+  `[giọng:nam_tre]` sẽ đọc bằng giọng (voice+rate+pitch) của HỒ SƠ GIỌNG tên đó — casting lẻ
+  1-2 câu thoại mà không cần mở 🎭 Phân vai. Chỉ hỗ trợ hồ sơ Edge TTS khi đang dùng Edge
+  (engine local/RVC vẫn là việc của 🎭); engine khác tự bỏ tag, không đọc thành tiếng.
+  Alias không dấu `[giong:]`/`[voice:]`; đứng TRƯỚC tag cảm xúc nếu dùng cả hai.
+- **📜 Xuất phụ đề khớp audiobook (+.srt)** — checkbox mới hàng Merge Audio (tài liệu/truyện):
+  xuất kèm `pdf_output_*.srt` mỗi đoạn 1 cue, mốc khớp CHÍNH XÁC file final (tính cả nghỉ
+  giữa đoạn, hiệu ứng [sfx:], nhạc hiệu intro, tốc độ 🎚) — đưa vào 🖼 Audio→Video (kể cả
+  🎤 karaoke) là có video truyện chữ chạy phụ đề.
+- **🪞 Soát dịch cạnh gốc (2 cột)** — nút mới trang Dịch: chọn SRT gốc (tự đoán `_vi.srt`
+  cạnh nó) → bảng 2 cột gốc | dịch, sửa cột dịch tại chỗ (có Telex), ▶ nghe audio dòng đó,
+  💾 lưu đè file dịch (tự backup `.bak`); file dịch đang nạp trong app thì nạp lại + mời
+  xóa audio các dòng đã sửa.
+- **☕ Chống Windows ngủ khi đang chạy job** — có job chạy (TTS/dub/truyện/queue/RVC...) thì
+  app tự giữ máy KHÔNG sleep (màn hình vẫn được tắt), xong job trả lại bình thường — batch
+  đêm không còn chết vì máy tự ngủ sau 30 phút, khỏi chỉnh Power Options.
+- **🔇 Im lặng 23h–7h** — checkbox mới trang Hệ thống: trong khung giờ đêm không phát âm báo
+  (pháo hoa, error.wav, tiếng báo xong) — máy chạy đêm phòng ngủ khỏi giật mình; webhook +
+  toast vẫn báo đủ.
+- **🔑 Xoay vòng nhiều API key dịch** — ô API key (Claude/Gemini/OpenAI/Groq/DeepSeek) cho
+  phép dán NHIỀU key cách nhau `;`: dính lỗi hạn mức (429/quota) tự chuyển key kế và chạy
+  tiếp (nhớ key đang chạy tốt), lỗi khác vẫn báo ngay. Mọi tính năng dùng AI (dịch, casting,
+  sửa SRT/OCR, hỏi AI...) hưởng chung — bộ nghìn chương không còn chết lúc 2h sáng vì 1 key
+  hết hạn mức.
+- **🪶 Xuất thêm .opus nhẹ** — checkbox mới hàng Merge Audio: audiobook xuất kèm bản `.opus`
+  32k (giọng nói nghe tương đương mp3 128k, nhẹ ~1/4) — áp cho Merge tài liệu + chuỗi 🚀
+  truyện chữ + 📡 watch.
+- **📚 Mẫu ngữ cảnh dịch** — dropdown + 💾/🗑 cạnh ô "Ngữ cảnh/xưng hô": lưu các mẫu có tên
+  ("tu tiên ta-ngươi", "tình cảm anh-em"...) chọn lại 1 phát thay vì gõ mỗi lần — đòn bẩy
+  chất lượng dịch lớn nhất giờ dùng được tử tế; `context_presets.json` nằm trong 📦 gói
+  cấu hình.
 - **⏱ Chống treo (watchdog)** — đang chạy job mà tiến độ đứng im quá 10 phút (ffmpeg/helper
   đơ, mạng nghẽn) → cảnh báo logbox + bắn webhook (1 lần mỗi đợt treo); checkbox mới trang
   Hệ thống "⏱ Tự Dừng khi treo 10'" → tự bấm Dừng để watch/queue chạy việc kế thay vì đứng
