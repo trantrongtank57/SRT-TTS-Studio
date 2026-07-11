@@ -183,6 +183,13 @@ giới hạn upload) bằng stream-copy (không re-encode, gần như tức thì
 cạnh audio thì chia kèm SRT từng phần (timestamp tự dời về 0). Tùy chọn **🔇 Cắt tại chỗ lặng**
 (mặc định bật) dời mốc chia về chỗ lặng gần nhất để không cắt giữa câu.
 
+**Sau khi có audio — vài công cụ tiện lợi khác** *(mới, cột TẠO trang SRT):*
+- **📊 So 2 bản final (A/B)** — nghe so hai lần merge (hoặc take cũ/mới) trên cùng một đoạn để chọn bản ưng.
+- **🌐 Trang nghe (HTML)** — tạo `player.html` cạnh audio: trang web tự làm nổi câu đang đọc theo
+  phụ đề, click để tua (chia sẻ chỉ cần gửi kèm file audio).
+- **🎴 Xuất thẻ Anki** — biến các dòng SRT + audio đã tạo thành một bộ thẻ học Anki (front/back +
+  `[sound:]`), kèm hướng dẫn import.
+
 **🎭 Tag cảm xúc theo dòng** *(mới)* — thêm tag vào **đầu** một dòng SRT (hoặc đoạn text):
 `[vui]` `[buồn]` `[giận]` `[sợ]` `[nhanh]` `[chậm]` `[thì thầm]` `[hét]` (hỗ trợ cả không dấu
 `[buon]`/`[gian]`…). Với **Edge TTS**, giọng tự đổi tốc độ/cao độ theo cảm xúc; **tag không bị
@@ -224,7 +231,13 @@ Cần ≥2 hồ sơ giọng + API key dịch; kịch bản lưu `.txt` để xem
 - Dán link **1 bài báo** (VnExpress, Dân Trí, Tuổi Trẻ…) → phần mềm tự trích **thân bài**
   (bỏ menu, quảng cáo) → nạp vào pipeline đọc TTS.
 - Dán link **RSS** + số bài → lấy N bài mới nhất, mỗi bài thành một "chương" (hợp với .m4b mục lục).
+- Dán link **📖 Wikipedia** (mọi ngôn ngữ) *(mới)* → đọc cả bài, mỗi mục lớn thành một chương.
 - Nút **☕ Bản tin (1 nút)** làm trọn gói: tải → đọc → ghép .m4b trong một lần bấm.
+
+**📖 Viết truyện AI** *(mới)* — card "📖 Viết truyện AI" trên trang này: gõ một ý tưởng → AI (nhiều
+tác nhân Kiến trúc → Viết → Biên tập) viết ra một truyện dài nhiều chương → nạp thẳng vào pipeline
+đọc TTS thành truyện audio. *Cần binary ngoài `ainovel-cli` (tuỳ chọn, đặt cạnh file .exe) và API
+key dịch (Claude/Gemini/OpenAI/DeepSeek); thiếu thì chỉ tính năng này báo lỗi.*
 
 ---
 
@@ -375,6 +388,18 @@ cung cấp dịch cloud.
   (cần cài VideOCR CLI). Có Tạm dừng / Tiếp tục / Dừng.
 - **Speech-to-Text (STT)** — nhận diện lời nói trong video thành phụ đề/văn bản
   (faster-whisper). Chọn **Tách: câu** hoặc **karaoke** (2–4 từ/dòng), xuất srt/txt/docx/pdf.
+  - **📁 Phiên âm cả thư mục** *(mới)* — phiên âm hàng loạt mọi file audio/video trong một thư mục
+    (SRT + TXT nằm cạnh mỗi file); chạy lại sẽ bỏ qua file đã phiên âm (resume).
+- **👄 Khớp khẩu hình (Lip-sync)** *(mới)* — sau khi lồng tiếng, miệng nhân vật vẫn mấp máy theo lời
+  gốc; bước này render lại miệng khớp với **giọng mới** (Wav2Lip). Có dropdown **Chất lượng** (nhẹ
+  máy / cân bằng / nét hơn), tuỳ chọn **Vùng mặt** (khi khung có nhiều người), và **✨ Làm nét mặt
+  (GFPGAN)** để sắc nét vùng miệng. *Cần cài thêm `lipsync_env` + Wav2Lip + model (nặng, khuyến nghị
+  có GPU) — xem [Mục 17](#17-cài-đặt--cấu-hình); thiếu thì chỉ tính năng này báo lỗi, phần khác vẫn chạy.*
+- **🎬 Cắt highlight / teaser** *(mới)* — nhập các khoảng thời gian (`1:00-1:30; 5:20-5:45`) → cắt và
+  nối thành một clip (stream-copy, nhanh).
+- **🗂 Gắn phụ đề mềm** *(mới)* — chèn 1..n file `.srt` thành các **track phụ đề chọn được** trong
+  player (không nén lại video → gần như tức thì); ngôn ngữ/nhãn tự đoán từ đuôi tên file (`_vi`, `_en`…).
+- **🎵 Tách audio khỏi video** *(mới)* — xuất riêng phần audio của 1..n video ra **MP3 / WAV / M4A**.
 - **🖼 Audio → Video (ảnh nền)** *(mới)* — ghép 1 file audio (+ ảnh nền tuỳ chọn + phụ đề burn
   tuỳ chọn) thành video mp4 — cho kênh "truyện audio" cần khung video để đăng YouTube. Tuỳ chọn:
   - **🌊 Sóng nhạc động** — dải sóng chạy theo nhạc sát đáy màn hình.
@@ -419,6 +444,8 @@ duyệt bạn đã mở site đó (đóng trình duyệt trước khi tải).
    khi xong**, nhạc nền / nhạc hiệu / chuẩn âm lượng như audiobook tài liệu.
 4. **📡 Theo dõi bộ truyện** — lưu danh sách bộ, kiểm tra & tải chương mới, tuỳ chọn tự đọc luôn.
    Mỗi dòng có thể ghi `URL | tên hồ sơ giọng | dich` để mỗi bộ một giọng và tự dịch nếu cần.
+5. Nghe & xuất bản: **🎧 Nghe theo chương** (danh sách mp3 từng chương có nút ▶), **🌐 Trang nghe
+   cả bộ** (`player_book.html` — playlist tự chuyển bài), **📖 Xuất EPUB** (đóng các chương thành 1 file EPUB).
 
 > Trang web dùng nhiều JS/Cloudflare có thể không tải được (phần mềm sẽ báo rõ).
 
@@ -516,8 +543,10 @@ cạnh file chạy — đỡ phải khai đường dẫn. Nếu không tự dò 
 **Các thành phần lớn cần cài thêm** (quá nặng để đóng gói sẵn) — tham khảo `MOVE_CHECKLIST.txt`:
 - `voxcpm_env` + model VoxCPM (cho VoxCPM, STT, xử lý audio, dịch offline).
 - `vieneu_env`, `f5tts_env`, `omnivoice_env` + model tương ứng.
+- `lipsync_env` + Wav2Lip + model (cho 👄 Khớp khẩu hình; thêm `gfpgan` cho ✨ Làm nét mặt).
 - VideOCR CLI (cho Video OCR).
-- `yt-dlp` (tải YouTube), `gallery-dl` (truyện nước ngoài), `easyocr` (dịch truyện).
+- `yt-dlp` (tải YouTube), `gallery-dl` (truyện nước ngoài), `easyocr` (dịch truyện),
+  `ainovel-cli` (📖 Viết truyện AI).
 - Model dịch offline (NLLB/envit5) nếu dùng dịch Offline.
 
 Một số model **tự tải về lần đầu chạy** (cần mạng): VieNeu, OmniVoice, whisper (STT), vocoder…
