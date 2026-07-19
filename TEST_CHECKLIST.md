@@ -504,6 +504,27 @@
 - [ ] **📈 Sparkline**: chạy ≥2 batch SRT → Dashboard → Chẩn đoán nâng cao → thẻ Lịch sử tốc độ có biểu đồ đường + chú thích màu theo engine; khởi động lại app vẫn còn (ui_prefs)
 - [ ] **💾 Backup tuần**: thoát app → `<config>\backup\` có `cfg_<stamp>.zip` chứa voice_profiles/glossary/ui_prefs...; thoát lại ngay → không thêm zip mới; 📥 Nhập gói cấu hình chọn zip này khôi phục được
 
+## BA. Đợt 2026-07-19 (4): 🦆 duck nhạc nền + 🚚 đóng gói + 🕵 duyệt AI + 🌡 canh GPU
+- [ ] **🦆 Duck nhạc**: Merge tài liệu với 🎵 Nhạc nền + tick "🦆 nén khi nói" → nghe nhạc tự nhỏ lúc giọng đọc, to lại ở khoảng nghỉ giữa đoạn; bỏ tick → mix phẳng như cũ. Lặp lại với Merge SRT (log có "🦆 tự nén khi nói")
+- [ ] **🚚 Đóng gói**: sau 1 job merge xong → "🚚 Đóng gói giao hàng" → chọn thư mục Output → dialog liệt kê đúng final/srt/player/description (KHÔNG có line_*.mp3, filter.txt, final cũ 🗂) → Yes → có `giaohang_<stamp>\` + `.zip`, mở sẵn Explorer
+- [ ] **🕵 Duyệt AI**: 🪄 Sửa AI với yêu cầu bất kỳ → hiện bảng cũ→mới; double-click bỏ 1 dòng → Ghi → file `_ai.srt` chỉ chứa các dòng còn ✓; bấm ❌ Hủy → không có file mới; 🎭 gắn cảm xúc cũng qua bảng này
+- [ ] **🌡 Canh GPU**: chạy 1 job local engine nặng (F5/VoxCPM) → Dashboard thẻ RAM/VRAM hiện thêm `°C`; (khó ép nóng thật — hạ tạm `_GPU_TEMP_WARN` xuống 40 trong code dev để thấy ⚠ + webhook rồi trả lại)
+
+## BB. Đợt 2026-07-19 (4): ✅ tự Merge + 🛑 cầu dao FAIL + 📱 LAN điều khiển + 🧭 cài máy mới
+- [ ] **✅ Tự Merge**: tick "Đọc xong tự Merge" → chạy SRT ngắn 0 FAIL → tự Merge sau ~1s ra final; ép 1 dòng FAIL (text rác) → log "có FAIL — bỏ qua", không merge; Doc-TTS cũng tự merge_pdf_audio
+- [ ] **🛑 Cầu dao FAIL**: rút mạng/điền key sai giữa batch ≥30 dòng → log 🛑 + webhook; bật "🛑 Tự Dừng khi FAIL cao" (Hệ thống) chạy lại → batch tự Dừng, Resume chạy tiếp được
+- [ ] **📱 LAN v2**: bật LAN → logbox hiện URL + mã PIN; trên điện thoại nhập PIN bấm ⏸ rồi ▶ rồi ⏹ → máy tính phản ứng đúng + log "📱 Điều khiển từ LAN"; nhập sai PIN → trang báo lỗi; PIN được nhớ sau khi trang tự refresh
+- [ ] **🧭 Cài máy mới**: trang Hệ thống → "🧭 Cài máy mới" → máy build hiện ✅ gần hết; mục thiếu (vd gallery-dl nếu chưa cài) hiện lệnh + nút 📋 copy được; "🔄 Kiểm tra lại" chạy không treo UI
+- [ ] **↔ Trượt ngang**: thu cửa sổ hẹp lại → 2 hàng trang Hệ thống + hàng checkbox + 2 hàng Tùy chọn dịch hiện thanh trượt ngang (kéo thấy đủ nút, Shift+lăn chuột cũng kéo được); phóng to → thanh tự ẩn, ô Ngữ cảnh vẫn giãn full
+
+## BC. Đợt 2026-07-19 (6): ⬇ sub YouTube + 🔥 burn-in + 🌐 player v2 + 📱 LAN v3 + 📀 gộp tập + 🎛 âm sắc
+- [ ] **⬇ Sub YouTube**: trang Tách/trích xuất → dán link video CÓ phụ đề → ⬇ Tải phụ đề → thư mục lưu có file .srt tên theo TIÊU ĐỀ video (không có file sub_<id> thừa); link không có sub → log hướng dẫn dùng STT; 2 link cách nhau dấu ';' → tải cả 2
+- [ ] **🔥 Burn-in**: trang Công cụ Video → chọn video + SRT, Cỡ=To Màu=Vàng → 🔥 → ra `_burned.mp4` chữ vàng to trong hình (máy có GPU: log "GPU NVENC"); ⏹ giữa chừng → file dở bị xóa; file .ass → log "giữ nguyên style"
+- [ ] **🌐 Player v2**: export lại 🌐 Trang nghe → mở player.html, nghe tới ~1 phút, F5 → đọc tiếp đúng chỗ; bấm 1.5× → F5 vẫn 1.5×; ⏪/⏩ nhảy 15s; trang cả bộ: nghe chương 3 rồi đóng, mở lại → chương 3 sáng sẵn, bấm play đọc tiếp đúng giây
+- [ ] **📱 LAN v3**: bật LAN + có final trong Output → trang trên điện thoại hiện tên file + nút ⬇ (nhập PIN ở ô điều khiển trước) → tải được file về máy; "xem 50 dòng" → nhật ký dài ra, "thu gọn" quay lại; chưa Merge lần nào → không có khối tải
+- [ ] **📀 Gộp tập**: trang Text→Audio → chọn 2-3 file mp3 tập (đặt tên tap01/tap02...) → 📀 → ra `<thư mục>_full.mp3` + `.m4b`; mở m4b trong player thấy mục lục theo tên tập; trộn 1 file .m4a/48kHz vào → vẫn gộp được (log "Chuẩn hoá stream")
+- [ ] **🎛 Âm sắc**: hàng tùy chọn Merge chọn "Radio (nén mạnh)" → Merge SRT → log "🎛 Đã áp âm sắc", final nghe dày/nén hơn rõ; đổi "(Không)" → không có dòng 🎛; Merge tài liệu cũng ăn preset (dropdown 🎛 hàng Nhạc nền — 2 dropdown là MỘT lựa chọn chung, nhớ qua phiên)
+
 ## F. Sau build (exe)
 - [ ] `output\Portable\SRT_TTS_Studio_Portable.exe` mở được, đăng nhập OK
 - [ ] Lặp lại nhanh mục B+C trên exe (ít nhất: glossary + TTS song song + merge)

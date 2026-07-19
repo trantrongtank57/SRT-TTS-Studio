@@ -6,6 +6,59 @@ Tất cả thay đổi đáng chú ý của phần mềm được ghi lại tron
 ## [Chưa phát hành]
 
 ### Thêm mới
+- **⬇ Tải phụ đề YouTube (không dub)** — card mới trang Tách/trích xuất: dán 1+ link →
+  chỉ tải file .srt về thư mục chọn (không tải video). Sub NGƯỜI LÀM ưu tiên, không có mới
+  lấy auto-caption (đã khử caption cuộn); file tự đổi tên theo TIÊU ĐỀ video. Cần yt-dlp.
+- **🔥 Gắn phụ đề cứng (burn-in) standalone** — card mới trang Công cụ Video: video + SRT
+  có sẵn → ép chữ VÀO hình (chọn Cỡ/Màu), không cần chạy wizard lồng tiếng. GPU NVENC +
+  giải mã NVDEC khi có card NVIDIA; nhận cả .ass (giữ style trong file) và .vtt (tự convert).
+- **🌐 Trang nghe v2** — player.html + player_book.html thêm: nút tốc độ 1×/1.25×/1.5×/2×,
+  tua ⏪/⏩ 15s, và **nhớ vị trí đang nghe** (đóng trình duyệt mở lại là đọc tiếp đúng chỗ;
+  bản cả bộ nhớ cả CHƯƠNG + giây). Thuần JS/localStorage — file cũ export lại là có.
+- **📱 Tải file về điện thoại (LAN v3)** — trang LAN thêm nút ⬇ tải file thành phẩm audio
+  mới nhất trong Output về điện thoại (dùng chung mã PIN điều khiển, sai 8 lần khóa như cũ)
+  + link "xem 50 dòng" mở rộng nhật ký từ 10 → 50 dòng. Nằm giường nghe thử luôn bản final.
+- **📀 Gộp nhiều tập → 1 audiobook** — card mới trang Text→Audio: chọn các file final/
+  audiobook từng tập → nối 1 file dài + .m4b có mục lục MỖI TẬP 1 CHƯƠNG (tên chương = tên
+  file, kèm youtube_description.txt). Tự sắp theo tên (tap2 trước tap10), file khác định
+  dạng/sample-rate tự re-encode cho khớp stream.
+- **🎛 Preset âm sắc final** — dropdown "🎛 Âm sắc" ở hàng tùy chọn Merge (SRT) và hàng 🎵
+  Nhạc nền (tài liệu): Podcast (ấm + nén nhẹ) / Audiobook (dịu, lọc rè) / Radio (nén mạnh)
+  — 1 lượt EQ+compressor lên file final sau merge, trước nhạc nền (chỉ sửa giọng, không đụng
+  nhạc). Lỗi thì giữ nguyên file; nhớ lựa chọn qua phiên.
+- **↔ Thanh trượt ngang cho hàng dày** — các hàng nhiều nút/checkbox (2 hàng trang Hệ thống,
+  hàng checkbox ⏱/🛑/🔇/📱, 2 hàng Tùy chọn dịch) giờ tự hiện thanh trượt ngang mỏng khi cửa
+  sổ hẹp thay vì CẮT mất widget ở mép phải (kéo bằng thanh trượt hoặc Shift+lăn chuột); đủ
+  chỗ thì thanh tự ẩn, không chiếm cao độ.
+- **✅ Đọc xong tự Merge** — checkbox mới cạnh "Tự tạo lại dòng FAIL khi xong": batch TTS
+  kết thúc SẠCH (0 FAIL) → tự chạy Merge luôn (SRT → merge timeline, tài liệu → merge audio)
+  — đêm chạy xong dậy là có final. Có FAIL thì đứng lại như cũ để 🧩 sửa trước.
+- **🛑 Cầu dao FAIL cao** — key hết quota / mạng chập giữa batch thì trước đây nó vẫn cày hết
+  1000 dòng FAIL tới sáng; giờ đã xử lý ≥30 dòng mà FAIL ≥30% → ⚠ cảnh báo + webhook 🧨 ngay,
+  và nếu bật checkbox "🛑 Tự Dừng khi FAIL cao" (trang Hệ thống) → tự bấm Dừng (Resume chạy
+  tiếp phần thiếu sau khi sửa nguyên nhân).
+- **📱 Điều khiển từ điện thoại (LAN v2)** — trang theo dõi LAN có thêm 3 nút ⏸ Tạm dừng /
+  ▶ Tiếp tục / ⏹ Dừng, bảo vệ bằng mã PIN 4 số (sinh mới mỗi lần bật, hiện trong logbox;
+  sai 8 lần là khóa tới lần bật sau; PIN nhớ sẵn trên điện thoại) — thấy dòng lỗi lặp vô hạn
+  lúc nửa đêm là dừng được ngay từ giường.
+- **🧭 Trợ lý cài máy mới** — nút mới trang Hệ thống: kiểm tra 13 thành phần (ffmpeg, các
+  env engine, model, yt-dlp, gallery-dl, easyocr, VideOCR, model dịch Offline, Wav2Lip...)
+  → mục nào thiếu hiện luôn lệnh/bước cài COPY-PASTE được + nút 📋 copy + 🔄 kiểm tra lại —
+  biến MOVE_CHECKLIST giấy thành wizard sống, người không rành cũng tự cài được máy mới.
+- **🦆 Nhạc nền tự nhỏ khi có giọng (ducking)** — checkbox "🦆 nén khi nói" cạnh cả 2 ô 🎵
+  Nhạc nền (Merge SRT + Merge tài liệu/audiobook, chuỗi 🚀 truyện chữ và 📡 watch cũng ăn
+  theo): giọng đọc làm key nén nhạc — nhạc tự tụt xuống khi có tiếng nói, trả lại mức cũ ở
+  khoảng lặng (đo thật: chênh ≥6 dB). Nghe "pro" hơn hẳn mix phẳng cũ; mặc định tắt.
+- **🚚 Đóng gói giao hàng** — nút mới trang SRT: nhặt đúng file THÀNH PHẨM trong thư mục
+  output (final.* / các phần ✂ final_pNN.* / pdf_output_* / *_audiobook.mp3 / final_synced.srt
+  / player.html / youtube_description.txt / thumbnail.png) → copy vào `giaohang_<stamp>\`
+  + tùy chọn nén .zip — 1 click ra gói sẵn upload/gửi khách, bỏ lại file trung gian.
+- **🕵 Xem trước thay đổi AI trước khi ghi** — ✂ Rút gọn AI / 🪄 Sửa SRT bằng AI / 🎭 Tự gắn
+  cảm xúc không ghi thẳng file nữa: bảng "cũ → mới" các dòng bị đổi, double-click/Space bỏ
+  dòng không ưng rồi mới Ghi (mặc định chọn hết — bấm Ghi ngay là như cũ; Hủy = không ghi gì).
+- **🌡 Canh GPU nóng / tràn VRAM giữa batch** — đang chạy job mà GPU ≥85°C (nguy cơ throttle
+  chậm dần) hoặc VRAM ≥95% (sắp tràn sang Shared memory — chậm ~100×) → ⚠ logbox + webhook,
+  1 lần mỗi đợt. Thẻ RAM/VRAM trên Dashboard giờ hiện thêm nhiệt độ GPU.
 - **🛠 Tự sửa audio mẫu** — nút 🛠 mới cạnh 🎯 trên 4 hàng Audio mẫu: 🎯 chỉ BÁO lỗi, nút này
   SỬA những gì sửa được bằng ffmpeg (khuếch đại mẫu thu quá nhỏ, cắt lặng 2 đầu, chuẩn âm
   lượng loudnorm, nâng sample rate <16k lên 24k, cắt lấy 15s đầu nếu quá dài) → `_fixed.wav`,
